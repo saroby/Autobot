@@ -1,89 +1,165 @@
 ---
 name: autobot-orchestrator
-description: This skill should be used when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:build". Provides the master coordination logic for the Autobot build pipeline including agent dispatch strategy, phase management, and integration patterns.
-version: 0.1.0
+description: This skill should be used when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:build" or "/autobot:resume". Provides the master coordination logic for the Autobot build pipeline including phase validation gates, agent dispatch strategy, error recovery, and rollback mechanisms.
+version: 0.2.0
 ---
 
 # Autobot Orchestrator
 
-Master coordination skill for building iOS 26+ apps from ideas. Manages the complete pipeline from idea analysis through TestFlight deployment.
+Master coordination skill for building iOS 26+ apps from ideas. Manages the complete pipeline from idea analysis through TestFlight deployment with validation gates, error recovery, and state persistence.
 
 ## Core Pipeline
 
-The Autobot build pipeline has 6 phases executed in strict order:
+```
+                    ┌──────────────────────────────────────────────────────┐
+                    │              AUTOBOT BUILD PIPELINE                  │
+                    └──────────────────────────────────────────────────────┘
 
-| Phase | Name | Agent | Parallel | Duration Target |
-|-------|------|-------|----------|-----------------|
-| 0 | Environment Setup | (self) | No | 30s |
-| 1 | Architecture + Type Contract | architect | No | 3min |
-| 2 | Project Scaffold | (self) | No | 1min |
-| 3 | Parallel Coding | ui-builder + data-engineer | **Yes** | 5min |
-| 4 | Integration & Build | quality-engineer | No | 3min |
-| 5 | TestFlight Deploy | deployer | No | 5min |
-| 6 | Retrospective | (self) | No | 30s |
+ ┌─────────┐  Gate   ┌───────────┐  Gate   ┌──────────┐  Gate   ┌────────────────┐
+ │ Phase 0  │──0→1──▶│  Phase 1   │──1→2──▶│ Phase 2   │──2→3──▶│    Phase 3      │
+ │ Pre-     │        │ Architect  │        │ Scaffold  │        │  ┌──────────┐  │
+ │ flight   │        │ (opus)     │        │ (self)    │        │  │ui-builder│  │
+ │ (self)   │        │            │        │           │        │  └──────────┘  │
+ └─────────┘        └───────────┘        └──────────┘        │  ┌──────────┐  │
+                                                                │  │data-eng. │  │
+                                                                │  └──────────┘  │
+                                                                └───────┬────────┘
+                                                                        │ Gate 3→4
+                    ┌─────────┐  Gate   ┌───────────┐  Gate            ▼
+                    │ Phase 6  │◀─soft──│  Phase 5   │◀─4→5──┌────────────────┐
+                    │ Retro-   │        │ Deploy     │       │    Phase 4      │
+                    │ spective │        │ (sonnet)   │       │ Quality Eng.    │
+                    │ (self)   │        │            │       │ (sonnet)        │
+                    └─────────┘        └───────────┘       └────────────────┘
+```
 
-**Phase 1 now produces two outputs:**
-1. `.autobot/architecture.md` — design document
-2. `Models/*.swift` — compilable @Model files that serve as the **type contract** for Phase 3
+### Phase 요약
+
+| Phase | Name | Agent | Parallel | Gate | Max Retry |
+|-------|------|-------|----------|------|-----------|
+| 0 | Pre-flight & Setup | (self) | No | → 환경/이름 검증 | 1 |
+| 1 | Architecture + Contracts | architect | No | → 산출물 존재/구조 검증 | 2 |
+| 2 | Project Scaffold | (self) | No | → .xcodeproj 존재 검증 | 1 |
+| 3 | Parallel Coding | ui-builder + data-engineer | **Yes** | → 파일 존재 + Models/ 무결성 | 2 |
+| 4 | Integration & Build | quality-engineer | No | → xcodebuild 성공 | 2 |
+| 5 | TestFlight Deploy | deployer | No | → soft (실패해도 진행) | 1 |
+| 6 | Retrospective | (self) | No | — | — |
+
+## Phase Validation Gates
+
+**매 Phase 완료 직후, 다음 Phase에 진입하기 전에 산출물을 검증한다.**
+
+Gate 통과 실패 시:
+1. `retryCount < maxRetry` → 해당 Phase 재실행
+2. `retryCount >= maxRetry` → `failed`로 마킹, Phase 6으로 건너뜀
+
+상세 검증 항목은 **`references/phase-gates.md`** 참조.
+
+### Models/ 무결성 보호
+
+Phase 1 완료 시 Models/ 디렉토리의 체크섬을 `build-state.json`에 저장.
+Gate 3→4에서 체크섬을 재계산하여 비교. 불일치 시 `git checkout -- Models/`로 자동 복원.
+
+```bash
+# 체크섬 계산
+find Models/ -name "*.swift" -exec md5 {} \; | sort | md5
+```
+
+## Pre-flight Check (Phase 0)
+
+Phase 0에서 빌드 시작 전에 환경을 검증:
+
+```
+✓ Xcode Command Line Tools 설치됨 (xcode-select -p)
+✓ iOS Simulator 런타임 존재 (xcrun simctl list runtimes | grep iOS)
+✓ python3 사용 가능 (pbxproj fallback용)
+✓ git 사용 가능
+✓ 디스크 여유 공간 > 1GB
+✓ (선택) xcodegen 설치 여부 → 있으면 사용, 없으면 fallback
+✓ (선택) fastlane 설치 여부 → 없으면 Phase 5에서 자동 설치 시도
+✓ (선택) ASC 인증 정보 → 없으면 Phase 5에서 수동 업로드 안내
+```
+
+하나라도 필수 항목이 실패하면 빌드를 시작하지 않고 해결 방법을 안내.
 
 ## Agent Dispatch Strategy
 
 ### Parallel Execution (Phase 3)
 
-Dispatch ui-builder and data-engineer simultaneously using the Agent tool:
+worktree 격리로 파일시스템 충돌 방지:
 
 ```
-In a SINGLE message, call Agent tool twice:
-1. Agent(subagent_type="general-purpose", prompt="[ui-builder task]")
-2. Agent(subagent_type="general-purpose", prompt="[data-engineer task]")
+Agent(
+  prompt="[ui-builder task with full context]",
+  isolation="worktree"
+)
+Agent(
+  prompt="[data-engineer task with full context]",
+  isolation="worktree"
+)
 ```
-
-Both agents read the same `.autobot/architecture.md` and write to different directories, so there are no file conflicts.
-
-### Sequential Dependencies
-
-- Phase 1 (architect) must complete before Phase 2 (scaffold)
-- Phase 2 must complete before Phase 3 (parallel coding)
-- Phase 3 must complete before Phase 4 (quality)
-- Phase 4 must complete before Phase 5 (deploy)
 
 ### Agent Context Passing
 
-Each agent receives context via files, not direct messages:
-- `.autobot/build-state.json` — **Build state** (phase status, app metadata, resume point)
-- `.autobot/architecture.md` — Architecture specification
-- `Models/*.swift` — **Type contract** (compilable @Model files created by architect)
-- `.autobot/learnings.json` — Past build learnings
-- `.autobot/deploy-status.json` — Deployment results
+에이전트는 파일을 통해 컨텍스트를 받는다:
 
-**Type contract rule:** Both ui-builder and data-engineer MUST read `Models/*.swift` files before writing any code, and MUST NOT modify them. The Model files are the single source of truth for type names, property names, and initializer signatures.
+| 파일 | 생성자 | 소비자 | 용도 |
+|------|--------|--------|------|
+| `.autobot/build-state.json` | Phase 0 | 전체 | 빌드 메타데이터, 상태 추적 |
+| `.autobot/architecture.md` | architect | ui-builder, data-engineer, quality-engineer | 설계 명세 |
+| `Models/*.swift` | architect | ui-builder, data-engineer | 타입 계약 (읽기 전용) |
+| `Models/ServiceProtocols.swift` | architect | ui-builder, data-engineer | 통합 계약 (읽기 전용) |
+| `App/ServiceStubs.swift` | ui-builder | quality-engineer | 임시 stub (Phase 4에서 삭제) |
+| `Services/*Repository.swift` | data-engineer | quality-engineer | 프로토콜 구현체 |
+| `.autobot/learnings.json` | retrospective | Phase 0 | 과거 학습 |
+| `.autobot/deploy-status.json` | deployer | retrospective | 배포 결과 |
 
-## Plugin Detection Strategy
+### File Ownership 규칙
 
-Detect and leverage installed plugins without creating hard dependencies:
+| Agent | Writes To | MUST NOT Touch |
+|-------|-----------|----------------|
+| architect | `.autobot/architecture.md`, `Models/` | — |
+| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/`, `Services/` |
+| data-engineer | `Services/`, `Utilities/` | `Models/`, `Views/`, `ViewModels/`, `App/` |
+| quality-engineer | 모든 파일 (통합 + 수정) | — |
+| deployer | `build/`, 설정 파일 | 소스 코드 |
 
+## Error Recovery
+
+### 재시도 전략
+
+| 에러 유형 | 재시도 방법 | 최대 횟수 |
+|----------|-----------|----------|
+| 에이전트 산출물 누락 | 같은 에이전트 재실행 | 2 |
+| 컴파일 에러 | quality-engineer 반복 수정 | 5 (Phase 내) |
+| Phase 자체 실패 | `/autobot:resume`으로 Phase 재실행 | 2 |
+| 배포 실패 | deployer 재실행 (멱등) | 1 |
+
+### 롤백 전략
+
+Phase 실패 시 git을 사용한 롤백:
+
+```bash
+# Phase 3 실패 → Phase 2 직후 상태로 복원
+git stash  # 현재 변경 보존
+git log --oneline  # Phase 2 완료 커밋 확인
+# quality-engineer가 수동 복구 시도
+
+# Models/ 오염 시 → 타입 계약만 복원
+git checkout -- Models/
 ```
-1. Check for Axiom skills availability:
-   - Try invoking Skill("axiom:axiom-ios-ui")
-   - If available: include in agent prompts
-   - If not: agents use built-in iOS knowledge
 
-2. Check for Serena tools:
-   - Look for mcp__plugin_serena_serena__* tools
-   - If available: use semantic editing for refactoring
-   - If not: use standard Edit tool
+### Circuit Breaker
 
-3. Check for context7:
-   - Look for mcp__context7__* tools
-   - If available: fetch latest API docs
-   - If not: rely on training knowledge
-```
+같은 Phase가 3회 연속 실패하면 (`build-state.json`의 retryCount 확인):
+1. 빌드를 중단
+2. 실패 패턴을 `.autobot/learnings.json`에 기록
+3. 사용자에게 구체적 해결 방법 안내 (troubleshooting 참조)
+4. 아이디어를 단순화하여 재빌드 권고
 
 ## Build State Management
 
 ### State File: `.autobot/build-state.json`
-
-매 Phase 시작/완료/실패 시 상태 파일을 갱신한다. 이를 통해 `/autobot:resume`으로 중단된 빌드를 재개할 수 있다.
 
 ```json
 {
@@ -94,55 +170,58 @@ Detect and leverage installed plugins without creating hard dependencies:
   "projectPath": "/Users/saroby/SocialFitness",
   "idea": "소셜 피트니스 트래킹 앱",
   "startedAt": "2026-03-16T12:00:00Z",
+  "modelsChecksum": "a1b2c3d4e5f6...",
+  "environment": {
+    "xcodegen": true,
+    "fastlane": false,
+    "ascConfigured": true,
+    "axiom": true
+  },
   "phases": {
-    "0": { "status": "completed", "completedAt": "2026-03-16T12:00:30Z" },
-    "1": { "status": "completed", "completedAt": "2026-03-16T12:03:00Z" },
-    "2": { "status": "completed", "completedAt": "2026-03-16T12:04:00Z" },
-    "3": { "status": "completed", "completedAt": "2026-03-16T12:09:00Z" },
-    "4": { "status": "failed", "error": "Cannot find type 'ModelContext'", "failedAt": "2026-03-16T12:11:00Z", "retryCount": 5 },
+    "0": { "status": "completed", "completedAt": "..." },
+    "1": { "status": "completed", "completedAt": "...", "modelsChecksum": "..." },
+    "2": { "status": "completed", "completedAt": "..." },
+    "3": { "status": "failed", "error": "...", "failedAt": "...", "retryCount": 1 },
+    "4": { "status": "pending" },
     "5": { "status": "pending" },
     "6": { "status": "pending" }
   }
 }
 ```
 
-### Phase Status Values
+### Status 전이
 
-| Status | 의미 |
-|--------|------|
-| `pending` | 아직 시작 안 됨 |
-| `in_progress` | 현재 실행 중 |
-| `completed` | 성공적으로 완료 |
-| `failed` | 실패 (에러 메시지 포함) |
-| `skipped` | 실패로 인해 건너뜀 |
+```
+pending → in_progress → completed
+                      → failed → (retry) → in_progress
+                                → skipped (circuit breaker)
+```
 
-### State Update Protocol
+## Context Window Management
 
-1. Phase 시작 시: `status: "in_progress"`, `startedAt` 기록
-2. Phase 성공 시: `status: "completed"`, `completedAt` 기록
-3. Phase 실패 시: `status: "failed"`, `error`, `failedAt`, `retryCount` 기록
-4. 실패로 건너뛴 Phase: `status: "skipped"`
+에이전트가 컨텍스트 윈도우를 초과하지 않도록:
 
-### Resume 연동
+1. **architect**: 기능을 7개 이하, 화면을 10개 이하로 제한
+2. **ui-builder/data-engineer**: 파일 단위로 작업 (한 번에 하나씩 Write)
+3. **quality-engineer**: xcodebuild 출력을 `tail -50`으로 제한
+4. **에이전트 프롬프트에 전체 architecture.md를 임베드하지 않음** — 파일 경로만 전달하고 에이전트가 직접 Read
 
-`/autobot:resume` 커맨드가 이 상태 파일을 읽어:
-- 실패/중단 지점을 자동 감지
-- 이전 에러 메시지를 에이전트 프롬프트에 포함
-- 완료된 Phase는 건너뜀
-- 사용자가 특정 Phase를 지정하면 해당 지점부터 재실행
+## Plugin Detection Strategy
 
-## Error Recovery
+설치된 플러그인을 감지하되, 없어도 동작:
 
-When a phase fails:
-1. 상태 파일에 에러 기록 (`build-state.json`)
-2. Attempt automatic recovery (rebuild, re-sign, etc.)
-3. If unrecoverable, skip to retrospective (Phase 6) — 건너뛴 Phase는 `skipped`로 마킹
-4. Report partial completion to user with **`/autobot:resume` 재시도 안내**
+| 플러그인 | 감지 방법 | 활용 | Fallback |
+|---------|----------|------|----------|
+| Axiom | Skill 도구 호출 시도 | iOS 전문 스킬 | 내장 iOS 지식 |
+| Serena | mcp__plugin_serena_serena__* 도구 존재 | 시맨틱 편집 | Edit 도구 |
+| context7 | mcp__context7__* 도구 존재 | 최신 API 문서 | 학습 데이터 |
 
 ## Additional Resources
 
-### Reference Files
-
-For detailed coordination patterns:
-- **`references/planning-patterns.md`** — App idea analysis and feature extraction patterns
-- **`references/agent-dispatch.md`** — Advanced parallel agent coordination strategies
+| Reference | 내용 |
+|-----------|------|
+| **`references/phase-gates.md`** | Phase별 검증 항목, 통과 조건, 실패 시 동작 |
+| **`references/architecture-template.md`** | architecture.md 정형화된 템플릿 |
+| **`references/planning-patterns.md`** | 아이디어 분석, 기능 추출, 복잡도 추정 |
+| **`references/agent-dispatch.md`** | 병렬 에이전트 프롬프트 템플릿, worktree 패턴 |
+| **`references/troubleshooting.md`** | 증상별 진단 + 해결법 |

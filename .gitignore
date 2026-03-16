@@ -6,3 +6,4 @@ build/
 .autobot/learnings.json
 .autobot/deploy-status.json
 .autobot/build-log.md
+Samples/

@@ -57,51 +57,26 @@ All generated Swift files MUST use the **identifier name** for module name, stru
 6. **API Design**: If networking needed, define endpoints and response models
 7. **File Structure**: Plan the Xcode project file organization
 
-**Output: Two deliverables**
+**Output: Four deliverables**
 
 ### Deliverable 1: Architecture Document
 
-Write the architecture to `.autobot/architecture.md` with this structure:
+Write `.autobot/architecture.md` following the **정형 템플릿** (orchestrator/references/architecture-template.md).
 
-```markdown
-# [App Name] Architecture
+**모든 섹션이 존재해야 Gate 1→2를 통과한다.** 해당 없는 섹션은 "N/A"로 표시.
 
-## Overview
-[One paragraph description]
-
-## Features
-1. [Feature]: [Description]
-...
-
-## Screens
-| Screen | Purpose | Key UI | Navigation |
-|--------|---------|--------|------------|
-...
-
-## Navigation Structure
-[Tab-based or stack-based layout description]
-
-## Data Models
-(See Models/*.swift for exact type definitions)
-
-## API Endpoints (if applicable)
-| Method | Path | Description |
-...
-
-## File Structure
-```
-AppName/
-├── App/
-│   └── AppNameApp.swift
-├── Models/
-├── Views/
-│   ├── Screens/
-│   └── Components/
-├── ViewModels/
-├── Services/
-└── Utilities/
-```
-```
+필수 섹션:
+- `## Overview` — 핵심 가치, 대상 사용자
+- `## Features` — 기능 목록 (P0/P1/P2 우선순위)
+- `## Screens` — 화면 목록, 탭/네비게이션 구조
+- `## Navigation Structure` — 화면 계층 트리
+- `## Data Models` — 관계 개요 (상세는 Models/*.swift)
+- `## Integration Map` — ViewModel ↔ ServiceProtocol 매핑
+- `## Privacy API Categories` — PrivacyInfo.xcprivacy에 넣을 항목
+- `## Required Permissions` — Info.plist 권한 키 + 한국어 설명
+- `## Entitlements` — 필요한 capability
+- `## Dependencies` — SPM 패키지 (없으면 N/A)
+- `## File Structure` — 디렉토리 구조
 
 ### Deliverable 2: Swift Model Files (Type Contract)
 

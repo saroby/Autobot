@@ -32,7 +32,29 @@ allowed-tools:
 4. **과거 학습을 먼저 확인한다** - `.autobot/learnings.json` 파일이 있으면 읽는다
 5. **매 Phase 완료/실패마다 `.autobot/build-state.json`을 갱신한다** - 중단 시 `/autobot:resume`으로 재개 가능
 
-## Phase 0: 환경 준비 및 과거 학습 로드
+## Phase 0: Pre-flight 검증 및 환경 준비
+
+### Pre-flight Check (빌드 시작 전 필수 검증)
+
+```bash
+# 필수 — 하나라도 실패하면 빌드 시작하지 않음
+xcode-select -p                          # Xcode CLI Tools
+xcrun simctl list runtimes | grep -q iOS  # iOS Simulator 런타임
+python3 --version                         # Python 3 (pbxproj fallback)
+git --version                             # Git
+```
+
+실패 시 해결 방법을 안내하고 빌드를 중단한다.
+
+### 환경 탐색 (선택 — 없어도 진행)
+
+```bash
+command -v xcodegen   # → 있으면 사용, 없으면 pbxproj fallback
+command -v fastlane   # → 없으면 Phase 5에서 auto-install
+# ASC 인증: .env에서 확인 (SessionStart 훅이 systemMessage로 전달)
+```
+
+### 과거 학습 + 플러그인 감지
 
 1. 과거 학습 데이터 확인:
    ```
@@ -41,10 +63,8 @@ allowed-tools:
    과거 빌드에서 배운 교훈을 이번 빌드에 적용한다.
 
 2. 설치된 플러그인 자동 감지:
-   - `Skill` 도구로 사용 가능한 스킬 목록 파악
-   - Axiom 스킬 (ios-ui, ios-data, ios-build 등) 사용 가능 여부 확인
-   - Serena 시맨틱 코딩 도구 사용 가능 여부 확인
-   - context7 문서 조회 도구 사용 가능 여부 확인
+   - `Skill` 도구로 Axiom 스킬 사용 가능 여부 확인
+   - Serena, context7 도구 존재 여부 확인
    - 사용 가능한 도구는 활용하되, 없으면 기본 도구로 진행
 
 3. 앱 이름 결정:
@@ -115,7 +135,14 @@ architect 에이전트를 Agent 도구로 실행:
 
 이 Model 파일들이 Phase 3 병렬 에이전트들의 **공유 타입 계약** 역할을 한다.
 
-**→ Phase 1 완료 시 `build-state.json`의 `phases.1`을 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
+**→ Gate 1→2 검증** (orchestrator/references/phase-gates.md 참조):
+- `.autobot/architecture.md` 존재, `## Screens`/`## Integration Map`/`## Privacy API Categories` 섹션 포함
+- `Models/*.swift` 1개 이상 존재, `Models/ServiceProtocols.swift` 존재
+- 모든 Models/*.swift에 `import` 문 포함
+- **Models/ 체크섬 저장**: `find Models/ -name "*.swift" -exec md5 {} \; | sort | md5` → `build-state.json.modelsChecksum`에 기록
+- Gate 실패 시 → architect 재실행 (최대 2회)
+
+**→ Gate 통과 시 `build-state.json`의 `phases.1`을 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
 
 ## Phase 2: Xcode 프로젝트 생성
 
@@ -136,7 +163,8 @@ ios-scaffold 스킬 참조하여:
     - xcodegen: `project.yml`에 `packages` 및 `dependencies` 추가
     - fallback: `Package.swift` 생성 후 xcodebuild가 resolve
 
-**→ Phase 2 완료 시 `build-state.json`의 `phases.2`를 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
+**→ Gate 2→3 검증**: `.xcodeproj` 존재, `project.pbxproj` 크기 > 0, `PrivacyInfo.xcprivacy` 존재, `.entitlements` 존재, `.gitignore` 존재
+**→ Gate 통과 시 `build-state.json`의 `phases.2`를 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
 
 ## Phase 3: 병렬 개발 (핵심 단계)
 
@@ -204,8 +232,16 @@ git merge <data-engineer-branch> --no-edit
 - **Models/ 디렉토리의 파일을 절대 수정하지 않는다**
 - Axiom ios-data 스킬 사용 가능하면 활용
 
-**→ Phase 3 완료 시 `build-state.json`의 `phases.3`을 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
-**→ Phase 3 실패 시 `phases.3`을 `{"status": "failed", "error": "<에러 메시지>", "failedAt": "<ISO 8601>"}` 로 갱신하고 Phase 6(회고)으로 건너뜀**
+**→ Gate 3→4 검증**:
+- `Views/` 에 .swift 1개+, `ViewModels/` 에 .swift 1개+, `Services/` 에 .swift 1개+
+- `App/<AppName>App.swift`에 `.modelContainer` 포함
+- **Models/ 무결성**: 체크섬 재계산 → `build-state.json.modelsChecksum`과 비교
+  - 불일치 → `git checkout -- Models/` 자동 복원 후 Gate 재검증
+- worktree 브랜치 머지 완료, 충돌 없음
+- Gate 실패 시 → Phase 3 재실행 (최대 2회)
+
+**→ Gate 통과 시 `build-state.json`의 `phases.3`을 `{"status": "completed"}` 로 갱신**
+**→ Gate 2회 실패 시 `phases.3`을 `{"status": "failed", "error": "..."}` 로 갱신하고 Phase 6(회고)으로 건너뜀**
 
 ## Phase 4: 통합 및 빌드 검증
 
@@ -225,8 +261,14 @@ git merge <data-engineer-branch> --no-edit
 7. 에러 있으면 반복 수정 (최대 5회)
 8. Axiom ios-build 스킬 사용 가능하면 활용
 
-**→ Phase 4 완료 시 `build-state.json`의 `phases.4`를 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
-**→ Phase 4 실패 시 (5회 재시도 후에도 빌드 실패) `phases.4`를 `{"status": "failed", "error": "<최종 에러 메시지>", "failedAt": "<ISO 8601>", "retryCount": 5}` 로 갱신하고 Phase 6(회고)으로 건너뜀**
+**→ Gate 4→5 검증**:
+- `xcodebuild build` 종료 코드 == 0 ("BUILD SUCCEEDED")
+- `App/ServiceStubs.swift` 삭제 완료
+- `PrivacyInfo.xcprivacy`에 architecture.md의 모든 API 카테고리 반영됨
+- Gate 실패 시 → quality-engineer 재실행 (최대 2회, 이전 에러 전달)
+
+**→ Gate 통과 시 `build-state.json`의 `phases.4`를 `{"status": "completed"}` 로 갱신**
+**→ Gate 2회 실패 시 `phases.4`를 `{"status": "failed", "error": "..."}` 로 갱신하고 Phase 6(회고)으로 건너뜀**
 
 ## Phase 5: TestFlight 배포
 

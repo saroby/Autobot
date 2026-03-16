@@ -1,0 +1,142 @@
+# Phase Validation Gates
+
+매 Phase 완료 후, 다음 Phase에 진입하기 전에 **산출물 검증(Validation Gate)**을 통과해야 한다.
+Gate를 통과하지 못하면 Phase를 `failed`로 마킹하고 재시도하거나 사용자에게 안내한다.
+
+## Gate 정의
+
+### Gate 0→1: 환경 준비 완료
+
+```
+CHECK:
+  ✓ 프로젝트 디렉토리 존재
+  ✓ git init 완료 (.git/ 존재)
+  ✓ .autobot/ 디렉토리 존재
+  ✓ .autobot/build-state.json 존재 & 유효한 JSON
+  ✓ appName이 /^[A-Z][a-zA-Z0-9]*$/ 패턴 충족
+FAIL → Phase 0 재실행
+```
+
+### Gate 1→2: 아키텍처 + 타입 계약 완료
+
+```
+CHECK:
+  ✓ .autobot/architecture.md 존재 & 비어있지 않음
+  ✓ Models/*.swift 파일이 1개 이상 존재
+  ✓ Models/ServiceProtocols.swift 존재
+  ✓ 모든 Models/*.swift에 'import SwiftData' 또는 'import Foundation' 포함
+  ✓ architecture.md에 ## Screens 섹션 존재
+  ✓ architecture.md에 ## Integration Map 섹션 존재
+  ✓ architecture.md에 ## Privacy API Categories 섹션 존재
+FAIL → architect 에이전트 재실행 (최대 2회)
+```
+
+### Gate 2→3: Xcode 프로젝트 생성 완료
+
+```
+CHECK:
+  ✓ *.xcodeproj 디렉토리 존재
+  ✓ *.xcodeproj/project.pbxproj 존재 & 크기 > 0
+  ✓ <AppName>/App/<AppName>App.swift 존재
+  ✓ <AppName>/Assets.xcassets 존재
+  ✓ <AppName>/PrivacyInfo.xcprivacy 존재
+  ✓ <AppName>/<AppName>.entitlements 존재
+  ✓ .gitignore 존재
+FAIL → scaffold 재실행
+```
+
+### Gate 3→4: 병렬 코드 생성 완료
+
+```
+CHECK:
+  ✓ Views/ 디렉토리에 .swift 파일 1개 이상
+  ✓ ViewModels/ 디렉토리에 .swift 파일 1개 이상
+  ✓ Services/ 디렉토리에 .swift 파일 1개 이상
+  ✓ App/<AppName>App.swift에 '.modelContainer' 문자열 포함
+  ✓ Models/*.swift 파일이 Phase 1과 동일 (수정되지 않음 — checksum 비교)
+  ✓ worktree 브랜치 머지 완료 (충돌 없음)
+FAIL:
+  - Models/ 변경됨 → git checkout으로 Models/ 복원 후 Phase 3 재실행
+  - 파일 누락 → 해당 에이전트만 재실행
+  - 머지 충돌 → quality-engineer에 충돌 해결 위임
+```
+
+### Gate 4→5: 빌드 성공
+
+```
+CHECK:
+  ✓ xcodebuild build 종료 코드 == 0
+  ✓ "BUILD SUCCEEDED" 문자열 출력에 포함
+  ✓ App/ServiceStubs.swift 삭제됨 (실제 Repository로 교체 완료)
+  ✓ PrivacyInfo.xcprivacy에 architecture.md의 모든 API 카테고리 반영
+FAIL → quality-engineer 에이전트 재실행 (최대 2회, 이전 에러 전달)
+```
+
+### Gate 5→6: 배포 완료 (soft gate — 실패해도 진행)
+
+```
+CHECK:
+  ✓ .autobot/deploy-status.json 존재
+  ✓ deploy-status.json에 archive_path 또는 upload_success 존재
+SOFT FAIL → Phase 6 진행 (배포 실패도 학습 대상)
+```
+
+## Gate 실행 방법
+
+각 Gate는 build.md의 Phase 완료 직후, 상태 저장 직전에 실행한다.
+
+```
+Phase N 완료
+  ↓
+Gate N→N+1 검증
+  ↓ PASS
+build-state.json에 "completed" 기록
+  ↓
+Phase N+1 시작
+```
+
+```
+Phase N 완료
+  ↓
+Gate N→N+1 검증
+  ↓ FAIL
+재시도 가능? (retryCount < maxRetry)
+  ├─ Yes → Phase N 재실행
+  └─ No  → build-state.json에 "failed" 기록, Phase 6으로 건너뜀
+```
+
+## Gate에서 사용하는 검증 명령
+
+```bash
+# 파일 존재 확인
+test -f "<path>"
+
+# 디렉토리에 .swift 파일 존재 확인
+ls <dir>/*.swift &>/dev/null
+
+# 파일에 특정 문자열 포함 확인
+grep -q "<pattern>" "<file>"
+
+# Models/ 무결성 (Phase 1 완료 시 체크섬 저장)
+find Models/ -name "*.swift" -exec md5 {} \; | sort | md5
+
+# xcodebuild 결과 확인
+xcodebuild build ... 2>&1 | tail -1 | grep -q "BUILD SUCCEEDED"
+```
+
+## Models/ 무결성 보호
+
+Phase 1 완료 시 Models/ 디렉토리의 체크섬을 `build-state.json`에 저장:
+
+```json
+{
+  "phases": {
+    "1": {
+      "status": "completed",
+      "modelsChecksum": "a1b2c3d4e5f6..."
+    }
+  }
+}
+```
+
+Phase 3 완료 후 Gate 3→4에서 체크섬을 재계산하여 비교. 불일치 시 `git checkout -- Models/`로 복원.
