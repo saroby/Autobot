@@ -36,7 +36,7 @@ if [ -z "$TEAM_ID" ]; then
     grep -oE '[A-Z0-9]{10}' | head -1 || echo "")
 fi
 
-# Create ExportOptions.plist
+# Create ExportOptions.plist (destination: upload → export와 업로드를 한 단계로 수행)
 cat > "$EXPORT_OPTIONS" << 'PLIST_EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -44,14 +44,16 @@ cat > "$EXPORT_OPTIONS" << 'PLIST_EOF'
 <dict>
     <key>method</key>
     <string>app-store-connect</string>
-    <key>signingStyle</key>
-    <string>automatic</string>
-    <key>uploadBitcode</key>
-    <false/>
-    <key>uploadSymbols</key>
-    <true/>
     <key>destination</key>
     <string>upload</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>uploadSymbols</key>
+    <true/>
+    <key>manageAppVersionAndBuildNumber</key>
+    <true/>
+    <key>testFlightInternalTestingOnly</key>
+    <true/>
 </dict>
 </plist>
 PLIST_EOF
@@ -83,42 +85,48 @@ if [ ! -d "$ARCHIVE_PATH" ]; then
 fi
 echo "Archive created: $ARCHIVE_PATH"
 
-echo "=== Step 2: Export IPA ==="
-xcodebuild -exportArchive \
-  -archivePath "$ARCHIVE_PATH" \
-  -exportOptionsPlist "$EXPORT_OPTIONS" \
-  -exportPath "$EXPORT_PATH" \
-  -allowProvisioningUpdates 2>&1
+echo "=== Step 2: Export + Upload to App Store Connect ==="
+# xcodebuild -exportArchive with destination:upload handles export AND upload in one step.
+# xcrun altool is deprecated — this is the official replacement.
 
-IPA_FILE=$(ls "$EXPORT_PATH"/*.ipa 2>/dev/null | head -1)
-if [ -z "$IPA_FILE" ]; then
-  echo "Error: IPA export failed"
-  exit 1
-fi
-echo "IPA exported: $IPA_FILE"
+EXPORT_CMD=(
+  xcodebuild -exportArchive
+  -archivePath "$ARCHIVE_PATH"
+  -exportOptionsPlist "$EXPORT_OPTIONS"
+  -exportPath "$EXPORT_PATH"
+  -allowProvisioningUpdates
+)
 
-echo "=== Step 3: Upload to App Store Connect ==="
-if [ -n "${ASC_API_KEY_ID:-}" ] && [ -n "${ASC_API_ISSUER_ID:-}" ]; then
-  echo "Uploading with API Key..."
-  xcrun altool --upload-app \
-    -f "$IPA_FILE" \
-    --type ios \
-    --apiKey "$ASC_API_KEY_ID" \
-    --apiIssuer "$ASC_API_ISSUER_ID" 2>&1
-elif [ -n "${APPLE_ID:-}" ] && [ -n "${APP_SPECIFIC_PASSWORD:-}" ]; then
-  echo "Uploading with Apple ID..."
-  xcrun altool --upload-app \
-    -f "$IPA_FILE" \
-    --type ios \
-    -u "$APPLE_ID" \
-    -p "$APP_SPECIFIC_PASSWORD" 2>&1
+if [ -n "${ASC_API_KEY_ID:-}" ] && [ -n "${ASC_API_ISSUER_ID:-}" ] && [ -n "${ASC_API_KEY_PATH:-}" ]; then
+  echo "Authenticating with App Store Connect API Key..."
+  EXPORT_CMD+=(
+    -authenticationKeyPath "$ASC_API_KEY_PATH"
+    -authenticationKeyID "$ASC_API_KEY_ID"
+    -authenticationKeyIssuerID "$ASC_API_ISSUER_ID"
+  )
 else
-  echo "Warning: No App Store Connect credentials found."
-  echo "Set ASC_API_KEY_ID + ASC_API_ISSUER_ID, or APPLE_ID + APP_SPECIFIC_PASSWORD"
-  echo "IPA is available at: $IPA_FILE"
-  echo "Upload manually via Xcode Organizer or Transporter app."
-  exit 0
+  echo "No API Key found. Attempting upload with Xcode-stored credentials..."
+  echo "(Ensure your Apple ID is signed in at Xcode → Settings → Accounts)"
+fi
+
+"${EXPORT_CMD[@]}" 2>&1
+EXPORT_EXIT=$?
+
+if [ $EXPORT_EXIT -ne 0 ]; then
+  # Export+upload failed — check if IPA was at least created
+  IPA_FILE=$(ls "$EXPORT_PATH"/*.ipa 2>/dev/null | head -1)
+  if [ -n "$IPA_FILE" ]; then
+    echo "Warning: IPA exported but upload failed."
+    echo "IPA is available at: $IPA_FILE"
+    echo "Upload manually via:"
+    echo "  1. Apple Transporter app (Mac App Store, free)"
+    echo "  2. Xcode → Window → Organizer → Distribute App"
+  else
+    echo "Error: Export failed."
+  fi
+  exit 1
 fi
 
 echo "=== Upload Complete ==="
-echo "Build uploaded to App Store Connect. Check TestFlight in App Store Connect."
+echo "Build exported and uploaded to App Store Connect."
+echo "Check TestFlight status at: https://appstoreconnect.apple.com"

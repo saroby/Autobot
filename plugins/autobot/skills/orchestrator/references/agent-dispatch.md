@@ -2,36 +2,41 @@
 
 ## Parallel Agent Execution
 
-### File Conflict Prevention
+### File Ownership & Type Contract
 
-Agents write to separate directories to prevent conflicts:
+Agents write to separate directories to prevent conflicts. `Models/` is the **shared type contract** created by architect — no other agent may modify it.
 
-| Agent | Writes To | Reads From |
-|-------|-----------|------------|
-| architect | `.autobot/architecture.md` | (user input) |
-| ui-builder | `Views/`, `ViewModels/`, `App/` | `.autobot/architecture.md` |
-| data-engineer | `Models/`, `Services/` | `.autobot/architecture.md` |
-| quality-engineer | `Tests/`, fixes in any file | All source files |
-| deployer | `build/`, config files | Built app |
+| Agent | Writes To | Reads From | MUST NOT Touch |
+|-------|-----------|------------|----------------|
+| architect | `.autobot/architecture.md`, `Models/` | (user input) | — |
+| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/*.swift`, `.autobot/architecture.md` | `Models/`, `Services/` |
+| data-engineer | `Services/`, `Utilities/` | `Models/*.swift`, `.autobot/architecture.md` | `Models/`, `Views/`, `ViewModels/`, `App/` |
+| quality-engineer | `Tests/`, fixes in any file | All source files | — |
+| deployer | `build/`, config files | Built app | — |
 
 ### Agent Prompt Templates
 
 #### For ui-builder dispatch:
 ```
-Read the architecture at [project]/.autobot/architecture.md.
+FIRST: Read ALL .swift files in [project]/Models/ to learn exact type names, properties, and initializers.
+THEN: Read the architecture at [project]/.autobot/architecture.md for screen inventory and navigation.
 Generate all SwiftUI views, view models, and the app entry point.
-Write files to the [project]/ directory following the file structure in the architecture.
+Write files to [project]/Views/, [project]/ViewModels/, and [project]/App/.
+In the App entry point, register ALL @Model types in .modelContainer(for:).
 Use iOS 26+ APIs: @Observable, NavigationStack, .glassEffect().
-Do NOT modify files in Models/ or Services/ — those are handled by another agent.
+Do NOT create, modify, or overwrite files in Models/ or Services/ — those are handled by other agents.
+Use the EXACT type names and initializer signatures from Models/*.swift.
 ```
 
 #### For data-engineer dispatch:
 ```
-Read the architecture at [project]/.autobot/architecture.md.
-Implement all SwiftData models, repositories, and network services.
-Write files to the [project]/ directory following the file structure in the architecture.
-Use iOS 26+ APIs: @Model, actor isolation, async/await.
-Do NOT modify files in Views/ or ViewModels/ — those are handled by another agent.
+FIRST: Read ALL .swift files in [project]/Models/ to learn exact type names, properties, and initializers.
+THEN: Read the architecture at [project]/.autobot/architecture.md for API endpoints and data flow.
+Implement repositories and network services that use the existing Model types.
+Write files to [project]/Services/ and [project]/Utilities/.
+Use iOS 26+ APIs: actor isolation, async/await, FetchDescriptor.
+Do NOT create, modify, or overwrite files in Models/, Views/, ViewModels/, or App/.
+Use the EXACT type names and initializer signatures from Models/*.swift.
 ```
 
 ## AgentTeam Integration

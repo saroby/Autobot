@@ -15,12 +15,16 @@ The Autobot build pipeline has 6 phases executed in strict order:
 | Phase | Name | Agent | Parallel | Duration Target |
 |-------|------|-------|----------|-----------------|
 | 0 | Environment Setup | (self) | No | 30s |
-| 1 | Architecture | architect | No | 2min |
+| 1 | Architecture + Type Contract | architect | No | 3min |
 | 2 | Project Scaffold | (self) | No | 1min |
 | 3 | Parallel Coding | ui-builder + data-engineer | **Yes** | 5min |
 | 4 | Integration & Build | quality-engineer | No | 3min |
 | 5 | TestFlight Deploy | deployer | No | 5min |
 | 6 | Retrospective | (self) | No | 30s |
+
+**Phase 1 now produces two outputs:**
+1. `.autobot/architecture.md` — design document
+2. `Models/*.swift` — compilable @Model files that serve as the **type contract** for Phase 3
 
 ## Agent Dispatch Strategy
 
@@ -47,8 +51,11 @@ Both agents read the same `.autobot/architecture.md` and write to different dire
 
 Each agent receives context via files, not direct messages:
 - `.autobot/architecture.md` — Architecture specification
+- `Models/*.swift` — **Type contract** (compilable @Model files created by architect)
 - `.autobot/learnings.json` — Past build learnings
 - `.autobot/deploy-status.json` — Deployment results
+
+**Type contract rule:** Both ui-builder and data-engineer MUST read `Models/*.swift` files before writing any code, and MUST NOT modify them. The Model files are the single source of truth for type names, property names, and initializer signatures.
 
 ## Plugin Detection Strategy
 

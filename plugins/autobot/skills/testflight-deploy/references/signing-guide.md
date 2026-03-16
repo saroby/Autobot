@@ -11,41 +11,48 @@ export ASC_API_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Issuer ID
 export ASC_API_KEY_PATH="~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8"
 ```
 
-Upload command:
+Export + Upload (한 단계):
 ```bash
-xcrun altool --upload-app \
-  -f "build/export/AppName.ipa" \
-  --type ios \
-  --apiKey "$ASC_API_KEY_ID" \
-  --apiIssuer "$ASC_API_ISSUER_ID"
+xcodebuild -exportArchive \
+  -archivePath "build/AppName.xcarchive" \
+  -exportOptionsPlist ExportOptions.plist \
+  -exportPath "build/export" \
+  -allowProvisioningUpdates \
+  -authenticationKeyPath "$ASC_API_KEY_PATH" \
+  -authenticationKeyID "$ASC_API_KEY_ID" \
+  -authenticationKeyIssuerID "$ASC_API_ISSUER_ID"
 ```
 
-### Method 2: Apple ID + App-Specific Password
+ExportOptions.plist에 `destination: upload`을 설정하면 IPA 생성과 업로드가 동시에 수행된다.
 
-Set these environment variables:
+### Method 2: Xcode 로그인 계정 사용
+
+Xcode Settings → Accounts에 Apple ID가 로그인되어 있으면 인증 파라미터 없이도 업로드 가능:
 ```bash
-export APPLE_ID="your@email.com"
-export APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"  # Generate at appleid.apple.com
+xcodebuild -exportArchive \
+  -archivePath "build/AppName.xcarchive" \
+  -exportOptionsPlist ExportOptions.plist \
+  -exportPath "build/export" \
+  -allowProvisioningUpdates
 ```
 
-Upload command:
-```bash
-xcrun altool --upload-app \
-  -f "build/export/AppName.ipa" \
-  --type ios \
-  -u "$APPLE_ID" \
-  -p "$APP_SPECIFIC_PASSWORD"
+### Method 3: Apple Transporter (Manual Fallback)
+
+자동 업로드가 실패하면:
+```
+1. Mac App Store에서 "Transporter" 앱 설치 (무료)
+2. Transporter에 IPA 파일 드래그 앤 드롭
+3. 업로드 클릭
 ```
 
-### Method 3: Xcode (Manual Fallback)
+또는 Xcode Organizer:
+```
+1. Xcode → Window → Organizer
+2. 아카이브 선택 → Distribute App
+3. TestFlight & App Store → Upload
+```
 
-If neither method is available:
-```
-1. Open Xcode
-2. Window → Organizer
-3. Select the archive
-4. Distribute App → App Store Connect → Upload
-```
+> **참고**: `xcrun altool`은 deprecated 되었다. 위 방법들이 공식 대체 방법이다.
 
 ## ExportOptions.plist
 
@@ -57,17 +64,23 @@ If neither method is available:
 <dict>
     <key>method</key>
     <string>app-store-connect</string>
-    <key>signingStyle</key>
-    <string>automatic</string>
-    <key>uploadBitcode</key>
-    <false/>
-    <key>uploadSymbols</key>
-    <true/>
     <key>destination</key>
     <string>upload</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>uploadSymbols</key>
+    <true/>
+    <key>manageAppVersionAndBuildNumber</key>
+    <true/>
+    <key>testFlightInternalTestingOnly</key>
+    <true/>
 </dict>
 </plist>
 ```
+
+> `destination: upload` — export와 업로드를 한 단계로 수행
+> `manageAppVersionAndBuildNumber: true` — 빌드 번호 충돌 자동 해결
+> `testFlightInternalTestingOnly: true` — 내부 테스트 전용 (외부 배포 방지)
 
 ## TestFlight Group Setup via API
 
@@ -146,6 +159,7 @@ xcodebuild archive ... CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates
 - Or register the App ID in App Store Connect first
 
 ### "Unable to upload: authentication failed"
-- Verify ASC_API_KEY_ID and ASC_API_ISSUER_ID
-- Check .p8 key file exists at ASC_API_KEY_PATH
-- For Apple ID method, regenerate app-specific password
+- Verify ASC_API_KEY_ID and ASC_API_ISSUER_ID values
+- Check .p8 key file exists at ASC_API_KEY_PATH: `ls -la "$ASC_API_KEY_PATH"`
+- Verify key has "App Manager" or "Admin" role in App Store Connect → Integrations
+- For Xcode account method, re-authenticate in Xcode Settings → Accounts

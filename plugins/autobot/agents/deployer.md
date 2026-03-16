@@ -35,9 +35,10 @@ grep -r "DEVELOPMENT_TEAM" *.xcodeproj/project.pbxproj | head -5
 
 If no team is found, set automatic signing with the first available identity.
 
-### Step 2: Configure Signing
+### Step 2: Configure ExportOptions.plist
 
-Ensure the project has proper signing:
+`destination: upload`을 설정하면 export와 App Store Connect 업로드가 한 단계로 수행된다.
+
 ```bash
 # ExportOptions.plist 생성
 cat > ExportOptions.plist << 'PLIST'
@@ -47,11 +48,15 @@ cat > ExportOptions.plist << 'PLIST'
 <dict>
     <key>method</key>
     <string>app-store-connect</string>
+    <key>destination</key>
+    <string>upload</string>
     <key>signingStyle</key>
     <string>automatic</string>
-    <key>uploadBitcode</key>
-    <false/>
     <key>uploadSymbols</key>
+    <true/>
+    <key>manageAppVersionAndBuildNumber</key>
+    <true/>
+    <key>testFlightInternalTestingOnly</key>
     <true/>
 </dict>
 </plist>
@@ -71,33 +76,31 @@ xcodebuild archive \
   CODE_SIGN_STYLE=Automatic 2>&1
 ```
 
-### Step 4: Export IPA
+### Step 4: Export + Upload (한 단계)
+
+`xcodebuild -exportArchive`가 IPA 생성과 App Store Connect 업로드를 동시에 수행한다.
 
 ```bash
+# 방법 1: App Store Connect API Key (권장)
+xcodebuild -exportArchive \
+  -archivePath "build/Archive.xcarchive" \
+  -exportOptionsPlist ExportOptions.plist \
+  -exportPath "build/export" \
+  -allowProvisioningUpdates \
+  -authenticationKeyPath "$ASC_API_KEY_PATH" \
+  -authenticationKeyID "$ASC_API_KEY_ID" \
+  -authenticationKeyIssuerID "$ASC_API_ISSUER_ID" 2>&1
+
+# 방법 2: Apple ID 인증 (API Key 미사용 시)
 xcodebuild -exportArchive \
   -archivePath "build/Archive.xcarchive" \
   -exportOptionsPlist ExportOptions.plist \
   -exportPath "build/export" \
   -allowProvisioningUpdates 2>&1
+# Apple ID 방식은 Xcode에 계정이 로그인되어 있어야 함
 ```
 
-### Step 5: Upload to App Store Connect
-
-```bash
-# 방법 1: xcrun notarytool (Xcode 15+)
-xcrun altool --upload-app \
-  -f "build/export/*.ipa" \
-  --type ios \
-  -u "$APP_STORE_CONNECT_USERNAME" \
-  -p "$APP_STORE_CONNECT_PASSWORD" 2>&1
-
-# 방법 2: App Store Connect API Key 사용
-xcrun altool --upload-app \
-  -f "build/export/*.ipa" \
-  --type ios \
-  --apiKey "$ASC_API_KEY_ID" \
-  --apiIssuer "$ASC_API_ISSUER_ID" 2>&1
-```
+> **참고**: `xcrun altool`은 deprecated 되었다. `xcodebuild -exportArchive` + `destination: upload`이 공식 대체 방법이다.
 
 ### Step 6: TestFlight Group Setup
 
@@ -129,8 +132,8 @@ curl -s -X POST "https://api.appstoreconnect.apple.com/v1/betaGroups" \
 
 **Fallback Strategy:**
 App Store Connect API 키가 없는 경우:
-1. `xcrun altool` 사용 시도
-2. 실패하면 Xcode GUI 사용 안내 메시지 출력
+1. Apple ID가 Xcode에 로그인되어 있으면 `-exportArchive`를 인증 파라미터 없이 시도
+2. 실패하면 IPA 파일 경로 안내 + Xcode Organizer 또는 Apple Transporter 앱으로 수동 업로드 안내
 3. `.autobot/deploy-status.json`에 상태 기록
 
 **Error Handling:**

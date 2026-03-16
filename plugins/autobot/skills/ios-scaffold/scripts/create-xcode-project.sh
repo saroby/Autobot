@@ -24,6 +24,27 @@ if [ -z "$APP_NAME" ]; then
   exit 1
 fi
 
+# ── Sanitize APP_NAME to valid ASCII PascalCase identifier ──
+# Remove all non-ASCII characters (Korean, emoji, etc.)
+APP_NAME=$(echo "$APP_NAME" | LC_ALL=C sed 's/[^a-zA-Z0-9 _-]//g')
+# Trim leading/trailing whitespace
+APP_NAME=$(echo "$APP_NAME" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+# Convert delimiter-separated words to PascalCase (capitalize first letter of each word, preserve rest)
+APP_NAME=$(echo "$APP_NAME" | sed -E 's/[-_ ]+/ /g' | awk '{
+  out=""
+  for(i=1;i<=NF;i++) out=out toupper(substr($i,1,1)) substr($i,2)
+  print out
+}')
+# Strip leading digits
+APP_NAME=$(echo "$APP_NAME" | sed 's/^[0-9]*//')
+# Enforce max length
+APP_NAME="${APP_NAME:0:30}"
+# Validate: must be ASCII PascalCase starting with uppercase letter
+if [ -z "$APP_NAME" ] || ! echo "$APP_NAME" | grep -qE '^[A-Z][a-zA-Z0-9]+$'; then
+  echo "Warning: '${APP_NAME}' is not a valid identifier. Using 'MyApp' as fallback."
+  APP_NAME="MyApp"
+fi
+
 if [ -z "$BUNDLE_ID" ]; then
   BUNDLE_ID="com.saroby.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')"
 fi
