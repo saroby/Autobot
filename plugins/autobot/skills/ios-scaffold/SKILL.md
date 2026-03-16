@@ -56,10 +56,17 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
 - `IPHONEOS_DEPLOYMENT_TARGET`: 26.0
 - `SWIFT_STRICT_CONCURRENCY`: complete
 - `ENABLE_USER_SCRIPT_SANDBOXING`: YES
+- `CODE_SIGN_ENTITLEMENTS`: `AppName/AppName.entitlements`
 
 ### Asset Catalog
 - AppIcon (1024x1024 single icon for iOS 26+)
 - AccentColor (brand color)
+
+### Required Files (자동 생성)
+- `.gitignore` — Xcode/SPM 빌드 아티팩트 제외
+- `PrivacyInfo.xcprivacy` — App Store 필수 (2024+). 기본 FileTimestamp 포함, architect가 추가 카테고리 지정
+- `AppName.entitlements` — 빈 틀. architect가 iCloud/Push 등 capability 지정 시 Phase 4에서 채움
+- Info.plist 권한 — `GENERATE_INFOPLIST_FILE=YES` 사용, `INFOPLIST_KEY_*` 빌드 설정으로 주입
 
 ## Additional Resources
 

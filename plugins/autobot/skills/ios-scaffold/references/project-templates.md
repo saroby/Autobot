@@ -39,8 +39,10 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        CODE_SIGN_ENTITLEMENTS: ${APP_NAME}/${APP_NAME}.entitlements
     resources:
       - path: ${APP_NAME}/Assets.xcassets
+      - path: ${APP_NAME}/PrivacyInfo.xcprivacy
 
   ${APP_NAME}Tests:
     type: bundle.unit-test

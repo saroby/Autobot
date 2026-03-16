@@ -120,11 +120,21 @@ architect 에이전트를 Agent 도구로 실행:
 ## Phase 2: Xcode 프로젝트 생성
 
 ios-scaffold 스킬 참조하여:
-1. Xcode 프로젝트 생성 (xcodegen 또는 swift package init)
+1. Xcode 프로젝트 생성 (xcodegen 또는 built-in pbxproj generator)
 2. iOS 26+ 타겟 설정
 3. 기본 App 엔트리포인트 생성
 4. Info.plist 및 에셋 카탈로그 설정
 5. 번들 ID 설정: `com.saroby.<identifier name을 소문자로>` (예: `com.saroby.fitnesstracker`)
+6. `.gitignore` 생성 (DerivedData, build artifacts 등 제외)
+7. `PrivacyInfo.xcprivacy` 생성 후, `.autobot/architecture.md`의 Privacy API Categories 반영
+8. `.entitlements` 파일에 architecture.md의 Entitlements 반영
+9. architecture.md의 Required Permissions를 빌드 설정에 반영:
+   - xcodegen: `project.yml`의 `INFOPLIST_KEY_` 설정에 추가
+   - fallback: `generate-pbxproj.py`의 build settings에 추가
+   - 예: `INFOPLIST_KEY_NSCameraUsageDescription = "카메라 접근 설명"`
+10. architecture.md에 Dependencies가 있으면:
+    - xcodegen: `project.yml`에 `packages` 및 `dependencies` 추가
+    - fallback: `Package.swift` 생성 후 xcodebuild가 resolve
 
 **→ Phase 2 완료 시 `build-state.json`의 `phases.2`를 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
 
@@ -200,14 +210,20 @@ git merge <data-engineer-branch> --no-edit
 ## Phase 4: 통합 및 빌드 검증
 
 1. Phase 3의 worktree 브랜치들을 메인에 머지
-2. **Integration Wiring**: `App/ServiceStubs.swift`를 삭제하고, 실제 Repository 구현체로 연결
+2. **Xcode 프로젝트에 새 파일 등록** (Phase 3에서 생성된 .swift 파일들):
+   - xcodegen: `xcodegen generate` 재실행 (sources를 자동 스캔)
+   - fallback: `generate-pbxproj.py` 재실행 (재귀 탐색으로 모든 .swift 파일 등록)
+   - 이 단계 없으면 Phase 3에서 만든 파일이 빌드에 포함되지 않음
+3. **Integration Wiring**: `App/ServiceStubs.swift`를 삭제하고, 실제 Repository 구현체로 연결
    - App 엔트리포인트에서 `ModelContainer` → `Repository` → `ViewModel` 주입 체인 구성
-3. 컴파일 에러 수정:
+4. **PrivacyInfo.xcprivacy 보완**: `.autobot/architecture.md`의 Privacy API Categories를 확인하고 빠진 항목 추가
+5. **Entitlements 보완**: architecture.md의 Entitlements 항목을 `.entitlements` 파일에 반영
+6. 컴파일 에러 수정:
    ```bash
    xcodebuild -project *.xcodeproj -scheme <scheme> -destination 'platform=iOS Simulator,name=iPhone 16 Pro' build 2>&1
    ```
-3. 에러 있으면 반복 수정 (최대 5회)
-4. Axiom ios-build 스킬 사용 가능하면 활용
+7. 에러 있으면 반복 수정 (최대 5회)
+8. Axiom ios-build 스킬 사용 가능하면 활용
 
 **→ Phase 4 완료 시 `build-state.json`의 `phases.4`를 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
 **→ Phase 4 실패 시 (5회 재시도 후에도 빌드 실패) `phases.4`를 `{"status": "failed", "error": "<최종 에러 메시지>", "failedAt": "<ISO 8601>", "retryCount": 5}` 로 갱신하고 Phase 6(회고)으로 건너뜀**

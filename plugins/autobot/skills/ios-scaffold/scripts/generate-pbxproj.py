@@ -54,6 +54,24 @@ def find_asset_catalogs(base_dir: str) -> list[str]:
     return result
 
 
+def find_resource_files(base_dir: str) -> list[str]:
+    """Find non-Swift resource files (xcprivacy, entitlements, plist, etc.)."""
+    extensions = {".xcprivacy", ".entitlements", ".plist", ".json", ".strings", ".stringsdict"}
+    # Exclude files inside .xcassets (handled separately)
+    result = []
+    for root, dirs, files in os.walk(base_dir):
+        # Skip .xcassets internals
+        if ".xcassets" in root:
+            continue
+        for f in files:
+            _, ext = os.path.splitext(f)
+            if ext in extensions:
+                rel = os.path.relpath(os.path.join(root, f), base_dir)
+                result.append(rel)
+    result.sort()
+    return result
+
+
 # ── pbxproj generation ──
 
 def generate_pbxproj(
@@ -70,6 +88,16 @@ def generate_pbxproj(
     app_swift_files = find_swift_files(sources_dir) if os.path.isdir(sources_dir) else []
     test_swift_files = find_swift_files(tests_dir) if os.path.isdir(tests_dir) else []
     asset_catalogs = find_asset_catalogs(sources_dir) if os.path.isdir(sources_dir) else []
+    resource_files = find_resource_files(sources_dir) if os.path.isdir(sources_dir) else []
+
+    # Separate entitlements (build setting, not resource phase) from other resources
+    entitlements_file = None
+    other_resources = []
+    for rf in resource_files:
+        if rf.endswith(".entitlements"):
+            entitlements_file = rf
+        else:
+            other_resources.append(rf)
 
     # ── Generate stable UUIDs ──
     uid = lambda s: make_uuid(f"{app_name}:{s}")
@@ -128,6 +156,24 @@ def generate_pbxproj(
         file_refs.append((ref_id, ac, name, '"<group>"', "folder.assetcatalog"))
         build_files.append((build_id, ref_id, "appResources"))
         app_group_children.append(ref_id)
+
+    # Resource files (PrivacyInfo.xcprivacy, plists, etc.) — go to Resources phase
+    for rf in other_resources:
+        ref_id = uid(f"fileRef:{rf}")
+        build_id = uid(f"buildFile:{rf}")
+        name = os.path.basename(rf)
+        ftype = "text.plist.xml" if rf.endswith((".plist", ".xcprivacy", ".entitlements")) else "text.json"
+        file_refs.append((ref_id, rf, name, '"<group>"', ftype))
+        build_files.append((build_id, ref_id, "appResources"))
+        app_group_children.append(ref_id)
+
+    # Entitlements file — referenced in build settings, not in build phase
+    entitlements_ref_id = None
+    if entitlements_file:
+        entitlements_ref_id = uid(f"fileRef:{entitlements_file}")
+        name = os.path.basename(entitlements_file)
+        file_refs.append((entitlements_ref_id, entitlements_file, name, '"<group>"', "text.plist.entitlements"))
+        app_group_children.append(entitlements_ref_id)
 
     for sf in test_swift_files:
         ref_id = uid(f"testFileRef:{sf}")
@@ -360,6 +406,7 @@ def generate_pbxproj(
 
     # ── XCBuildConfiguration ──
     team_setting = f'\t\t\t\tDEVELOPMENT_TEAM = "{team_id}";' if team_id else '\t\t\t\tDEVELOPMENT_TEAM = "";'
+    entitlements_setting = f'\t\t\t\tCODE_SIGN_ENTITLEMENTS = "{app_name}/{entitlements_file}";' if entitlements_file else ''
 
     w('/* Begin XCBuildConfiguration section */')
     # Project-level Debug
@@ -408,6 +455,8 @@ def generate_pbxproj(
     w('\t\t\tisa = XCBuildConfiguration;')
     w('\t\t\tbuildSettings = {')
     w(f'\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;')
+    if entitlements_setting:
+        w(f'{entitlements_setting}')
     w(f'\t\t\t\tCODE_SIGN_STYLE = Automatic;')
     w(f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;')
     w(f'{team_setting}')
@@ -430,6 +479,8 @@ def generate_pbxproj(
     w('\t\t\tisa = XCBuildConfiguration;')
     w('\t\t\tbuildSettings = {')
     w(f'\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;')
+    if entitlements_setting:
+        w(f'{entitlements_setting}')
     w(f'\t\t\t\tCODE_SIGN_STYLE = Automatic;')
     w(f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;')
     w(f'{team_setting}')

@@ -57,6 +57,39 @@ echo "Creating Xcode project: ${APP_NAME}"
 echo "Bundle ID: ${BUNDLE_ID}"
 echo "Deployment Target: iOS ${DEPLOYMENT_TARGET}"
 
+# ── .gitignore (Xcode / Swift) ──
+cat > "${PROJECT_DIR}/.gitignore" << 'GITIGNORE_EOF'
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# CocoaPods (if used)
+Pods/
+
+# Autobot build artifacts
+build/
+*.xcarchive
+ExportOptions.plist
+fastlane_api_key.json
+
+# Environment
+.env
+GITIGNORE_EOF
+
 # Create directory structure
 mkdir -p "${SOURCES_DIR}/App"
 mkdir -p "${SOURCES_DIR}/Models"
@@ -103,6 +136,43 @@ cat > "${SOURCES_DIR}/Assets.xcassets/AppIcon.appiconset/Contents.json" << 'ICON
   "info": { "version": 1, "author": "xcode" }
 }
 ICON_EOF
+
+# ── PrivacyInfo.xcprivacy (Required for App Store since 2024) ──
+# Minimal privacy manifest — architect 에이전트가 필요한 API 카테고리를 추가함
+cat > "${SOURCES_DIR}/PrivacyInfo.xcprivacy" << 'PRIVACY_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
+PRIVACY_EOF
+
+# ── Entitlements (기본 틀 — architect가 기능별로 추가) ──
+cat > "${SOURCES_DIR}/${APP_NAME}.entitlements" << 'ENT_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict/>
+</plist>
+ENT_EOF
 
 # Create App Entry Point
 cat > "${SOURCES_DIR}/App/${APP_NAME}App.swift" << SWIFT_EOF
@@ -183,6 +253,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        CODE_SIGN_ENTITLEMENTS: ${APP_NAME}/${APP_NAME}.entitlements
 
   ${APP_NAME}Tests:
     type: bundle.unit-test

@@ -182,6 +182,61 @@ protocol ItemServiceProtocol {
 | DetailViewModel | ItemServiceProtocol | DetailView |
 ```
 
+### Deliverable 4: Platform Requirements (in architecture.md)
+
+`.autobot/architecture.md`에 다음 섹션들을 반드시 포함:
+
+#### Privacy API Declarations
+앱이 사용하는 Privacy-sensitive API를 `PrivacyInfo.xcprivacy`에 추가해야 할 카테고리 목록:
+
+```markdown
+## Privacy API Categories
+| API Category | Reason Code | 사용 이유 |
+|-------------|-------------|----------|
+| NSPrivacyAccessedAPICategoryFileTimestamp | C617.1 | SwiftData 파일 접근 |
+| NSPrivacyAccessedAPICategoryUserDefaults | CA92.1 | 앱 설정 저장 |
+```
+
+기본 제공: `FileTimestamp` (SwiftData 사용 시 필수). 추가 API는 기능에 따라 결정.
+
+#### Info.plist Permission Descriptions
+앱이 필요로 하는 시스템 권한과 사용자에게 보여줄 설명:
+
+```markdown
+## Required Permissions
+| Key | Description (Korean) | 사용 기능 |
+|-----|---------------------|----------|
+| NSCameraUsageDescription | 프로필 사진을 촬영하기 위해 카메라에 접근합니다 | 프로필 사진 |
+| NSPhotoLibraryUsageDescription | 프로필 사진을 선택하기 위해 사진 라이브러리에 접근합니다 | 사진 선택 |
+```
+
+권한이 필요 없는 앱이면 이 섹션을 비워둔다.
+
+#### Entitlements
+앱이 필요로 하는 시스템 capability:
+
+```markdown
+## Entitlements
+| Capability | Entitlement Key | 이유 |
+|-----------|----------------|------|
+| iCloud | com.apple.developer.icloud-container-identifiers | SwiftData CloudKit 동기화 |
+| Push Notifications | aps-environment | 알림 기능 |
+```
+
+capability가 필요 없는 앱이면 이 섹션을 비워둔다.
+
+#### SPM Dependencies (필요시)
+외부 라이브러리가 필요하면 명시:
+
+```markdown
+## Dependencies
+| Package | URL | Version | 사용 목적 |
+|---------|-----|---------|----------|
+| Kingfisher | https://github.com/onevcat/Kingfisher | 8.0.0+ | 이미지 캐싱/다운로드 |
+```
+
+외부 의존성 없이 구현 가능하면 이 섹션을 비워둔다. **가능한 한 Apple 기본 프레임워크만 사용한다.**
+
 **Quality Standards:**
 - Every screen must have a clear purpose
 - Data models must have proper relationships and complete initializers
@@ -189,10 +244,13 @@ protocol ItemServiceProtocol {
 - File structure must enable parallel development (separate directories per domain)
 - **Every Model file must compile independently** (correct imports, no missing types)
 - **Enums referenced by models must be defined in the same or a separate Model file**
+- **Privacy manifest must list ALL accessed API categories** (App Store rejection 방지)
+- **Permission descriptions must be Korean** (한국 사용자 대상)
 
 **Constraints:**
 - Do NOT generate Views, ViewModels, Repositories, or Services — only architecture doc + Model files + Service protocols
 - Do NOT ask the user any questions
 - Make all design decisions autonomously based on best practices
 - Prefer simplicity over complexity
+- Prefer Apple frameworks over third-party dependencies
 - Target iOS 26 deployment minimum
