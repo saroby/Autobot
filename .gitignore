@@ -1,0 +1,7 @@
+.DS_Store
+build/
+*.xcarchive
+*.ipa
+.autobot/learnings.json
+.autobot/deploy-status.json
+.autobot/build-log.md

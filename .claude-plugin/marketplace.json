@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "autobot-marketplace",
+  "description": "App idea to TestFlight in one command. Enterprise-grade iOS 26+ app builder with parallel agent orchestration.",
+  "owner": {
+    "name": "saroby"
+  },
+  "plugins": [
+    {
+      "name": "autobot",
+      "description": "App idea to TestFlight in one command. Enterprise-grade iOS 26+ app builder with parallel agent orchestration and self-improving build process.",
+      "version": "0.1.0",
+      "source": ".",
+      "category": "development"
+    }
+  ]
+}
