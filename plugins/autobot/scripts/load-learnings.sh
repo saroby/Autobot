@@ -3,6 +3,17 @@
 set -euo pipefail
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+
+# ── Step 0: .env.example 자동 복사 ──
+# 프로젝트에 .env도 .env.example도 없으면 템플릿 복사
+if [ ! -f "${PROJECT_DIR}/.env" ] && [ ! -f "${PROJECT_DIR}/.env.example" ]; then
+  TEMPLATE="${PLUGIN_ROOT}/.env.example"
+  if [ -n "$PLUGIN_ROOT" ] && [ -f "$TEMPLATE" ]; then
+    cp "$TEMPLATE" "${PROJECT_DIR}/.env.example"
+    echo "[Autobot] .env.example 템플릿을 작업 폴더에 복사했습니다. .env로 이름을 바꾸고 값을 입력하세요."
+  fi
+fi
 
 # ── Step 1: .env 파일에서 환경변수 로드 ──
 # 프로젝트 .env → 글로벌 ~/.config/autobot/.env 순서로 탐색
