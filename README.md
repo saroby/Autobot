@@ -69,24 +69,61 @@ claude --plugin-dir /path/to/Autobot/plugins/autobot
 - iOS 26+ SDK
 - Apple Developer 계정 (TestFlight 배포용)
 
-## 선택적 설정
+## 환경변수 설정 (TestFlight 배포용)
 
-### TestFlight 자동 업로드
+TestFlight 자동 배포를 사용하려면 `.env` 파일을 설정합니다.
+세션 시작 시 `SessionStart` 훅이 자동으로 읽어 환경변수를 주입합니다.
 
-App Store Connect API Key 방식 (권장):
+### 방법 1: 프로젝트별 설정 (권장)
+
+앱을 빌드할 작업 디렉토리에 `.env` 파일 생성:
+
 ```bash
-export ASC_API_KEY_ID="XXXXXXXXXX"
-export ASC_API_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-export ASC_API_KEY_PATH="~/.appstoreconnect/private_keys/AuthKey_XXX.p8"
+# 작업 디렉토리에서
+cat > .env << 'EOF'
+ASC_API_KEY_ID=XXXXXXXXXX
+ASC_API_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ASC_API_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8
+DEVELOPMENT_TEAM=A1B2C3D4E5
+TESTER_EMAIL=your@email.com
+EOF
 ```
 
-또는 Apple ID 방식:
+### 방법 2: 글로벌 설정 (모든 프로젝트 공용)
+
 ```bash
-export APPLE_ID="your@email.com"
-export APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+mkdir -p ~/.config/autobot
+cat > ~/.config/autobot/.env << 'EOF'
+ASC_API_KEY_ID=XXXXXXXXXX
+ASC_API_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ASC_API_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8
+DEVELOPMENT_TEAM=A1B2C3D4E5
+TESTER_EMAIL=your@email.com
+EOF
 ```
 
-> 자격증명 미설정 시 IPA 파일 경로를 안내하고 수동 업로드를 유도합니다.
+### 방법 3: Apple ID 인증 (API Key 대안)
+
+```bash
+APPLE_ID=your@email.com
+APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
+```
+
+> **우선순위**: 프로젝트 `.env` → 글로벌 `~/.config/autobot/.env`
+>
+> 미설정 시 IPA 파일 경로를 안내하고 수동 업로드를 유도합니다.
+
+### 환경변수 전체 목록
+
+| 변수 | 필수 | 설명 |
+|------|------|------|
+| `ASC_API_KEY_ID` | 배포 시 | App Store Connect API Key ID |
+| `ASC_API_ISSUER_ID` | 배포 시 | App Store Connect Issuer ID |
+| `ASC_API_KEY_PATH` | 배포 시 | .p8 키 파일 경로 |
+| `APPLE_ID` | 대안 | Apple ID 이메일 (API Key 미사용 시) |
+| `APP_SPECIFIC_PASSWORD` | 대안 | 앱 전용 비밀번호 (appleid.apple.com에서 생성) |
+| `DEVELOPMENT_TEAM` | 선택 | 개발 팀 ID (자동 감지 가능) |
+| `TESTER_EMAIL` | 선택 | TestFlight '내부' 그룹 초대 이메일 |
 
 ### 선택적 도구
 
