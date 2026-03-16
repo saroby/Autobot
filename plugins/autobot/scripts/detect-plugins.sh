@@ -1,65 +1,29 @@
 #!/bin/bash
 # Detect available plugins and tools for Autobot to leverage
+# Outputs a systemMessage JSON for the UserPromptSubmit hook
 set -euo pipefail
 
 # Read user prompt from stdin
 INPUT=$(cat)
 USER_PROMPT=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('user_prompt',''))" 2>/dev/null || echo "")
 
-# Only activate for autobot:build commands
-if [[ "$USER_PROMPT" != *"autobot"* ]] && [[ "$USER_PROMPT" != *"/build"* ]]; then
+# Only activate for autobot-related commands
+if [[ "$USER_PROMPT" != *"autobot"* ]] && [[ "$USER_PROMPT" != *"/build"* ]] && [[ "$USER_PROMPT" != *"/resume"* ]]; then
   exit 0
 fi
 
-SETTINGS_FILE="${HOME}/.claude/settings.json"
-INSTALLED_FILE="${HOME}/.claude/plugins/installed_plugins.json"
-
-# ── Helper: check if a plugin is enabled or installed ──
-# Priority: enabledPlugins (active) > installed_plugins.json (installed)
-check_plugin() {
-  local pattern="$1"
-
-  # 1) Check enabledPlugins in settings.json (most reliable — currently active)
-  if [ -f "$SETTINGS_FILE" ]; then
-    if python3 -c "
-import json, sys
-d = json.load(open('$SETTINGS_FILE'))
-enabled = d.get('enabledPlugins', {})
-print('true' if any('$pattern' in k and v for k, v in enabled.items()) else 'false')
-" 2>/dev/null | grep -q "true"; then
-      echo "true"
-      return
-    fi
-  fi
-
-  # 2) Fallback: check installed_plugins.json
-  if [ -f "$INSTALLED_FILE" ]; then
-    if python3 -c "
-import json
-d = json.load(open('$INSTALLED_FILE'))
-plugins = d.get('plugins', {})
-print('true' if any('$pattern' in k for k in plugins) else 'false')
-" 2>/dev/null | grep -q "true"; then
-      echo "true"
-      return
-    fi
-  fi
-
-  echo "false"
-}
-
-# ── Detect plugins ──
-AXIOM_AVAILABLE=$(check_plugin "axiom")
-SERENA_AVAILABLE=$(check_plugin "serena")
-CONTEXT7_AVAILABLE=$(check_plugin "context7")
-
-# Check for xcodegen
+# ── Detect CLI tools ──
 XCODEGEN_AVAILABLE="false"
 if command -v xcodegen &>/dev/null; then
   XCODEGEN_AVAILABLE="true"
 fi
 
-# Check for ASC credentials
+FASTLANE_AVAILABLE="false"
+if command -v fastlane &>/dev/null; then
+  FASTLANE_AVAILABLE="true"
+fi
+
+# ── Check for ASC credentials ──
 ASC_CONFIGURED="false"
 if [ -n "${ASC_API_KEY_ID:-}" ] && [ -n "${ASC_API_ISSUER_ID:-}" ] && [ -n "${ASC_API_KEY_PATH:-}" ]; then
   ASC_CONFIGURED="true"
@@ -67,8 +31,45 @@ elif [ -n "${APPLE_ID:-}" ] && [ -n "${APP_SPECIFIC_PASSWORD:-}" ]; then
   ASC_CONFIGURED="true"
 fi
 
+# ── Plugin detection via settings files (best-effort) ──
+# Claude Code stores plugin state in ~/.claude/ — structure may change across versions.
+# We check multiple known locations and degrade gracefully if none exist.
+detect_plugin() {
+  local pattern="$1"
+
+  # Strategy 1: Check ~/.claude/settings.json (enabledPlugins map)
+  local settings="${HOME}/.claude/settings.json"
+  if [ -f "$settings" ]; then
+    if python3 -c "
+import json
+try:
+    d = json.load(open('$settings'))
+    enabled = d.get('enabledPlugins', {})
+    print('true' if any('$pattern' in str(k) and v for k, v in enabled.items()) else 'false')
+except:
+    print('false')
+" 2>/dev/null | grep -q "true"; then
+      echo "true"
+      return
+    fi
+  fi
+
+  # Strategy 2: Check ~/.claude/plugins/ directory for matching plugin dirs
+  if ls -d "${HOME}/.claude/plugins/"*"$pattern"* &>/dev/null 2>&1; then
+    echo "true"
+    return
+  fi
+
+  # Strategy 3: No detection possible — report unknown (let runtime check)
+  echo "unknown"
+}
+
+AXIOM_AVAILABLE=$(detect_plugin "axiom")
+SERENA_AVAILABLE=$(detect_plugin "serena")
+CONTEXT7_AVAILABLE=$(detect_plugin "context7")
+
 cat << EOF
 {
-  "systemMessage": "[Autobot Plugin Detection] axiom=${AXIOM_AVAILABLE}, serena=${SERENA_AVAILABLE}, context7=${CONTEXT7_AVAILABLE}, xcodegen=${XCODEGEN_AVAILABLE}, asc_configured=${ASC_CONFIGURED}"
+  "systemMessage": "[Autobot Environment] axiom=${AXIOM_AVAILABLE}, serena=${SERENA_AVAILABLE}, context7=${CONTEXT7_AVAILABLE}, xcodegen=${XCODEGEN_AVAILABLE}, fastlane=${FASTLANE_AVAILABLE}, asc_configured=${ASC_CONFIGURED}. Note: plugin detection is best-effort; 'unknown' means runtime check needed."
 }
 EOF

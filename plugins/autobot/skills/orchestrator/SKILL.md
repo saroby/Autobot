@@ -50,6 +50,7 @@ Both agents read the same `.autobot/architecture.md` and write to different dire
 ### Agent Context Passing
 
 Each agent receives context via files, not direct messages:
+- `.autobot/build-state.json` — **Build state** (phase status, app metadata, resume point)
 - `.autobot/architecture.md` — Architecture specification
 - `Models/*.swift` — **Type contract** (compilable @Model files created by architect)
 - `.autobot/learnings.json` — Past build learnings
@@ -78,13 +79,65 @@ Detect and leverage installed plugins without creating hard dependencies:
    - If not: rely on training knowledge
 ```
 
+## Build State Management
+
+### State File: `.autobot/build-state.json`
+
+매 Phase 시작/완료/실패 시 상태 파일을 갱신한다. 이를 통해 `/autobot:resume`으로 중단된 빌드를 재개할 수 있다.
+
+```json
+{
+  "buildId": "build-20260316-socialfitness",
+  "appName": "SocialFitness",
+  "displayName": "소셜 피트니스",
+  "bundleId": "com.saroby.socialfitness",
+  "projectPath": "/Users/saroby/SocialFitness",
+  "idea": "소셜 피트니스 트래킹 앱",
+  "startedAt": "2026-03-16T12:00:00Z",
+  "phases": {
+    "0": { "status": "completed", "completedAt": "2026-03-16T12:00:30Z" },
+    "1": { "status": "completed", "completedAt": "2026-03-16T12:03:00Z" },
+    "2": { "status": "completed", "completedAt": "2026-03-16T12:04:00Z" },
+    "3": { "status": "completed", "completedAt": "2026-03-16T12:09:00Z" },
+    "4": { "status": "failed", "error": "Cannot find type 'ModelContext'", "failedAt": "2026-03-16T12:11:00Z", "retryCount": 5 },
+    "5": { "status": "pending" },
+    "6": { "status": "pending" }
+  }
+}
+```
+
+### Phase Status Values
+
+| Status | 의미 |
+|--------|------|
+| `pending` | 아직 시작 안 됨 |
+| `in_progress` | 현재 실행 중 |
+| `completed` | 성공적으로 완료 |
+| `failed` | 실패 (에러 메시지 포함) |
+| `skipped` | 실패로 인해 건너뜀 |
+
+### State Update Protocol
+
+1. Phase 시작 시: `status: "in_progress"`, `startedAt` 기록
+2. Phase 성공 시: `status: "completed"`, `completedAt` 기록
+3. Phase 실패 시: `status: "failed"`, `error`, `failedAt`, `retryCount` 기록
+4. 실패로 건너뛴 Phase: `status: "skipped"`
+
+### Resume 연동
+
+`/autobot:resume` 커맨드가 이 상태 파일을 읽어:
+- 실패/중단 지점을 자동 감지
+- 이전 에러 메시지를 에이전트 프롬프트에 포함
+- 완료된 Phase는 건너뜀
+- 사용자가 특정 Phase를 지정하면 해당 지점부터 재실행
+
 ## Error Recovery
 
 When a phase fails:
-1. Log the error to `.autobot/build-log.md`
+1. 상태 파일에 에러 기록 (`build-state.json`)
 2. Attempt automatic recovery (rebuild, re-sign, etc.)
-3. If unrecoverable, skip to retrospective (Phase 6)
-4. Report partial completion to user
+3. If unrecoverable, skip to retrospective (Phase 6) — 건너뛴 Phase는 `skipped`로 마킹
+4. Report partial completion to user with **`/autobot:resume` 재시도 안내**
 
 ## Additional Resources
 

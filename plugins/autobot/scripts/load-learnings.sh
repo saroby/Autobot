@@ -1,22 +1,20 @@
 #!/bin/bash
 # Load Autobot environment (.env) and past build learnings into session context
+# SessionStart hook — outputs systemMessage JSON with env vars and learnings
 set -euo pipefail
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 
 # ── Step 0: .env.example 자동 복사 ──
-# 프로젝트에 .env도 .env.example도 없으면 템플릿 복사
 if [ ! -f "${PROJECT_DIR}/.env" ] && [ ! -f "${PROJECT_DIR}/.env.example" ]; then
   TEMPLATE="${PLUGIN_ROOT}/.env.example"
   if [ -n "$PLUGIN_ROOT" ] && [ -f "$TEMPLATE" ]; then
     cp "$TEMPLATE" "${PROJECT_DIR}/.env.example"
-    echo "[Autobot] .env.example 템플릿을 작업 폴더에 복사했습니다. .env로 이름을 바꾸고 값을 입력하세요."
   fi
 fi
 
-# ── Step 1: .env 파일에서 환경변수 로드 ──
-# 프로젝트 .env → 글로벌 ~/.config/autobot/.env 순서로 탐색
+# ── Step 1: .env 파일 탐색 ──
 ENV_FILE=""
 if [ -f "${PROJECT_DIR}/.env" ]; then
   ENV_FILE="${PROJECT_DIR}/.env"
@@ -24,37 +22,63 @@ elif [ -f "${HOME}/.config/autobot/.env" ]; then
   ENV_FILE="${HOME}/.config/autobot/.env"
 fi
 
-if [ -n "$ENV_FILE" ] && [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-  # .env에서 주석/빈줄 제거 후 CLAUDE_ENV_FILE에 주입
-  grep -v '^\s*#' "$ENV_FILE" | grep -v '^\s*$' | while IFS= read -r line; do
-    echo "export $line" >> "$CLAUDE_ENV_FILE"
-  done
-  echo "[Autobot] 환경변수 로드됨: ${ENV_FILE}"
+# .env 값을 파싱하여 systemMessage에 포함 (실제 환경변수 주입 대신)
+ENV_SUMMARY=""
+if [ -n "$ENV_FILE" ]; then
+  # 키 이름만 추출 (값은 보안상 마스킹)
+  ENV_KEYS=$(grep -v '^\s*#' "$ENV_FILE" | grep -v '^\s*$' | cut -d= -f1 | tr '\n' ', ' | sed 's/,$//')
+  ENV_SUMMARY="env_file=${ENV_FILE}, configured_keys=[${ENV_KEYS}]"
+
+  # 실제 값은 build/deploy 시 에이전트가 직접 .env에서 source하도록 경로만 전달
+  ENV_PATH_INFO="env_path=${ENV_FILE}"
+else
+  ENV_SUMMARY="env_file=none"
+  ENV_PATH_INFO="env_path=none"
 fi
 
 # ── Step 2: 과거 학습 데이터 로드 ──
 LEARNINGS_FILE="${PROJECT_DIR}/.autobot/learnings.json"
+LEARNINGS_SUMMARY=""
 
 if [ -f "$LEARNINGS_FILE" ]; then
-  TOTAL=$(python3 -c "import json; d=json.load(open('$LEARNINGS_FILE')); print(d.get('totalBuilds', 0))" 2>/dev/null || echo "0")
-  RATE=$(python3 -c "import json; d=json.load(open('$LEARNINGS_FILE')); print(f\"{d.get('successRate', 0)*100:.0f}%\")" 2>/dev/null || echo "N/A")
-  ERRORS=$(python3 -c "
+  LEARNINGS_SUMMARY=$(python3 -c "
 import json
 d=json.load(open('$LEARNINGS_FILE'))
+total=d.get('totalBuilds', 0)
+rate=d.get('successRate', 0)
 errors=d.get('patterns',{}).get('common_build_errors',[])
-for e in errors[:5]:
-    print(f\"  - {e['pattern']}: {e['fix']}\")
-" 2>/dev/null || echo "  (none)")
-
-  cat << EOF
-[Autobot] 과거 빌드 학습 데이터 로드됨:
-- 총 빌드: ${TOTAL}회
-- 성공률: ${RATE}
-- 주요 에러 패턴:
-${ERRORS}
-
-/autobot:build 사용 시 이 데이터를 참조하여 빌드 품질을 개선합니다.
-EOF
+top_errors='; '.join([f\"{e['pattern']} -> {e['fix']}\" for e in errors[:3]])
+print(f'total_builds={total}, success_rate={rate*100:.0f}%, top_errors=[{top_errors}]')
+" 2>/dev/null || echo "parse_error")
 else
-  echo "[Autobot] 과거 빌드 학습 데이터 없음. 첫 빌드 시 생성됩니다."
+  LEARNINGS_SUMMARY="no_history"
 fi
+
+# ── Step 3: build-state 확인 (resume 가능 여부) ──
+BUILD_STATE=""
+STATE_FILE="${PROJECT_DIR}/.autobot/build-state.json"
+if [ -f "$STATE_FILE" ]; then
+  BUILD_STATE=$(python3 -c "
+import json
+d=json.load(open('$STATE_FILE'))
+app=d.get('appName','?')
+phases=d.get('phases',{})
+failed=[k for k,v in phases.items() if v.get('status')=='failed']
+last_ok=max([int(k) for k,v in phases.items() if v.get('status')=='completed'], default=-1)
+if failed:
+    print(f'resumable=true, app={app}, failed_phase={failed[0]}, last_completed={last_ok}')
+elif last_ok < 6:
+    print(f'resumable=true, app={app}, next_phase={last_ok+1}, last_completed={last_ok}')
+else:
+    print(f'resumable=false, app={app}, all_completed=true')
+" 2>/dev/null || echo "parse_error")
+else
+  BUILD_STATE="no_state"
+fi
+
+# ── Output systemMessage ──
+cat << EOF
+{
+  "systemMessage": "[Autobot Session] ${ENV_SUMMARY}, ${ENV_PATH_INFO}, learnings=[${LEARNINGS_SUMMARY}], build_state=[${BUILD_STATE}]. Deploy agents should 'source <env_path>' to load ASC credentials when env_path is set."
+}
+EOF

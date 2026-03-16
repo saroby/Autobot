@@ -1,5 +1,51 @@
 # Code Signing & Upload Guide
 
+## App Registration (fastlane produce)
+
+새로 만든 앱은 App Store Connect에 등록되어 있지 않다. 아카이브/업로드 전에 반드시 앱을 등록해야 한다.
+
+### fastlane 설치
+```bash
+# Homebrew로 설치 (권장)
+brew install fastlane
+
+# 또는 gem으로 설치
+sudo gem install fastlane -NV
+```
+
+### 앱 등록
+```bash
+# API Key JSON 생성
+cat > fastlane_api_key.json << EOF
+{
+  "key_id": "$ASC_API_KEY_ID",
+  "issuer_id": "$ASC_API_ISSUER_ID",
+  "key_filepath": "$ASC_API_KEY_PATH"
+}
+EOF
+
+# 앱 등록 (Apple Developer Portal + App Store Connect)
+fastlane produce create \
+  --app_identifier "com.saroby.appname" \
+  --app_name "앱 이름" \
+  --language "ko" \
+  --app_version "1.0.0" \
+  --sku "com.saroby.appname" \
+  --team_id "$DEVELOPMENT_TEAM" \
+  --api_key_path fastlane_api_key.json
+```
+
+> **멱등성**: 이미 등록된 앱이면 에러 없이 건너뛴다.
+> `produce`는 Apple Developer Portal에 App ID를 등록하고, App Store Connect에 앱 레코드를 생성한다.
+
+### Troubleshooting: App Registration
+
+| 에러 | 원인 | 해결 |
+|------|------|------|
+| "The App Name you entered is already being used" | 같은 이름의 앱이 이미 존재 | `--app_name`을 변경하거나 고유한 이름 사용 |
+| "An App ID with Identifier is not available" | 번들 ID가 이미 다른 팀에서 사용 중 | 번들 ID 변경 (예: `.2` suffix 추가) |
+| "Could not create application" | API Key 권한 부족 | Key에 "Admin" 또는 "App Manager" 역할 필요 |
+
 ## Authentication Methods
 
 ### Method 1: App Store Connect API Key (Recommended)

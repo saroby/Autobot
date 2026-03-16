@@ -2,41 +2,48 @@
 
 ## Parallel Agent Execution
 
-### File Ownership & Type Contract
+### File Ownership, Type Contract & Worktree Isolation
 
-Agents write to separate directories to prevent conflicts. `Models/` is the **shared type contract** created by architect — no other agent may modify it.
+Agents write to separate directories to prevent conflicts. `Models/` is the **shared type contract** (data models + service protocols) created by architect — no other agent may modify it.
 
-| Agent | Writes To | Reads From | MUST NOT Touch |
-|-------|-----------|------------|----------------|
-| architect | `.autobot/architecture.md`, `Models/` | (user input) | — |
-| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/*.swift`, `.autobot/architecture.md` | `Models/`, `Services/` |
-| data-engineer | `Services/`, `Utilities/` | `Models/*.swift`, `.autobot/architecture.md` | `Models/`, `Views/`, `ViewModels/`, `App/` |
-| quality-engineer | `Tests/`, fixes in any file | All source files | — |
-| deployer | `build/`, config files | Built app | — |
+Phase 3의 ui-builder와 data-engineer는 **별도의 git worktree**에서 실행되어 파일시스템 수준의 격리를 보장한다.
+
+| Agent | Writes To | Reads From | MUST NOT Touch | Isolation |
+|-------|-----------|------------|----------------|-----------|
+| architect | `.autobot/architecture.md`, `Models/` | (user input) | — | main |
+| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Services/` | **worktree** |
+| data-engineer | `Services/`, `Utilities/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `App/` | **worktree** |
+| quality-engineer | `Tests/`, fixes in any file, integration wiring | All source files | — | main |
+| deployer | `build/`, config files | Built app | — | main |
 
 ### Agent Prompt Templates
 
 #### For ui-builder dispatch:
 ```
 FIRST: Read ALL .swift files in [project]/Models/ to learn exact type names, properties, and initializers.
-THEN: Read the architecture at [project]/.autobot/architecture.md for screen inventory and navigation.
+SECOND: Read [project]/Models/ServiceProtocols.swift to learn the service interfaces your ViewModels depend on.
+THEN: Read the architecture at [project]/.autobot/architecture.md for screen inventory, navigation, and integration map.
 Generate all SwiftUI views, view models, and the app entry point.
+ViewModels MUST depend on Service protocols (e.g. ItemServiceProtocol), NOT on ModelContext directly.
+Create App/ServiceStubs.swift with stub implementations for each protocol (return empty arrays, no-ops).
 Write files to [project]/Views/, [project]/ViewModels/, and [project]/App/.
 In the App entry point, register ALL @Model types in .modelContainer(for:).
 Use iOS 26+ APIs: @Observable, NavigationStack, .glassEffect().
 Do NOT create, modify, or overwrite files in Models/ or Services/ — those are handled by other agents.
-Use the EXACT type names and initializer signatures from Models/*.swift.
+Use the EXACT type names, initializer signatures, and protocol method signatures from Models/*.swift.
 ```
 
 #### For data-engineer dispatch:
 ```
 FIRST: Read ALL .swift files in [project]/Models/ to learn exact type names, properties, and initializers.
+SECOND: Read [project]/Models/ServiceProtocols.swift to learn the service interfaces you MUST implement.
 THEN: Read the architecture at [project]/.autobot/architecture.md for API endpoints and data flow.
+For EACH protocol in ServiceProtocols.swift, create a Repository class that conforms to it.
 Implement repositories and network services that use the existing Model types.
 Write files to [project]/Services/ and [project]/Utilities/.
-Use iOS 26+ APIs: actor isolation, async/await, FetchDescriptor.
+Use iOS 26+ APIs: @MainActor, async/await, FetchDescriptor.
 Do NOT create, modify, or overwrite files in Models/, Views/, ViewModels/, or App/.
-Use the EXACT type names and initializer signatures from Models/*.swift.
+Use the EXACT type names, initializer signatures, and protocol method signatures from Models/*.swift.
 ```
 
 ## AgentTeam Integration

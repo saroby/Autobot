@@ -12,6 +12,13 @@
       "version": "0.1.0",
       "source": "./plugins/autobot",
       "category": "development"
+    },
+    {
+      "name": "app-store-screenshots",
+      "description": "Generate beautiful App Store screenshots with device frames, backgrounds, and text overlays.",
+      "version": "latest",
+      "source": "https://github.com/ParthJadhav/app-store-screenshots",
+      "category": "development"
     }
   ]
 }

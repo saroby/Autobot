@@ -30,6 +30,7 @@ allowed-tools:
 2. **병렬 에이전트를 최대한 활용한다** - 독립적 작업은 반드시 동시에 실행한다
 3. **Axiom 스킬이 있으면 활용한다** - 하지만 없어도 동작해야 한다
 4. **과거 학습을 먼저 확인한다** - `.autobot/learnings.json` 파일이 있으면 읽는다
+5. **매 Phase 완료/실패마다 `.autobot/build-state.json`을 갱신한다** - 중단 시 `/autobot:resume`으로 재개 가능
 
 ## Phase 0: 환경 준비 및 과거 학습 로드
 
@@ -70,6 +71,29 @@ allowed-tools:
    - Git 초기화
    - `.autobot/` 디렉토리 생성 (빌드 메타데이터용)
 
+5. **빌드 상태 파일 초기화** (`.autobot/build-state.json`):
+   ```json
+   {
+     "buildId": "build-YYYYMMDD-identifiername",
+     "appName": "<identifier name>",
+     "displayName": "<display name>",
+     "bundleId": "com.saroby.<identifier name 소문자>",
+     "projectPath": "<프로젝트 절대 경로>",
+     "idea": "<사용자 입력 아이디어 원문>",
+     "startedAt": "<ISO 8601>",
+     "phases": {
+       "0": { "status": "completed", "completedAt": "<ISO 8601>" },
+       "1": { "status": "pending" },
+       "2": { "status": "pending" },
+       "3": { "status": "pending" },
+       "4": { "status": "pending" },
+       "5": { "status": "pending" },
+       "6": { "status": "pending" }
+     }
+   }
+   ```
+   이 파일은 매 Phase 완료/실패 시 갱신된다. 중단되면 `/autobot:resume`으로 재개할 수 있다.
+
 ## Phase 1: 앱 아키텍처 설계 + 타입 계약 생성 (architect 에이전트)
 
 TaskCreate로 전체 빌드 진행 상황을 추적한다.
@@ -91,6 +115,8 @@ architect 에이전트를 Agent 도구로 실행:
 
 이 Model 파일들이 Phase 3 병렬 에이전트들의 **공유 타입 계약** 역할을 한다.
 
+**→ Phase 1 완료 시 `build-state.json`의 `phases.1`을 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
+
 ## Phase 2: Xcode 프로젝트 생성
 
 ios-scaffold 스킬 참조하여:
@@ -100,63 +126,112 @@ ios-scaffold 스킬 참조하여:
 4. Info.plist 및 에셋 카탈로그 설정
 5. 번들 ID 설정: `com.saroby.<identifier name을 소문자로>` (예: `com.saroby.fitnesstracker`)
 
+**→ Phase 2 완료 시 `build-state.json`의 `phases.2`를 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
+
 ## Phase 3: 병렬 개발 (핵심 단계)
 
 **반드시 Agent 도구를 사용하여 여러 에이전트를 동시에 실행한다.**
 
-**전제조건**: Phase 1에서 `Models/*.swift` 파일들이 이미 생성되어 있어야 한다. 이 파일들이 두 에이전트 간의 **타입 계약(type contract)** 역할을 한다.
+**전제조건**: Phase 1에서 `Models/*.swift` 및 `Models/ServiceProtocols.swift` 파일들이 이미 생성되어 있어야 한다. Model 파일들이 타입 계약, Service 프로토콜이 통합 계약 역할을 한다.
+
+### 격리 전략: Git Worktree
+
+두 에이전트를 **별도의 git worktree**에서 실행하여 파일 충돌을 방지한다:
+
+```
+Agent(
+  prompt="[ui-builder task]",
+  isolation="worktree"    ← 별도 worktree에서 실행
+)
+Agent(
+  prompt="[data-engineer task]",
+  isolation="worktree"    ← 별도 worktree에서 실행
+)
+```
+
+각 에이전트가 worktree에서 작업을 완료하면:
+- 변경된 파일이 있으면 worktree 경로와 브랜치명이 반환됨
+- Phase 3 완료 후 `git merge`로 두 브랜치를 메인에 통합
+- `Models/` 디렉토리는 양쪽 모두 수정하지 않으므로 충돌 없음
+- `Views/`와 `Services/`는 서로 다른 디렉토리이므로 충돌 없음
+
+### Worktree 통합
+
+두 에이전트 완료 후:
+```bash
+# ui-builder 브랜치 머지
+git merge <ui-builder-branch> --no-edit
+
+# data-engineer 브랜치 머지
+git merge <data-engineer-branch> --no-edit
+```
+
+충돌 발생 시 (비정상 — 같은 파일을 건드린 경우):
+- quality-engineer가 Phase 4에서 해결
 
 다음 에이전트들을 **하나의 메시지에서 동시에** 실행:
 
-### Agent 1: ui-builder
+### Agent 1: ui-builder (worktree 격리)
 - `Models/*.swift` 파일들을 **먼저 읽고** 정확한 타입명/이니셜라이저 파악
+- `Models/ServiceProtocols.swift`를 읽고 ViewModel이 의존할 프로토콜 파악
 - `.autobot/architecture.md`를 읽고 SwiftUI 뷰 구현
 - iOS 26+ Liquid Glass 스타일 적용
 - NavigationStack 기반 네비게이션
 - 모든 화면의 뷰 파일 생성
+- ViewModel은 **Service 프로토콜**에 의존 (구현체가 아닌 인터페이스)
 - `App/` 엔트리포인트에서 `.modelContainer(for:)` 에 모든 @Model 타입 등록
+- `App/ServiceStubs.swift`에 프로토콜의 임시 stub 구현 생성
 - **Models/ 디렉토리의 파일을 절대 수정하지 않는다**
 - Axiom ios-ui 스킬 사용 가능하면 활용
 
-### Agent 2: data-engineer
+### Agent 2: data-engineer (worktree 격리)
 - `Models/*.swift` 파일들을 **먼저 읽고** 정확한 타입명/이니셜라이저 파악
+- `Models/ServiceProtocols.swift`를 읽고 구현할 프로토콜 파악
 - `.autobot/architecture.md`를 읽고 데이터 접근 레이어 구현
-- Repository 패턴 적용 (기존 Model 타입 사용)
+- **Service 프로토콜을 구현하는 Repository** 생성 (정확한 메서드 시그니처 준수)
 - 네트워킹 레이어 (필요시)
 - 샘플 데이터 생성 (정확한 이니셜라이저 사용)
 - **Models/ 디렉토리의 파일을 절대 수정하지 않는다**
 - Axiom ios-data 스킬 사용 가능하면 활용
 
-### Agent 3: quality-engineer (background)
-- Phase 3 완료 후 자동 실행
-- 기본 단위 테스트 작성
-- UI 테스트 스켈레톤
-- 빌드 검증
+**→ Phase 3 완료 시 `build-state.json`의 `phases.3`을 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
+**→ Phase 3 실패 시 `phases.3`을 `{"status": "failed", "error": "<에러 메시지>", "failedAt": "<ISO 8601>"}` 로 갱신하고 Phase 6(회고)으로 건너뜀**
 
 ## Phase 4: 통합 및 빌드 검증
 
-1. 모든 에이전트 결과물 통합
-2. 컴파일 에러 수정:
+1. Phase 3의 worktree 브랜치들을 메인에 머지
+2. **Integration Wiring**: `App/ServiceStubs.swift`를 삭제하고, 실제 Repository 구현체로 연결
+   - App 엔트리포인트에서 `ModelContainer` → `Repository` → `ViewModel` 주입 체인 구성
+3. 컴파일 에러 수정:
    ```bash
    xcodebuild -project *.xcodeproj -scheme <scheme> -destination 'platform=iOS Simulator,name=iPhone 16 Pro' build 2>&1
    ```
 3. 에러 있으면 반복 수정 (최대 5회)
 4. Axiom ios-build 스킬 사용 가능하면 활용
 
+**→ Phase 4 완료 시 `build-state.json`의 `phases.4`를 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
+**→ Phase 4 실패 시 (5회 재시도 후에도 빌드 실패) `phases.4`를 `{"status": "failed", "error": "<최종 에러 메시지>", "failedAt": "<ISO 8601>", "retryCount": 5}` 로 갱신하고 Phase 6(회고)으로 건너뜀**
+
 ## Phase 5: TestFlight 배포
 
 testflight-deploy 스킬 참조하여:
 
-1. 코드 사이닝 설정:
+1. **App Store Connect 앱 등록** (fastlane produce):
+   - fastlane 설치 확인 (`brew install fastlane` 없으면 자동 설치)
+   - `fastlane produce create`로 App ID + ASC 앱 등록 (멱등 — 이미 있으면 스킵)
+   - 번들 ID: `com.saroby.<identifier name 소문자>`
+   - 앱 이름: architecture.md의 display name
+   - 언어: ko, SKU: 번들 ID와 동일
+2. 코드 사이닝 설정:
    - 사용자의 개발 팀 ID 자동 감지
    - Automatic signing 사용
-2. Archive 빌드:
+3. Archive 빌드:
    ```bash
    xcodebuild archive -project *.xcodeproj -scheme <scheme> \
      -archivePath build/<앱이름>.xcarchive \
      -destination 'generic/platform=iOS'
    ```
-3. IPA Export + App Store Connect 업로드 (한 단계):
+4. IPA Export + App Store Connect 업로드 (한 단계):
    ```bash
    xcodebuild -exportArchive \
      -archivePath build/<앱이름>.xcarchive \
@@ -173,6 +248,9 @@ testflight-deploy 스킬 참조하여:
    - '내부' 그룹 생성 (App Store Connect API 사용)
    - 사용자의 Apple 계정 초대
    - 빌드를 그룹에 할당
+
+**→ Phase 5 완료 시 `build-state.json`의 `phases.5`를 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
+**→ Phase 5 실패 시 `phases.5`를 `{"status": "failed", "error": "<에러 메시지>", "failedAt": "<ISO 8601>"}` 로 갱신하고 Phase 6(회고)으로 건너뜀**
 
 ## Phase 6: 회고 및 자기 개선
 
@@ -201,12 +279,15 @@ retrospective 스킬 참조하여:
    }
    ```
 
+**→ Phase 6 완료 시 `build-state.json`의 `phases.6`을 `{"status": "completed", "completedAt": "<ISO 8601>"}` 로 갱신**
+
 ## 완료 보고
 
 최종 결과를 사용자에게 간결하게 보고:
 - 생성된 앱 이름 및 기능 요약
 - 프로젝트 경로
 - TestFlight 상태 (업로드 성공/실패 및 사유)
+- 실패한 Phase가 있으면: **`/autobot:resume`으로 재시도 가능** 안내
 - 다음에 개선할 점 (있으면)
 
 ## 플러그인 감지 패턴

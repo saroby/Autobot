@@ -22,22 +22,19 @@ xcodegen generate
 
 Refer to `references/project-templates.md` for the project.yml template.
 
-## Fallback Method: Swift Package with Xcode Project
+## Fallback Method: Built-in pbxproj Generator
 
-If xcodegen is not available:
+xcodegen이 없으면 `generate-pbxproj.py`가 유효한 `.xcodeproj/project.pbxproj`를 직접 생성한다.
+`create-xcode-project.sh`가 자동으로 fallback을 수행하므로 별도 조치 불필요.
 
-```bash
-# Create project structure manually
-mkdir -p AppName/App AppName/Models AppName/Views/Screens AppName/Views/Components \
-         AppName/ViewModels AppName/Services AppName/Utilities AppName/Assets.xcassets
+- 소스 디렉토리를 재귀 탐색하여 모든 `.swift` 파일을 프로젝트에 등록
+- Asset catalog 자동 감지 및 등록
+- App 타겟 + Test 타겟 + xcscheme 생성
+- Debug/Release 빌드 설정 포함
 
-# Create Package.swift for dependency management (if needed)
-# Then open in Xcode to generate .xcodeproj
-```
+## Project Creation
 
-## Manual Xcode Project Creation
-
-Use the `scripts/create-xcode-project.sh` script at `$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh`:
+`scripts/create-xcode-project.sh`를 사용 (xcodegen/fallback을 자동 선택):
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
@@ -67,4 +64,5 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
 ## Additional Resources
 
 - **`references/project-templates.md`** — XcodeGen project.yml templates
-- **`scripts/create-xcode-project.sh`** — Shell script for manual project creation
+- **`scripts/create-xcode-project.sh`** — 프로젝트 생성 (xcodegen 우선, fallback으로 pbxproj 직접 생성)
+- **`scripts/generate-pbxproj.py`** — xcodegen 없이 .xcodeproj 생성하는 Python 스크립트

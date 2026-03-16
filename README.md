@@ -17,17 +17,29 @@ claude --plugin-dir /path/to/Autobot/plugins/autobot
 
 ## 사용법
 
+### 새 빌드
 ```
 /autobot:build 소셜 피트니스 트래킹 앱
 ```
 
-질문 없이 자동으로:
+### 중단된 빌드 재개
+```
+/autobot:resume        # 마지막 실패/중단 지점부터 재개
+/autobot:resume 4      # Phase 4(빌드 검증)부터 강제 재개
+/autobot:resume 5      # Phase 5(배포)만 다시 실행
+```
+
+빌드가 중간에 실패하거나 세션이 끊겨도 `.autobot/build-state.json`에 진행 상태가 저장되어 있어 이어서 실행할 수 있습니다.
+
+### 빌드 파이프라인
+
+`/autobot:build` 실행 시 질문 없이 자동으로:
 
 1. **아키텍처 설계** — architect 에이전트가 기능, 화면, 데이터 모델 정의
 2. **프로젝트 생성** — Xcode 프로젝트 스캐폴딩 (xcodegen 또는 수동)
 3. **병렬 개발** — ui-builder + data-engineer 에이전트 동시 실행
 4. **빌드 검증** — quality-engineer 에이전트가 컴파일 에러 수정 및 테스트 작성
-5. **TestFlight 배포** — deployer 에이전트가 아카이브 → 업로드 → '내부' 테스터 그룹 생성
+5. **TestFlight 배포** — deployer 에이전트가 앱 등록(fastlane) → 아카이브 → 업로드 → '내부' 테스터 그룹 생성
 
 ## 빌드 파이프라인
 
@@ -68,6 +80,7 @@ claude --plugin-dir /path/to/Autobot/plugins/autobot
 - Xcode 16+ (Command Line Tools 포함)
 - iOS 26+ SDK
 - Apple Developer 계정 (TestFlight 배포용)
+- `fastlane` — App Store Connect 앱 자동 등록용 (`brew install fastlane`, 없으면 자동 설치 시도)
 
 ## 환경변수 설정 (TestFlight 배포용)
 
@@ -128,6 +141,7 @@ APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
 ### 선택적 도구
 
 - `xcodegen` — 더 안정적인 프로젝트 생성 (`brew install xcodegen`)
+- `fastlane`이 없을 경우 자동 설치를 시도하지만, Homebrew가 없으면 수동 설치 필요
 
 ## 플러그인 연동
 
@@ -147,6 +161,7 @@ APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
 plugins/autobot/
 ├── .claude-plugin/plugin.json       # 플러그인 매니페스트
 ├── commands/build.md                # /autobot:build 커맨드
+├── commands/resume.md               # /autobot:resume 커맨드 (중단된 빌드 재개)
 ├── agents/                          # 5개 전문 에이전트
 │   ├── architect.md                 #   아키텍처 설계 (opus)
 │   ├── ui-builder.md                #   SwiftUI 뷰 (sonnet, 병렬)

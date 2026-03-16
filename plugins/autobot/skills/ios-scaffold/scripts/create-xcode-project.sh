@@ -158,7 +158,7 @@ if command -v xcodegen &>/dev/null; then
   cat > "${PROJECT_DIR}/project.yml" << YAML_EOF
 name: ${APP_NAME}
 options:
-  bundleIdPrefix: $(echo "$BUNDLE_ID" | sed "s/\\.${APP_NAME,,}$//")
+  bundleIdPrefix: $(echo "$BUNDLE_ID" | sed "s/\\.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')$//")
   deploymentTarget:
     iOS: "${DEPLOYMENT_TARGET}"
   xcodeVersion: "16.0"
@@ -196,9 +196,30 @@ YAML_EOF
   cd "${PROJECT_DIR}" && xcodegen generate && cd ..
   echo "Xcode project generated with xcodegen"
 else
-  echo "xcodegen not found. Project directory created, but .xcodeproj needs to be created manually."
-  echo "Install xcodegen: brew install xcodegen"
-  echo "Or open the directory in Xcode: File → New → Project from existing files"
+  # Fallback: generate .xcodeproj using Python pbxproj generator
+  echo "xcodegen not found. Generating .xcodeproj with built-in generator..."
+
+  # Locate the Python generator script (relative to this script or via CLAUDE_PLUGIN_ROOT)
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  GENERATOR="${SCRIPT_DIR}/generate-pbxproj.py"
+
+  if [ ! -f "$GENERATOR" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    GENERATOR="${CLAUDE_PLUGIN_ROOT}/skills/ios-scaffold/scripts/generate-pbxproj.py"
+  fi
+
+  if [ -f "$GENERATOR" ]; then
+    python3 "$GENERATOR" \
+      --name "$APP_NAME" \
+      --bundle-id "$BUNDLE_ID" \
+      --deployment-target "$DEPLOYMENT_TARGET" \
+      --sources-dir "$SOURCES_DIR" \
+      ${TEAM_ID:+--team-id "$TEAM_ID"}
+    echo "Xcode project generated with built-in generator"
+  else
+    echo "ERROR: Neither xcodegen nor generate-pbxproj.py found."
+    echo "Install xcodegen: brew install xcodegen"
+    exit 1
+  fi
 fi
 
 echo "Project scaffolding complete: ${PROJECT_DIR}/"
