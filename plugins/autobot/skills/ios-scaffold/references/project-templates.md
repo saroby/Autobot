@@ -1,6 +1,6 @@
 # Xcode Project Templates
 
-## XcodeGen project.yml Template
+## XcodeGen project.yml Template (Folder Reference)
 
 ```yaml
 name: ${APP_NAME}
@@ -8,8 +8,8 @@ options:
   bundleIdPrefix: com.saroby
   deploymentTarget:
     iOS: "26.0"
-  xcodeVersion: "16.0"
-  generateEmptyDirectories: true
+  xcodeVersion: "26.3"
+  useBaseInternationalization: true
 
 settings:
   base:
@@ -26,11 +26,9 @@ targets:
     platform: iOS
     sources:
       - path: ${APP_NAME}
-        excludes:
-          - "**/*.xcassets/Contents.json"
+        type: folder              # ← Folder Reference (PBXFileSystemSynchronizedRootGroup)
     settings:
       base:
-        INFOPLIST_FILE: ${APP_NAME}/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.saroby.${APP_NAME_LOWER}
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
@@ -40,15 +38,13 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         CODE_SIGN_ENTITLEMENTS: ${APP_NAME}/${APP_NAME}.entitlements
-    resources:
-      - path: ${APP_NAME}/Assets.xcassets
-      - path: ${APP_NAME}/PrivacyInfo.xcprivacy
 
   ${APP_NAME}Tests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: ${APP_NAME}Tests
+        type: folder              # ← Folder Reference
     dependencies:
       - target: ${APP_NAME}
     settings:
@@ -57,6 +53,9 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/${APP_NAME}.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/${APP_NAME}"
         BUNDLE_LOADER: "$(TEST_HOST)"
 ```
+
+> **`type: folder`** 를 사용하면 XcodeGen이 `PBXFileSystemSynchronizedRootGroup`을 생성합니다.
+> 개별 파일을 `sources`/`resources` 섹션에 나열할 필요가 없습니다.
 
 ## Minimal App Entry Point
 

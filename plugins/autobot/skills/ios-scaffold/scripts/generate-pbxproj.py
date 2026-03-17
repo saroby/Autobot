@@ -8,12 +8,8 @@ Usage:
 Produces: AppName.xcodeproj/project.pbxproj
 
 This is the fallback when xcodegen is not installed.
-The generated project includes:
-  - App target (iOS, SwiftUI)
-  - Test target (Swift Testing)
-  - Recursive source file discovery
-  - Asset catalog reference
-  - Auto code signing
+The generated project uses Folder References (PBXFileSystemSynchronizedRootGroup)
+so Xcode automatically syncs with the filesystem — no manual file registration needed.
 """
 
 import argparse
@@ -28,86 +24,25 @@ def make_uuid(seed: str) -> str:
     return hashlib.md5(seed.encode()).hexdigest()[:24].upper()
 
 
-# ── Discover Swift source files recursively ──
-
-def find_swift_files(base_dir: str) -> list[str]:
-    """Find all .swift files relative to base_dir."""
-    result = []
-    for root, _, files in os.walk(base_dir):
-        for f in files:
-            if f.endswith(".swift"):
-                rel = os.path.relpath(os.path.join(root, f), base_dir)
-                result.append(rel)
-    result.sort()
-    return result
-
-
-def find_asset_catalogs(base_dir: str) -> list[str]:
-    """Find .xcassets directories relative to base_dir."""
-    result = []
-    for root, dirs, _ in os.walk(base_dir):
-        for d in dirs:
-            if d.endswith(".xcassets"):
-                rel = os.path.relpath(os.path.join(root, d), base_dir)
-                result.append(rel)
-    result.sort()
-    return result
-
-
-def find_resource_files(base_dir: str) -> list[str]:
-    """Find non-Swift resource files (xcprivacy, entitlements, plist, etc.)."""
-    extensions = {".xcprivacy", ".entitlements", ".plist", ".json", ".strings", ".stringsdict"}
-    # Exclude files inside .xcassets (handled separately)
-    result = []
-    for root, dirs, files in os.walk(base_dir):
-        # Skip .xcassets internals
-        if ".xcassets" in root:
-            continue
-        for f in files:
-            _, ext = os.path.splitext(f)
-            if ext in extensions:
-                rel = os.path.relpath(os.path.join(root, f), base_dir)
-                result.append(rel)
-    result.sort()
-    return result
-
-
 # ── pbxproj generation ──
 
 def generate_pbxproj(
     app_name: str,
     bundle_id: str,
     deployment_target: str,
-    sources_dir: str,
-    tests_dir: str,
     team_id: str = "",
 ) -> str:
-    """Generate a complete project.pbxproj content string."""
-
-    # Collect source files
-    app_swift_files = find_swift_files(sources_dir) if os.path.isdir(sources_dir) else []
-    test_swift_files = find_swift_files(tests_dir) if os.path.isdir(tests_dir) else []
-    asset_catalogs = find_asset_catalogs(sources_dir) if os.path.isdir(sources_dir) else []
-    resource_files = find_resource_files(sources_dir) if os.path.isdir(sources_dir) else []
-
-    # Separate entitlements (build setting, not resource phase) from other resources
-    entitlements_file = None
-    other_resources = []
-    for rf in resource_files:
-        if rf.endswith(".entitlements"):
-            entitlements_file = rf
-        else:
-            other_resources.append(rf)
+    """Generate a complete project.pbxproj using Folder References."""
 
     # ── Generate stable UUIDs ──
     uid = lambda s: make_uuid(f"{app_name}:{s}")
 
     ROOT_OBJ          = uid("root")
     MAIN_GROUP         = uid("mainGroup")
-    APP_GROUP          = uid("appGroup")
-    TEST_GROUP         = uid("testGroup")
     PRODUCTS_GROUP     = uid("productsGroup")
-    FRAMEWORKS_GROUP   = uid("frameworksGroup")
+
+    APP_FOLDER_REF     = uid("appFolderRef")
+    TEST_FOLDER_REF    = uid("testFolderRef")
 
     APP_TARGET         = uid("appTarget")
     TEST_TARGET        = uid("testTarget")
@@ -135,54 +70,6 @@ def generate_pbxproj(
     CONTAINER_PROXY    = uid("containerProxy")
     TARGET_DEPENDENCY  = uid("targetDependency")
 
-    # ── File references & build files ──
-    file_refs = []      # (uuid, path, name, sourceTree, lastKnownFileType)
-    build_files = []    # (buildFileUuid, fileRefUuid, phase)
-    app_group_children = []
-    test_group_children = []
-
-    for sf in app_swift_files:
-        ref_id = uid(f"fileRef:{sf}")
-        build_id = uid(f"buildFile:{sf}")
-        name = os.path.basename(sf)
-        file_refs.append((ref_id, sf, name, '"<group>"', "sourcecode.swift"))
-        build_files.append((build_id, ref_id, "appSources"))
-        app_group_children.append(ref_id)
-
-    for ac in asset_catalogs:
-        ref_id = uid(f"fileRef:{ac}")
-        build_id = uid(f"buildFile:{ac}")
-        name = os.path.basename(ac)
-        file_refs.append((ref_id, ac, name, '"<group>"', "folder.assetcatalog"))
-        build_files.append((build_id, ref_id, "appResources"))
-        app_group_children.append(ref_id)
-
-    # Resource files (PrivacyInfo.xcprivacy, plists, etc.) — go to Resources phase
-    for rf in other_resources:
-        ref_id = uid(f"fileRef:{rf}")
-        build_id = uid(f"buildFile:{rf}")
-        name = os.path.basename(rf)
-        ftype = "text.plist.xml" if rf.endswith((".plist", ".xcprivacy", ".entitlements")) else "text.json"
-        file_refs.append((ref_id, rf, name, '"<group>"', ftype))
-        build_files.append((build_id, ref_id, "appResources"))
-        app_group_children.append(ref_id)
-
-    # Entitlements file — referenced in build settings, not in build phase
-    entitlements_ref_id = None
-    if entitlements_file:
-        entitlements_ref_id = uid(f"fileRef:{entitlements_file}")
-        name = os.path.basename(entitlements_file)
-        file_refs.append((entitlements_ref_id, entitlements_file, name, '"<group>"', "text.plist.entitlements"))
-        app_group_children.append(entitlements_ref_id)
-
-    for sf in test_swift_files:
-        ref_id = uid(f"testFileRef:{sf}")
-        build_id = uid(f"testBuildFile:{sf}")
-        name = os.path.basename(sf)
-        file_refs.append((ref_id, sf, name, '"<group>"', "sourcecode.swift"))
-        build_files.append((build_id, ref_id, "testSources"))
-        test_group_children.append(ref_id)
-
     # ── Build the pbxproj string ──
     lines = []
     w = lines.append
@@ -192,15 +79,8 @@ def generate_pbxproj(
     w('\tarchiveVersion = 1;')
     w('\tclasses = {')
     w('\t};')
-    w('\tobjectVersion = 56;')
+    w('\tobjectVersion = 77;')
     w('\tobjects = {')
-    w('')
-
-    # ── PBXBuildFile ──
-    w('/* Begin PBXBuildFile section */')
-    for bf_id, fr_id, _ in build_files:
-        w(f'\t\t{bf_id} /* */ = {{isa = PBXBuildFile; fileRef = {fr_id}; }};')
-    w('/* End PBXBuildFile section */')
     w('')
 
     # ── PBXContainerItemProxy ──
@@ -215,13 +95,26 @@ def generate_pbxproj(
     w('/* End PBXContainerItemProxy section */')
     w('')
 
-    # ── PBXFileReference ──
+    # ── PBXFileReference (products only) ──
     w('/* Begin PBXFileReference section */')
     w(f'\t\t{APP_PRODUCT} = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "{app_name}.app"; sourceTree = BUILT_PRODUCTS_DIR; }};')
     w(f'\t\t{TEST_PRODUCT} = {{isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "{app_name}Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; }};')
-    for ref_id, path, name, tree, ftype in file_refs:
-        w(f'\t\t{ref_id} = {{isa = PBXFileReference; lastKnownFileType = {ftype}; path = "{path}"; sourceTree = {tree}; }};')
     w('/* End PBXFileReference section */')
+    w('')
+
+    # ── PBXFileSystemSynchronizedRootGroup (Folder References) ──
+    w('/* Begin PBXFileSystemSynchronizedRootGroup section */')
+    w(f'\t\t{APP_FOLDER_REF} = {{')
+    w('\t\t\tisa = PBXFileSystemSynchronizedRootGroup;')
+    w(f'\t\t\tpath = {app_name};')
+    w('\t\t\tsourceTree = "<group>";')
+    w('\t\t};')
+    w(f'\t\t{TEST_FOLDER_REF} = {{')
+    w('\t\t\tisa = PBXFileSystemSynchronizedRootGroup;')
+    w(f'\t\t\tpath = {app_name}Tests;')
+    w('\t\t\tsourceTree = "<group>";')
+    w('\t\t};')
+    w('/* End PBXFileSystemSynchronizedRootGroup section */')
     w('')
 
     # ── PBXFrameworksBuildPhase ──
@@ -243,39 +136,17 @@ def generate_pbxproj(
     w('/* End PBXFrameworksBuildPhase section */')
     w('')
 
-    # ── PBXGroup ──
+    # ── PBXGroup (main group + products only) ──
     w('/* Begin PBXGroup section */')
-    # Main group
     w(f'\t\t{MAIN_GROUP} = {{')
     w('\t\t\tisa = PBXGroup;')
     w('\t\t\tchildren = (')
-    w(f'\t\t\t\t{APP_GROUP},')
-    w(f'\t\t\t\t{TEST_GROUP},')
+    w(f'\t\t\t\t{APP_FOLDER_REF},')
+    w(f'\t\t\t\t{TEST_FOLDER_REF},')
     w(f'\t\t\t\t{PRODUCTS_GROUP},')
     w('\t\t\t);')
     w('\t\t\tsourceTree = "<group>";')
     w('\t\t};')
-    # App group
-    w(f'\t\t{APP_GROUP} = {{')
-    w('\t\t\tisa = PBXGroup;')
-    w('\t\t\tchildren = (')
-    for child in app_group_children:
-        w(f'\t\t\t\t{child},')
-    w('\t\t\t);')
-    w(f'\t\t\tpath = "{app_name}";')
-    w('\t\t\tsourceTree = "<group>";')
-    w('\t\t};')
-    # Test group
-    w(f'\t\t{TEST_GROUP} = {{')
-    w('\t\t\tisa = PBXGroup;')
-    w('\t\t\tchildren = (')
-    for child in test_group_children:
-        w(f'\t\t\t\t{child},')
-    w('\t\t\t);')
-    w(f'\t\t\tpath = "{app_name}Tests";')
-    w('\t\t\tsourceTree = "<group>";')
-    w('\t\t};')
-    # Products group
     w(f'\t\t{PRODUCTS_GROUP} = {{')
     w('\t\t\tisa = PBXGroup;')
     w('\t\t\tchildren = (')
@@ -288,7 +159,7 @@ def generate_pbxproj(
     w('/* End PBXGroup section */')
     w('')
 
-    # ── PBXNativeTarget ──
+    # ── PBXNativeTarget (with fileSystemSynchronizedGroups) ──
     w('/* Begin PBXNativeTarget section */')
     # App target
     w(f'\t\t{APP_TARGET} = {{')
@@ -302,6 +173,9 @@ def generate_pbxproj(
     w('\t\t\tbuildRules = (')
     w('\t\t\t);')
     w('\t\t\tdependencies = (')
+    w('\t\t\t);')
+    w('\t\t\tfileSystemSynchronizedGroups = (')
+    w(f'\t\t\t\t{APP_FOLDER_REF},')
     w('\t\t\t);')
     w(f'\t\t\tname = "{app_name}";')
     w(f'\t\t\tproductName = "{app_name}";')
@@ -321,6 +195,9 @@ def generate_pbxproj(
     w('\t\t\tdependencies = (')
     w(f'\t\t\t\t{TARGET_DEPENDENCY},')
     w('\t\t\t);')
+    w('\t\t\tfileSystemSynchronizedGroups = (')
+    w(f'\t\t\t\t{TEST_FOLDER_REF},')
+    w('\t\t\t);')
     w(f'\t\t\tname = "{app_name}Tests";')
     w(f'\t\t\tproductName = "{app_name}Tests";')
     w(f'\t\t\tproductReference = {TEST_PRODUCT};')
@@ -334,7 +211,7 @@ def generate_pbxproj(
     w(f'\t\t{ROOT_OBJ} = {{')
     w('\t\t\tisa = PBXProject;')
     w(f'\t\t\tbuildConfigurationList = {CONFIG_LIST};')
-    w('\t\t\tcompatibilityVersion = "Xcode 14.0";')
+    w('\t\t\tcompatibilityVersion = "Xcode 26.3";')
     w('\t\t\tdevelopmentRegion = en;')
     w('\t\t\thasScannedForEncodings = 0;')
     w('\t\t\tknownRegions = (')
@@ -354,30 +231,24 @@ def generate_pbxproj(
     w('/* End PBXProject section */')
     w('')
 
-    # ── PBXResourcesBuildPhase ──
+    # ── PBXResourcesBuildPhase (empty — folder ref handles assignment) ──
     w('/* Begin PBXResourcesBuildPhase section */')
     w(f'\t\t{APP_RESOURCES_PHASE} = {{')
     w('\t\t\tisa = PBXResourcesBuildPhase;')
     w('\t\t\tbuildActionMask = 2147483647;')
     w('\t\t\tfiles = (')
-    for bf_id, _, phase in build_files:
-        if phase == "appResources":
-            w(f'\t\t\t\t{bf_id},')
     w('\t\t\t);')
     w('\t\t\trunOnlyForDeploymentPostprocessing = 0;')
     w('\t\t};')
     w('/* End PBXResourcesBuildPhase section */')
     w('')
 
-    # ── PBXSourcesBuildPhase ──
+    # ── PBXSourcesBuildPhase (empty — folder ref handles assignment) ──
     w('/* Begin PBXSourcesBuildPhase section */')
     w(f'\t\t{APP_SOURCES_PHASE} = {{')
     w('\t\t\tisa = PBXSourcesBuildPhase;')
     w('\t\t\tbuildActionMask = 2147483647;')
     w('\t\t\tfiles = (')
-    for bf_id, _, phase in build_files:
-        if phase == "appSources":
-            w(f'\t\t\t\t{bf_id},')
     w('\t\t\t);')
     w('\t\t\trunOnlyForDeploymentPostprocessing = 0;')
     w('\t\t};')
@@ -385,9 +256,6 @@ def generate_pbxproj(
     w('\t\t\tisa = PBXSourcesBuildPhase;')
     w('\t\t\tbuildActionMask = 2147483647;')
     w('\t\t\tfiles = (')
-    for bf_id, _, phase in build_files:
-        if phase == "testSources":
-            w(f'\t\t\t\t{bf_id},')
     w('\t\t\t);')
     w('\t\t\trunOnlyForDeploymentPostprocessing = 0;')
     w('\t\t};')
@@ -406,7 +274,7 @@ def generate_pbxproj(
 
     # ── XCBuildConfiguration ──
     team_setting = f'\t\t\t\tDEVELOPMENT_TEAM = "{team_id}";' if team_id else '\t\t\t\tDEVELOPMENT_TEAM = "";'
-    entitlements_setting = f'\t\t\t\tCODE_SIGN_ENTITLEMENTS = "{app_name}/{entitlements_file}";' if entitlements_file else ''
+    entitlements_setting = f'\t\t\t\tCODE_SIGN_ENTITLEMENTS = "{app_name}/{app_name}.entitlements";'
 
     w('/* Begin XCBuildConfiguration section */')
     # Project-level Debug
@@ -455,8 +323,7 @@ def generate_pbxproj(
     w('\t\t\tisa = XCBuildConfiguration;')
     w('\t\t\tbuildSettings = {')
     w(f'\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;')
-    if entitlements_setting:
-        w(f'{entitlements_setting}')
+    w(f'{entitlements_setting}')
     w(f'\t\t\t\tCODE_SIGN_STYLE = Automatic;')
     w(f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;')
     w(f'{team_setting}')
@@ -479,8 +346,7 @@ def generate_pbxproj(
     w('\t\t\tisa = XCBuildConfiguration;')
     w('\t\t\tbuildSettings = {')
     w(f'\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;')
-    if entitlements_setting:
-        w(f'{entitlements_setting}')
+    w(f'{entitlements_setting}')
     w(f'\t\t\t\tCODE_SIGN_STYLE = Automatic;')
     w(f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;')
     w(f'{team_setting}')
@@ -580,7 +446,6 @@ def main():
 
     app_name = args.name
     sources_dir = args.sources_dir
-    tests_dir = os.path.join(os.path.dirname(sources_dir), f"{app_name}Tests")
     project_dir = os.path.dirname(sources_dir)
     xcodeproj_dir = os.path.join(project_dir, f"{app_name}.xcodeproj")
 
@@ -589,8 +454,6 @@ def main():
         app_name=app_name,
         bundle_id=args.bundle_id,
         deployment_target=args.deployment_target,
-        sources_dir=sources_dir,
-        tests_dir=tests_dir,
         team_id=args.team_id,
     )
 
@@ -605,7 +468,7 @@ def main():
     os.makedirs(schemes_dir, exist_ok=True)
 
     scheme_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Scheme LastUpgradeVersion="1600" version="1.7">
+<Scheme LastUpgradeVersion="2630" version="1.7">
    <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
       <BuildActionEntries>
          <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES">

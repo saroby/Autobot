@@ -224,14 +224,15 @@ SWIFT_EOF
 
 # Check if xcodegen is available for project generation
 if command -v xcodegen &>/dev/null; then
-  # Create project.yml for xcodegen
+  # Create project.yml for xcodegen (Folder Reference mode)
   cat > "${PROJECT_DIR}/project.yml" << YAML_EOF
 name: ${APP_NAME}
 options:
   bundleIdPrefix: $(echo "$BUNDLE_ID" | sed "s/\\.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')$//")
   deploymentTarget:
     iOS: "${DEPLOYMENT_TARGET}"
-  xcodeVersion: "16.0"
+  xcodeVersion: "26.3"
+  useBaseInternationalization: true
 
 settings:
   base:
@@ -247,6 +248,7 @@ targets:
     platform: iOS
     sources:
       - path: ${APP_NAME}
+        type: folder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}
@@ -260,6 +262,7 @@ targets:
     platform: iOS
     sources:
       - path: ${APP_NAME}Tests
+        type: folder
     dependencies:
       - target: ${APP_NAME}
 YAML_EOF
