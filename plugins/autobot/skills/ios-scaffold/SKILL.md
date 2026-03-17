@@ -1,7 +1,6 @@
 ---
 name: autobot-ios-scaffold
-description: This skill should be used when creating a new Xcode project from scratch, setting up iOS 26+ project structure, configuring targets and schemes, or when the "/autobot:build" command needs to scaffold a project. Covers xcodegen, swift package init, and manual project creation.
-version: 0.1.0
+description: Use when creating a new Xcode project from scratch, setting up iOS 26+ project structure, configuring targets and schemes, or when the "/autobot:build" command needs to scaffold a project.
 ---
 
 # iOS Project Scaffolding

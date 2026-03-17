@@ -35,7 +35,7 @@ Follow ALL patterns from `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` exactl
 
 **SwiftUI Patterns:**
 
-ViewModelは `Models/ServiceProtocols.swift`에 정의된 **서비스 프로토콜**에 의존한다. 구현체(Repository)는 data-engineer가 생성하며, 실행 시 주입된다.
+ViewModel은 `Models/ServiceProtocols.swift`에 정의된 **서비스 프로토콜**에 의존한다. 구현체(Repository)는 data-engineer가 생성하며, 실행 시 주입된다.
 
 ```swift
 // ViewModel pattern — 프로토콜에 의존, 구현체에 의존하지 않음
@@ -64,6 +64,25 @@ struct ScreenNameView: View {
     var body: some View {
         // Content
     }
+}
+```
+
+**Preview Data & Swift 6 Concurrency:**
+
+SwiftData `@Model` 타입은 `Sendable`이 아니다. Preview 데이터를 담는 enum/struct에 `@MainActor`를 반드시 추가하라.
+
+```swift
+// ✅ 올바른 패턴
+@MainActor
+enum PreviewData {
+    static let sampleItems: [Item] = [
+        Item(name: "Sample")
+    ]
+}
+
+// ❌ 컴파일 에러 — @MainActor 누락
+enum PreviewData {
+    static let sampleItems: [Item] = [...]  // Swift 6: not concurrency-safe
 }
 ```
 

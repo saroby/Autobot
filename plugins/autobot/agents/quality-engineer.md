@@ -12,6 +12,8 @@ Validate the generated app compiles successfully, fix any errors, and write basi
 
 **Process:**
 
+> **Step 순서가 중요하다**: 먼저 stub을 실제 서비스로 교체하고(1), 플랫폼 요구사항을 반영한 뒤(2), 빌드 검증(3)을 수행한다. stub이 남아있는 상태에서 빌드하면 stub 교체 후 다시 빌드해야 하므로 시간 낭비다.
+
 0. **Xcode 프로젝트에 새 파일 등록** (Phase 3에서 생성된 파일 반영):
    ```bash
    # xcodegen이 있으면
@@ -25,27 +27,17 @@ Validate the generated app compiles successfully, fix any errors, and write basi
    ```
    **이 단계를 빌드 전에 반드시 수행한다.** 안 하면 새 .swift 파일이 빌드에 포함되지 않는다.
 
-1. **Build Validation** (iterate up to 5 times):
-   ```bash
-   xcodebuild -project *.xcodeproj -scheme <scheme> \
-     -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
-     build 2>&1 | tail -50
-   ```
-   - If build fails, read error messages and fix the source files
-   - Common fixes: missing imports, type mismatches, SwiftData relationship issues
-   - After each fix, rebuild to verify
-
-2. **Test Writing**:
-   - Create `Tests/` directory with test target
-   - Write unit tests for data models
-   - Write unit tests for repositories
-   - Write basic UI test skeleton
-
-3. **Integration Wiring** (ui-builder ↔ data-engineer 연결):
+1. **Integration Wiring** (ui-builder ↔ data-engineer 연결 — **빌드 전에 수행**):
    - `App/ServiceStubs.swift`가 있으면 삭제하고, `Services/`의 실제 Repository 구현체로 교체
+   - **stub 교체 전 반드시 실제 서비스의 init 시그니처를 확인한다:**
+     ```bash
+     # 실제 Repository의 init 시그니처 확인
+     grep -n 'init(' Services/*Repository.swift Services/*Service.swift 2>/dev/null
+     ```
+     stub의 init 파라미터 레이블(예: `context:`)과 실제 서비스의 레이블(예: `modelContext:`)이 다를 수 있다. **실제 서비스의 시그니처에 맞춰** App 엔트리포인트 코드를 작성한다.
    - App 엔트리포인트에서 Repository를 생성하여 ViewModel에 주입하는 코드 작성:
      ```swift
-     // App entry point에서:
+     // App entry point에서 — init 파라미터 레이블은 실제 Repository에 맞출 것:
      let container = try ModelContainer(for: ...)
      let itemService = ItemRepository(modelContext: container.mainContext)
      ContentView(itemService: itemService)
@@ -59,7 +51,7 @@ Validate the generated app compiles successfully, fix any errors, and write basi
      - `backend/.env` 파일이 `.gitignore`에 포함되어 있는지 확인
      - `backend/.env.example`에 모든 필수 키가 나열되어 있는지 확인
 
-4. **Platform Requirements Check**:
+2. **Platform Requirements** (architecture.md 기반 — **빌드 전에 수행**):
    - **PrivacyInfo.xcprivacy**: `.autobot/architecture.md`의 Privacy API Categories와 비교하여 누락된 항목 추가
    - **Entitlements**: architecture.md의 Entitlements를 `.entitlements` 파일에 반영
      - iCloud: `com.apple.developer.icloud-container-identifiers`, `com.apple.developer.icloud-services`
@@ -69,6 +61,34 @@ Validate the generated app compiles successfully, fix any errors, and write basi
      - xcodegen: `project.yml`의 `INFOPLIST_KEY_` 설정
      - pbxproj: build settings에 직접 추가
      - 예: `INFOPLIST_KEY_NSCameraUsageDescription = "카메라 설명"`
+
+3. **Build Validation** (iterate up to 5 times):
+   ```bash
+   # 사용 가능한 시뮬레이터를 동적으로 탐색 (OS 버전 불일치 방지)
+   SIM_DEST=$(xcrun simctl list devices available -j | python3 -c "
+   import json, sys
+   data = json.load(sys.stdin)
+   for runtime, devices in data['devices'].items():
+       if 'iOS' in runtime:
+           for d in devices:
+               if 'iPhone' in d['name'] and d['isAvailable']:
+                   print(f\"platform=iOS Simulator,id={d['udid']}\")
+                   sys.exit(0)
+   print('generic/platform=iOS Simulator')
+   ")
+   xcodebuild -project *.xcodeproj -scheme <scheme> \
+     -destination "$SIM_DEST" \
+     build 2>&1 | tail -50
+   ```
+   - If build fails, read error messages and fix the source files
+   - Common fixes: missing imports, type mismatches, SwiftData relationship issues
+   - After each fix, rebuild to verify
+
+4. **Test Writing**:
+   - Create `Tests/` directory with test target
+   - Write unit tests for data models
+   - Write unit tests for repositories
+   - Write basic UI test skeleton
 
 5. **Docker Backend Verification** (if `.autobot/architecture.md` contains `Backend Requirements` with `Required: true`):
 

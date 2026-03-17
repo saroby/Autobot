@@ -1,7 +1,6 @@
 ---
 name: autobot-orchestrator
-description: This skill should be used when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:build" or "/autobot:resume". Provides the master coordination logic for the Autobot build pipeline including phase validation gates, agent dispatch strategy, error recovery, and rollback mechanisms.
-version: 0.2.0
+description: Use when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:build" or "/autobot:resume".
 ---
 
 # Autobot Orchestrator

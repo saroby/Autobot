@@ -115,18 +115,23 @@ async def health():
 **SSE Streaming Pattern (for LLM proxy):**
 
 ```python
+from collections.abc import AsyncGenerator
 from fastapi.responses import StreamingResponse
 import httpx
 import json
 
-async def stream_chat(messages: list[dict]) -> AsyncGenerator[str, None]:
+async def stream_chat(messages: list[dict], settings: "Settings") -> AsyncGenerator[str, None]:
+    """LLM 업스트림에 요청을 전달하고 SSE 청크를 변환하여 yield한다."""
+    payload = {"model": settings.llm_model, "messages": messages, "stream": True}
+    headers = {"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"}
     async with httpx.AsyncClient() as client:
         try:
-            async with client.stream("POST", UPSTREAM_URL, json=payload, headers=headers) as response:
+            async with client.stream("POST", settings.llm_upstream_url, json=payload, headers=headers) as response:
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
                         chunk = json.loads(line[6:])
-                        yield f"data: {json.dumps({'content': chunk_content, 'done': False})}\n\n"
+                        content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        yield f"data: {json.dumps({'content': content, 'done': False})}\n\n"
             yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
         except Exception:
             yield f"data: {json.dumps({'content': '', 'done': True, 'error': 'upstream_error'})}\n\n"

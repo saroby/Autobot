@@ -1,7 +1,6 @@
 ---
 name: autobot-testflight-deploy
-description: This skill should be used when deploying an iOS app to TestFlight, setting up code signing, archiving builds, uploading to App Store Connect, creating beta tester groups, or when the "/autobot:build" deployment phase is reached. Covers the complete archive → export → upload → tester setup pipeline.
-version: 0.1.0
+description: Use when deploying an iOS app to TestFlight, setting up code signing, archiving builds, uploading to App Store Connect, creating beta tester groups, or when the "/autobot:build" deployment phase is reached.
 ---
 
 # TestFlight Deployment

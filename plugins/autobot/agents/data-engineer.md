@@ -86,6 +86,8 @@ actor NetworkService {
     }
 }
 
+// ⚠️ architect가 Models/NetworkError.swift를 이미 생성했으면 아래를 정의하지 않는다.
+// Models/ 파일을 먼저 읽어 중복 여부를 확인할 것.
 enum NetworkError: LocalizedError {
     case invalidResponse
     case decodingFailed

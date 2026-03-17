@@ -206,6 +206,16 @@ protocol ItemServiceProtocol {
 - 네트워킹이 필요하면 `async throws` 메서드 추가
 - `@MainActor`를 프로토콜에 명시 (SwiftUI 뷰에서 직접 호출 가능)
 - `ModelContext`를 프로토콜에 노출하지 않는다 (구현 세부사항)
+- **init 시그니처를 문서화 주석으로 명시한다** — ui-builder(stub)와 data-engineer(실제 구현)가 같은 파라미터 레이블을 쓰도록 보장:
+  ```swift
+  /// Implementation: init(modelContext: ModelContext)
+  @MainActor
+  protocol ItemServiceProtocol {
+      func fetchAll() throws -> [Item]
+      // ...
+  }
+  ```
+  Swift 프로토콜은 `init` 요구사항을 정의할 수 있지만 `ModelContext`를 노출하게 되므로, 대신 **문서화 주석**으로 init 계약을 명시한다. 이 주석이 없으면 stub과 실제 서비스의 init 파라미터 레이블이 달라져 Phase 4에서 컴파일 에러가 발생한다.
 - `backend_required == true`이면 `AuthServiceProtocol`과 `LLMServiceProtocol`도 생성:
   ```swift
   @MainActor
@@ -302,7 +312,7 @@ capability가 필요 없는 앱이면 이 섹션을 비워둔다.
 
 **Compilation Verification (필수):**
 
-Models/ 파일 생성 후 반드시 컴파일 검증을 수행한다. optional chaining, 누락된 import, 타입 불일치 등을 빌드 전에 잡는다:
+Models/ 파일 생성 후 컴파일 검증을 시도한다. optional chaining, 누락된 import, 타입 불일치 등을 빌드 전에 잡는다:
 
 ```bash
 # 생성한 모든 Swift 파일을 한 번에 검증
@@ -310,8 +320,10 @@ swiftc -typecheck -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
   -target arm64-apple-ios26.0-simulator \
   Models/*.swift 2>&1
 
-# 에러 발생 시: 즉시 수정하고 재검증. Gate 1→2를 통과하려면 에러 0건이어야 한다.
+# 에러 발생 시: 즉시 수정하고 재검증.
 ```
+
+> **참고**: `@Model` 매크로는 SwiftData 프레임워크에 의존하므로 `swiftc -typecheck`로 완전한 검증이 불가할 수 있다. 매크로 관련 에러는 무시하고, import 누락, 타입 불일치, optional chaining 오류 등 **순수 Swift 문법 에러만** 수정한다. 최종 컴파일 검증은 Phase 4(xcodebuild)에서 수행된다.
 
 **Constraints:**
 - Do NOT generate Views, ViewModels, Repositories, or Services — only architecture doc + Model files + Service protocols

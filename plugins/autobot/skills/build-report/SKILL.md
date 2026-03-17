@@ -1,7 +1,6 @@
 ---
 name: autobot-build-report
-description: Autobot 빌드 완료 후 플러그인 문제를 수집하여 build-report.md를 생성한다. Phase 6(Retrospective)에서 자동 호출되거나, 빌드 후 "보고서 만들어" 같은 요청에 반응한다. learnings.json(누적 학습)과 달리, 이 보고서는 해당 빌드에서 발견된 플러그인 수준의 문제만 담으며, 보고서 파일을 Autobot 작업폴더에 전달하면 문제를 자동 보완할 수 있다.
-version: 0.1.0
+description: Use when an Autobot build completes (Phase 6) or when the user requests a post-build report. Collects plugin-level issues found during the build, distinct from learnings.json cumulative data.
 ---
 
 # Build Report Generator

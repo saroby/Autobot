@@ -1,7 +1,6 @@
 ---
 name: autobot-retrospective
-description: This skill should be used after an Autobot build completes (success or failure) to capture learnings, analyze patterns, and improve future builds. Also triggered when checking past build history or analyzing build performance trends.
-version: 0.1.0
+description: Use after an Autobot build completes (success or failure), when checking past build history, or when analyzing build performance trends.
 ---
 
 # Build Retrospective & Self-Improvement
