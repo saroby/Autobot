@@ -172,44 +172,19 @@ ios-scaffold 스킬 참조하여:
 
 **전제조건**: Phase 1에서 `Models/*.swift` 및 `Models/ServiceProtocols.swift` 파일들이 이미 생성되어 있어야 한다. Model 파일들이 타입 계약, Service 프로토콜이 통합 계약 역할을 한다.
 
-### 격리 전략: Git Worktree
+### 격리 전략: 파일 소유권 규칙
 
-두 에이전트를 **별도의 git worktree**에서 실행하여 파일 충돌을 방지한다:
+에이전트들은 **파일 소유권 규칙**으로 충돌을 방지한다. 각 에이전트가 쓸 수 있는 디렉토리가 완전히 분리되어 있으므로 별도 격리 없이 병렬 실행이 안전하다:
 
-```
-Agent(
-  prompt="[ui-builder task]",
-  isolation="worktree"    ← 별도 worktree에서 실행
-)
-Agent(
-  prompt="[data-engineer task]",
-  isolation="worktree"    ← 별도 worktree에서 실행
-)
-```
-
-각 에이전트가 worktree에서 작업을 완료하면:
-- 변경된 파일이 있으면 worktree 경로와 브랜치명이 반환됨
-- Phase 3 완료 후 `git merge`로 두 브랜치를 메인에 통합
-- `Models/` 디렉토리는 양쪽 모두 수정하지 않으므로 충돌 없음
-- `Views/`와 `Services/`는 서로 다른 디렉토리이므로 충돌 없음
-
-### Worktree 통합
-
-두 에이전트 완료 후:
-```bash
-# ui-builder 브랜치 머지
-git merge <ui-builder-branch> --no-edit
-
-# data-engineer 브랜치 머지
-git merge <data-engineer-branch> --no-edit
-```
-
-충돌 발생 시 (비정상 — 같은 파일을 건드린 경우):
-- quality-engineer가 Phase 4에서 해결
+| Agent | Writes To | MUST NOT Touch |
+|-------|-----------|----------------|
+| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/`, `Services/` |
+| data-engineer | `Services/`, `Utilities/` | `Models/`, `Views/`, `ViewModels/`, `App/` |
+| backend-engineer | `backend/` | 그 외 전부 |
 
 다음 에이전트들을 **하나의 메시지에서 동시에** 실행:
 
-### Agent 1: ui-builder (worktree 격리)
+### Agent 1: ui-builder
 - `Models/*.swift` 파일들을 **먼저 읽고** 정확한 타입명/이니셜라이저 파악
 - `Models/ServiceProtocols.swift`를 읽고 ViewModel이 의존할 프로토콜 파악
 - `.autobot/architecture.md`를 읽고 SwiftUI 뷰 구현
@@ -222,7 +197,7 @@ git merge <data-engineer-branch> --no-edit
 - **Models/ 디렉토리의 파일을 절대 수정하지 않는다**
 - Axiom ios-ui 스킬 사용 가능하면 활용
 
-### Agent 2: data-engineer (worktree 격리)
+### Agent 2: data-engineer
 - `Models/*.swift` 파일들을 **먼저 읽고** 정확한 타입명/이니셜라이저 파악
 - `Models/ServiceProtocols.swift`를 읽고 구현할 프로토콜 파악
 - `.autobot/architecture.md`를 읽고 데이터 접근 레이어 구현
@@ -237,7 +212,7 @@ git merge <data-engineer-branch> --no-edit
 - `App/<AppName>App.swift`에 `.modelContainer` 포함
 - **Models/ 무결성**: 체크섬 재계산 → `build-state.json.modelsChecksum`과 비교
   - 불일치 → `git checkout -- Models/` 자동 복원 후 Gate 재검증
-- worktree 브랜치 머지 완료, 충돌 없음
+- 에이전트 간 파일 소유권 위반 없음 (각자 지정 디렉토리에만 쓰기)
 - Gate 실패 시 → Phase 3 재실행 (최대 2회)
 
 **→ Gate 통과 시 `build-state.json`의 `phases.3`을 `{"status": "completed"}` 로 갱신**
@@ -245,8 +220,7 @@ git merge <data-engineer-branch> --no-edit
 
 ## Phase 4: 통합 및 빌드 검증
 
-1. Phase 3의 worktree 브랜치들을 메인에 머지
-2. **Xcode 프로젝트에 새 파일 등록** (Phase 3에서 생성된 .swift 파일들):
+1. **Xcode 프로젝트에 새 파일 등록** (Phase 3에서 생성된 .swift 파일들):
    - xcodegen: `xcodegen generate` 재실행 (sources를 자동 스캔)
    - fallback: `generate-pbxproj.py` 재실행 (재귀 탐색으로 모든 .swift 파일 등록)
    - 이 단계 없으면 Phase 3에서 만든 파일이 빌드에 포함되지 않음

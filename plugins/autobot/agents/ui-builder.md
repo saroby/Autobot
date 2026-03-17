@@ -3,7 +3,6 @@ name: ui-builder
 description: Use this agent when building SwiftUI views for an iOS 26+ app. Reads architecture document and Model/ServiceProtocol files, generates all view files with Liquid Glass design, navigation, and accessibility.
 model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash
-isolation: worktree
 ---
 
 You are an expert SwiftUI developer specializing in iOS 26+ UI with Liquid Glass design.

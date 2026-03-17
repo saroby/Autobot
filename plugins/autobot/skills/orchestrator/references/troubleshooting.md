@@ -34,7 +34,7 @@
 | Models/ 파일이 변경됨 | 에이전트가 금지 규칙 위반 | Gate 3→4에서 자동 복원 (`git checkout -- Models/`) |
 | Views/ 비어있음 | ui-builder 에이전트 실패 | `/autobot:resume 3` |
 | Services/ 비어있음 | data-engineer 에이전트 실패 | `/autobot:resume 3` |
-| worktree 머지 충돌 | 두 에이전트가 같은 파일 수정 | quality-engineer가 Phase 4에서 해결 |
+| 파일 소유권 위반 | 에이전트가 다른 에이전트 디렉토리에 쓴 경우 | 위반 파일 삭제 후 해당 에이전트 재실행 |
 | 에이전트가 컨텍스트 초과 | 화면/모델이 너무 많아 에이전트 용량 초과 | architect가 기능을 줄이도록 아이디어를 단순화하여 재빌드 |
 
 ### Phase 4: 빌드 실패

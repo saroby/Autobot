@@ -2,20 +2,20 @@
 
 ## Parallel Agent Execution
 
-### File Ownership, Type Contract & Worktree Isolation
+### File Ownership & Type Contract
 
 Agents write to separate directories to prevent conflicts. `Models/` is the **shared type contract** (data models + service protocols) created by architect — no other agent may modify it.
 
-Phase 3의 ui-builder와 data-engineer는 **별도의 git worktree**에서 실행되어 파일시스템 수준의 격리를 보장한다.
+Phase 3의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지한다. 각 에이전트는 지정된 디렉토리에만 쓰고, 다른 에이전트의 디렉토리를 건드리지 않는다.
 
-| Agent | Writes To | Reads From | MUST NOT Touch | Isolation |
-|-------|-----------|------------|----------------|-----------|
-| architect | `.autobot/architecture.md`, `Models/` | (user input) | — | main |
-| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Services/` | **worktree** |
-| data-engineer | `Services/`, `Utilities/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `App/` | **worktree** |
-| backend-engineer | `backend/` | `Models/APIContracts.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `Services/`, `App/`, root `.gitignore` | **worktree** |
-| quality-engineer | `Tests/`, fixes in any file, integration wiring | All source files | — | main |
-| deployer | `build/`, config files | Built app | — | main |
+| Agent | Writes To | Reads From | MUST NOT Touch |
+|-------|-----------|------------|----------------|
+| architect | `.autobot/architecture.md`, `Models/` | (user input) | — |
+| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Services/` |
+| data-engineer | `Services/`, `Utilities/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `App/` |
+| backend-engineer | `backend/` | `Models/APIContracts.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `Services/`, `App/`, root `.gitignore` |
+| quality-engineer | `Tests/`, fixes in any file, integration wiring | All source files | — |
+| deployer | `build/`, config files | Built app | — |
 
 ### Agent Prompt Templates
 
@@ -67,46 +67,76 @@ When `build-state.json` has `backend_required: true`, Phase 3 dispatches three a
 
 ```
 Agent(
-  prompt="[ui-builder task with full context]",
-  isolation="worktree"
+  subagent_type="ui-builder",
+  prompt="[ui-builder task with full context]"
 )
 Agent(
-  prompt="[data-engineer task with full context]",
-  isolation="worktree"
+  subagent_type="data-engineer",
+  prompt="[data-engineer task with full context]"
 )
 Agent(
-  prompt="[backend-engineer task with full context]",
-  isolation="worktree"
+  subagent_type="backend-engineer",
+  prompt="[backend-engineer task with full context]"
 )
 ```
 
-All three write to disjoint directories → merge conflict probability zero.
-Worktree fallback applies to all three agents identically.
+All three write to disjoint directories (Views/ vs Services/ vs backend/) → conflict probability zero.
 
-## AgentTeam Integration
+## Agent Team Integration (Primary Coordination Pattern)
 
-When AgentTeam feature is available (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1):
+Agent Team을 사용하여 Phase 3의 병렬 에이전트를 조율한다.
 
-### Team Structure
-```json
-{
-  "name": "autobot-<app-name>",
-  "members": [
-    {"name": "architect", "agentType": "orchestrator", "model": "claude-opus-4-6"},
-    {"name": "ui-builder", "agentType": "worker", "model": "claude-sonnet-4-6"},
-    {"name": "data-engineer", "agentType": "worker", "model": "claude-sonnet-4-6"},
-    {"name": "quality-engineer", "agentType": "worker", "model": "claude-sonnet-4-6"},
-    {"name": "backend-engineer", "agentType": "worker", "model": "claude-sonnet-4-6"}
+### Team 생성
+
+```
+TeamCreate(
+  name="autobot-<app-name>",
+  members=[
+    {"name": "ui-builder", "agentType": "autobot:ui-builder", "model": "claude-sonnet-4-6"},
+    {"name": "data-engineer", "agentType": "autobot:data-engineer", "model": "claude-sonnet-4-6"},
+    {"name": "backend-engineer", "agentType": "autobot:backend-engineer", "model": "claude-sonnet-4-6"}
   ]
-}
+)
 ```
 
-### Communication via Inboxes
-Team members communicate through message inboxes:
-- architect → broadcasts architecture decisions
-- ui-builder → reports UI completion status
-- data-engineer → reports data layer completion
-- quality-engineer → reports build/test results
+### Communication via SendMessage
+
+Team 멤버 간 상태를 SendMessage로 공유:
+
+```
+# 오케스트레이터 → 멤버에게 작업 시작 지시
+SendMessage(to="ui-builder", message="[ui-builder task with full context]")
+SendMessage(to="data-engineer", message="[data-engineer task with full context]")
+
+# 조건부
+if backend_required:
+  SendMessage(to="backend-engineer", message="[backend-engineer task with full context]")
+```
+
+### 상태 수집
+
+각 멤버가 완료되면 오케스트레이터가 결과를 수신:
+- ui-builder → Views/, ViewModels/, App/ 생성 완료
+- data-engineer → Services/, Utilities/ 생성 완료
+- backend-engineer → backend/ 생성 완료
+- quality-engineer → 빌드/테스트 결과 보고
+
+### Fallback: Agent Team 미사용 시
+
+Agent Team이 불가능한 환경에서는 일반 Agent 도구로 **병렬 디스패치**:
+
+```
+Agent(
+  subagent_type="ui-builder",
+  prompt="[ui-builder task]"
+)
+Agent(
+  subagent_type="data-engineer",
+  prompt="[data-engineer task]"
+)
+```
+
+파일 소유권 규칙이 충돌을 방지하므로 격리 없이도 안전하다.
 
 ## Background Agent Pattern
 
@@ -129,30 +159,10 @@ Do NOT use background agents for:
 - Build verification (must complete before deploy)
 - Deployment (must report status)
 
-## Worktree Fallback
-
-`Cannot create agent worktree` 에러 발생 시 (세션 중 `git init`된 저장소 등):
-
-1. `isolation` 파라미터를 **제거**하고 general-purpose 에이전트로 재디스패치
-2. 두 에이전트를 **병렬로** 실행 — 파일 소유권 규칙(Views/ vs Services/)이 충돌 방지
-3. 에이전트 프롬프트는 동일하게 유지 (worktree 관련 언급만 제거)
-
-```
-# Fallback 예시
-Agent(
-  prompt="[ui-builder task - 동일 프롬프트]"
-  # isolation 파라미터 없음
-)
-Agent(
-  prompt="[data-engineer task - 동일 프롬프트]"
-  # isolation 파라미터 없음
-)
-```
-
 ## Error Recovery in Parallel Agents
 
 If one parallel agent fails:
-1. Let the other agent complete
-2. Manually fix the failed agent's work
-3. Do NOT re-dispatch both agents
+1. Let the other agent(s) complete
+2. Re-dispatch only the failed agent
+3. Do NOT re-dispatch all agents
 4. Log the failure pattern for retrospective

@@ -63,11 +63,10 @@ CHECK:
   ✓ Services/ 디렉토리에 .swift 파일 1개 이상
   ✓ App/<AppName>App.swift에 '.modelContainer' 문자열 포함
   ✓ Models/*.swift 파일이 Phase 1과 동일 (수정되지 않음 — checksum 비교)
-  ✓ worktree 브랜치 머지 완료 (충돌 없음)
+  ✓ 에이전트 간 파일 소유권 위반 없음 (각자 지정 디렉토리에만 쓰기)
 FAIL:
   - Models/ 변경됨 → git checkout으로 Models/ 복원 후 Phase 3 재실행
   - 파일 누락 → 해당 에이전트만 재실행
-  - 머지 충돌 → quality-engineer에 충돌 해결 위임
   ✓ (backend_required) backend/ 디렉토리 존재
   ✓ (backend_required) backend/Dockerfile 존재
   ✓ (backend_required) backend/docker-compose.yml 존재

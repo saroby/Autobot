@@ -1,6 +1,6 @@
 ---
 name: quality-engineer
-description: Use this agent when validating and testing an iOS app build. Merges worktree branches, wires service stubs to real repositories, fixes compilation errors, and writes basic tests.
+description: Use this agent when validating and testing an iOS app build. Wires service stubs to real repositories, fixes compilation errors, and writes basic tests.
 model: sonnet
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
