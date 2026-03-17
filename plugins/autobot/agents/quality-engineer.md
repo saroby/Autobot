@@ -52,6 +52,12 @@ Validate the generated app compiles successfully, fix any errors, and write basi
      ```
    - `Models/ServiceProtocols.swift`의 각 프로토콜이 `Services/`에 구현체를 갖고 있는지 검증
    - ViewModel 생성자에 올바른 Service 타입이 전달되는지 검증
+   - **Backend Integration** (if backend required):
+     - APIClient가 `Bundle.main`의 `API_BASE_URL`을 사용하는지 확인
+     - Auth 헤더 주입 로직 존재하는지 확인
+     - SSE 파싱 코드 존재하는지 확인 (LLM 스트리밍 엔드포인트가 있을 때)
+     - `backend/.env` 파일이 `.gitignore`에 포함되어 있는지 확인
+     - `backend/.env.example`에 모든 필수 키가 나열되어 있는지 확인
 
 4. **Platform Requirements Check**:
    - **PrivacyInfo.xcprivacy**: `.autobot/architecture.md`의 Privacy API Categories와 비교하여 누락된 항목 추가
@@ -64,7 +70,32 @@ Validate the generated app compiles successfully, fix any errors, and write basi
      - pbxproj: build settings에 직접 추가
      - 예: `INFOPLIST_KEY_NSCameraUsageDescription = "카메라 설명"`
 
-5. **Code Quality Check**:
+5. **Docker Backend Verification** (if `.autobot/architecture.md` contains `Backend Requirements` with `Required: true`):
+
+   ```bash
+   # 1. Docker 이미지 빌드
+   cd backend && docker compose build
+
+   # 2. 컨테이너 시작 (healthcheck 통과까지 대기)
+   docker compose up -d --wait
+
+   # 3. Health check 확인
+   curl -f http://localhost:8080/health
+   # Expected: {"status": "ok"}
+
+   # 4. 정리
+   docker compose down
+   cd ..
+   ```
+
+   Docker 검증은 iOS 빌드 성공 후에 실행한다 (iOS 컴파일은 서버 없이 가능).
+
+   Docker 검증 실패 시:
+   - `docker compose build` 실패 → requirements.txt/Dockerfile 확인
+   - `docker compose up` 실패 → 포트 충돌 확인 (`lsof -i :8080`)
+   - health check 실패 → app/main.py의 /health 라우트 확인
+
+6. **Code Quality Check**:
    - Verify all files have proper imports
    - Check for force unwraps (replace with safe unwrapping)
    - Verify @MainActor usage on view models

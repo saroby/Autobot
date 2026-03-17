@@ -21,6 +21,11 @@ Read `.autobot/architecture.md` and the **actual Swift Model files in `Models/`*
 4. **Create Repositories**: `Services/` directory with data access patterns using the exact Model types
 5. **Create Network Layer**: If API needed, `Services/Networking/` directory
 6. **Create Sample Data**: Preview/test data in `Utilities/SampleData.swift` using exact Model initializers
+7. **Backend Integration (if backend required)**: Read architecture.md `## iOS Configuration` section, then:
+   - NetworkService에서 `Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL")` 사용
+   - 모든 API 호출에 `Authorization: Bearer <token>` 헤더 주입
+   - SSE 스트리밍 엔드포인트는 `URLSession.bytes(for:)` iteration으로 파싱
+   - `Models/APIContracts.swift`의 타입을 정확히 사용 (직접 정의하지 않음)
 
 **IMPORTANT:**
 - Do NOT create, modify, or overwrite any files in `Models/`. The architect already generated them.
@@ -95,6 +100,94 @@ enum NetworkError: LocalizedError {
 }
 ```
 
+**Backend-Aware Networking (if architecture.md has Backend Requirements):**
+
+```swift
+@Observable @MainActor
+final class APIClient {
+    private let session: URLSession
+    private let baseURL: URL
+    private var authToken: String?
+
+    init(session: URLSession = .shared) {
+        self.session = session
+        guard let urlString = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String,
+              let url = URL(string: urlString) else {
+            fatalError("API_BASE_URL not configured in Info.plist")
+        }
+        self.baseURL = url
+    }
+
+    func setAuthToken(_ token: String) {
+        self.authToken = token
+    }
+
+    func request<T: Decodable>(_ type: T.Type, path: String, method: String = "GET", body: (any Encodable)? = nil) async throws -> T {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = authToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let body {
+            request.httpBody = try JSONEncoder().encode(body)
+        }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw NetworkError.invalidResponse
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    func streamSSE(path: String, body: some Encodable) -> AsyncThrowingStream<ChatStreamChunk, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                var request = URLRequest(url: baseURL.appendingPathComponent(path))
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                if let token = authToken {
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                }
+                request.httpBody = try JSONEncoder().encode(body)
+
+                let (bytes, _) = try await session.bytes(for: request)
+                for try await line in bytes.lines {
+                    guard line.hasPrefix("data: ") else { continue }
+                    let json = Data(line.dropFirst(6).utf8)
+                    let chunk = try JSONDecoder().decode(ChatStreamChunk.self, from: json)
+                    continuation.yield(chunk)
+                    if chunk.done { break }
+                }
+                continuation.finish()
+            }
+        }
+    }
+}
+```
+
+**Service Protocol Implementations (backend-aware):**
+
+AuthServiceProtocol과 LLMServiceProtocol의 Repository 구현체를 생성:
+
+```swift
+@Observable @MainActor
+final class AuthRepository: AuthServiceProtocol {
+    private let apiClient: APIClient
+    private(set) var currentUser: UserInfo?
+
+    init(apiClient: APIClient) { self.apiClient = apiClient }
+
+    func signInWithApple(identityToken: String) async throws -> AuthResponse {
+        struct Body: Encodable { let identityToken: String }
+        let response = try await apiClient.request(AuthResponse.self, path: "/auth/apple", method: "POST", body: Body(identityToken: identityToken))
+        apiClient.setAuthToken(response.accessToken)
+        currentUser = response.user
+        return response
+    }
+    // ... other providers
+}
+```
+
 **Quality Standards:**
 - Repository methods must handle errors properly
 - Network layer must be actor-isolated for thread safety
@@ -104,4 +197,4 @@ enum NetworkError: LocalizedError {
 **Output:**
 Generate all .swift files in `Services/` and `Utilities/` directories.
 Do NOT ask any questions. Make all data design decisions autonomously.
-Do NOT create or modify files in `Models/`, `Views/`, `ViewModels/`, or `App/`.
+Do NOT create or modify files in `Models/`, `Views/`, `ViewModels/`, `App/`, or `backend/`.
