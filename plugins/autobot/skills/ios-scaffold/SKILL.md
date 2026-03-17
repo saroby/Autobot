@@ -59,6 +59,9 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
 - `SWIFT_STRICT_CONCURRENCY`: complete
 - `ENABLE_USER_SCRIPT_SANDBOXING`: YES
 - `CODE_SIGN_ENTITLEMENTS`: `AppName/AppName.entitlements`
+- (조건부) `INFOPLIST_KEY_API_BASE_URL`: `$(API_BASE_URL)` — xcconfig에서 주입
+- (조건부) Debug 빌드: `Debug.xcconfig` 적용
+- (조건부) Release 빌드: `Release.xcconfig` 적용
 
 ### Asset Catalog
 - AppIcon (1024x1024 single icon for iOS 26+)
@@ -69,6 +72,19 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
 - `PrivacyInfo.xcprivacy` — App Store 필수 (2024+). 기본 FileTimestamp 포함, architect가 추가 카테고리 지정
 - `AppName.entitlements` — 빈 틀. architect가 iCloud/Push 등 capability 지정 시 Phase 4에서 채움
 - Info.plist 권한 — `GENERATE_INFOPLIST_FILE=YES` 사용, `INFOPLIST_KEY_*` 빌드 설정으로 주입
+- (조건부) `Debug.xcconfig` — `backend_required == true`일 때 생성. `API_BASE_URL = http:/$()/localhost:8080`
+- (조건부) `Release.xcconfig` — `backend_required == true`일 때 생성. `API_BASE_URL = https:/$()/$(PRODUCTION_HOST)`
+- (조건부) `.gitignore`에 `backend/.env` 라인 추가 — `backend_required == true`일 때
+
+### Backend-Aware Scaffold (backend_required == true)
+
+architecture.md에 `Backend Requirements: Required: true`가 있으면 추가로:
+
+1. `Debug.xcconfig`, `Release.xcconfig` 생성
+2. `.gitignore`에 `backend/.env` 추가
+3. 빌드 설정에 xcconfig 참조 + `API_BASE_URL` Info.plist 키 추가
+
+이 작업은 Phase 2에서 scaffold 시 수행한다. backend-engineer가 root `.gitignore`를 수정할 필요가 없도록 미리 준비한다.
 
 ## Additional Resources
 
