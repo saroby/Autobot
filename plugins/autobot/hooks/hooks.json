@@ -1,26 +1,28 @@
 {
-  "SessionStart": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "bash $CLAUDE_PLUGIN_ROOT/scripts/load-learnings.sh",
-          "timeout": 10
-        }
-      ]
-    }
-  ],
-  "UserPromptSubmit": [
-    {
-      "matcher": "*",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "bash $CLAUDE_PLUGIN_ROOT/scripts/detect-plugins.sh",
-          "timeout": 5
-        }
-      ]
-    }
-  ]
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $CLAUDE_PLUGIN_ROOT/scripts/load-learnings.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $CLAUDE_PLUGIN_ROOT/scripts/detect-plugins.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
 }

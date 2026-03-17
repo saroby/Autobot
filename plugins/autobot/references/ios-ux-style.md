@@ -112,6 +112,8 @@ func fetch() async throws -> [Item]
 
 TextField/TextEditor 외부 탭 시 키보드를 자동으로 닫는다. **모든 앱의 루트 뷰에 적용 필수.**
 
+⚠️ **`.onTapGesture` 사용 금지** — 루트 뷰에 적용하면 Button, NavigationLink, List row 등 자식 뷰의 탭을 가로채서 앱 전체가 먹통이 된다. 반드시 `.simultaneousGesture`를 사용한다.
+
 ```swift
 // App 엔트리포인트에서 전역 적용
 @main
@@ -127,15 +129,19 @@ struct MyApp: App {
 // ViewModifier — Utilities/ 또는 App/ 에 한 번만 정의
 extension View {
     func dismissKeyboardOnTap() -> some View {
-        self.onTapGesture {
-            UIApplication.shared.sendAction(
-                #selector(UIResponder.resignFirstResponder),
-                to: nil, from: nil, for: nil
-            )
-        }
+        self.simultaneousGesture(
+            TapGesture().onEnded {
+                UIApplication.shared.sendAction(
+                    #selector(UIResponder.resignFirstResponder),
+                    to: nil, from: nil, for: nil
+                )
+            }
+        )
     }
 }
 ```
+
+`.simultaneousGesture`는 자식 뷰의 제스처와 **동시에** 발동하므로, 키보드는 닫히면서도 Button/NavigationLink 등이 정상 동작한다.
 
 ScrollView 내부에서는 추가로:
 ```swift
@@ -164,3 +170,4 @@ ScrollView 내부에서는 추가로:
 | `UIKit` wrapping (불필요 시) | Native SwiftUI |
 | 하드코딩 컬러/사이즈 | Semantic colors, Dynamic Type |
 | `List { ForEach { NavigationLink(destination:)` | `NavigationLink(value:)` + `.navigationDestination` |
+| `.onTapGesture` on root (키보드 닫기용) | `.simultaneousGesture(TapGesture())` |
