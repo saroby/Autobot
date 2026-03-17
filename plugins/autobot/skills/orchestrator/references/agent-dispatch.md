@@ -13,6 +13,7 @@ Phase 3의 ui-builder와 data-engineer는 **별도의 git worktree**에서 실�
 | architect | `.autobot/architecture.md`, `Models/` | (user input) | — | main |
 | ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Services/` | **worktree** |
 | data-engineer | `Services/`, `Utilities/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `App/` | **worktree** |
+| backend-engineer | `backend/` | `Models/APIContracts.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `Services/`, `App/`, root `.gitignore` | **worktree** |
 | quality-engineer | `Tests/`, fixes in any file, integration wiring | All source files | — | main |
 | deployer | `build/`, config files | Built app | — | main |
 
@@ -48,6 +49,40 @@ Do NOT create, modify, or overwrite files in Models/, Views/, ViewModels/, or Ap
 Use the EXACT type names, initializer signatures, and protocol method signatures from Models/*.swift.
 ```
 
+#### For backend-engineer dispatch (conditional: backend_required == true):
+```
+FIRST: Read [project]/.autobot/architecture.md — focus on Backend Requirements, API Contract, Environment Variables sections.
+SECOND: Read [project]/Models/APIContracts.swift to learn exact API request/response types.
+Generate a complete Docker-based FastAPI backend in [project]/backend/.
+All API endpoints MUST match the API Contract section exactly.
+All request/response schemas MUST match Models/APIContracts.swift types.
+Server MUST start and /health MUST return 200 even with dummy .env values.
+Do NOT create, modify, or overwrite files outside backend/.
+Do NOT touch root .gitignore (already configured in Phase 2).
+```
+
+### Three-Agent Parallel Pattern (backend_required == true)
+
+When `build-state.json` has `backend_required: true`, Phase 3 dispatches three agents in parallel:
+
+```
+Agent(
+  prompt="[ui-builder task with full context]",
+  isolation="worktree"
+)
+Agent(
+  prompt="[data-engineer task with full context]",
+  isolation="worktree"
+)
+Agent(
+  prompt="[backend-engineer task with full context]",
+  isolation="worktree"
+)
+```
+
+All three write to disjoint directories → merge conflict probability zero.
+Worktree fallback applies to all three agents identically.
+
 ## AgentTeam Integration
 
 When AgentTeam feature is available (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1):
@@ -60,7 +95,8 @@ When AgentTeam feature is available (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1):
     {"name": "architect", "agentType": "orchestrator", "model": "claude-opus-4-6"},
     {"name": "ui-builder", "agentType": "worker", "model": "claude-sonnet-4-6"},
     {"name": "data-engineer", "agentType": "worker", "model": "claude-sonnet-4-6"},
-    {"name": "quality-engineer", "agentType": "worker", "model": "claude-sonnet-4-6"}
+    {"name": "quality-engineer", "agentType": "worker", "model": "claude-sonnet-4-6"},
+    {"name": "backend-engineer", "agentType": "worker", "model": "claude-sonnet-4-6"}
   ]
 }
 ```

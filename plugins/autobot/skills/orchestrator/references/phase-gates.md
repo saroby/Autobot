@@ -28,7 +28,13 @@ CHECK:
   ✓ architecture.md에 ## Screens 섹션 존재
   ✓ architecture.md에 ## Integration Map 섹션 존재
   ✓ architecture.md에 ## Privacy API Categories 섹션 존재
+  ✓ (backend_required) architecture.md에 ## Backend Requirements 섹션 존재
+  ✓ (backend_required) architecture.md에 ## API Contract 섹션 존재
+  ✓ (backend_required) architecture.md에 ## iOS Configuration 섹션 존재
+  ✓ (backend_required) Models/APIContracts.swift 존재
+  ✓ (backend_required) docker --version 종료 코드 == 0
 FAIL → architect 에이전트 재실행 (최대 2회)
+FAIL (docker 미설치) → 사용자에게 Docker Desktop 설치 안내 후 빌드 중단
 ```
 
 ### Gate 2→3: Xcode 프로젝트 생성 완료
@@ -42,6 +48,9 @@ CHECK:
   ✓ <AppName>/PrivacyInfo.xcprivacy 존재
   ✓ <AppName>/<AppName>.entitlements 존재
   ✓ .gitignore 존재
+  ✓ (backend_required) Debug.xcconfig 존재 & API_BASE_URL 포함
+  ✓ (backend_required) Release.xcconfig 존재 & API_BASE_URL 포함
+  ✓ (backend_required) .gitignore에 backend/.env 포함
 FAIL → scaffold 재실행
 ```
 
@@ -59,6 +68,12 @@ FAIL:
   - Models/ 변경됨 → git checkout으로 Models/ 복원 후 Phase 3 재실행
   - 파일 누락 → 해당 에이전트만 재실행
   - 머지 충돌 → quality-engineer에 충돌 해결 위임
+  ✓ (backend_required) backend/ 디렉토리 존재
+  ✓ (backend_required) backend/Dockerfile 존재
+  ✓ (backend_required) backend/docker-compose.yml 존재
+  ✓ (backend_required) backend/app/main.py 존재
+FAIL:
+  - backend/ 누락 → backend-engineer만 재실행
 ```
 
 ### Gate 4→5: 빌드 성공
@@ -69,7 +84,12 @@ CHECK:
   ✓ "BUILD SUCCEEDED" 문자열 출력에 포함
   ✓ App/ServiceStubs.swift 삭제됨 (실제 Repository로 교체 완료)
   ✓ PrivacyInfo.xcprivacy에 architecture.md의 모든 API 카테고리 반영
+  ✓ (backend_required) docker compose build 종료 코드 == 0
+  ✓ (backend_required) docker compose up -d --wait 종료 코드 == 0
+  ✓ (backend_required) curl -f http://localhost:8080/health 종료 코드 == 0
+  ✓ (backend_required) docker compose down 완료
 FAIL → quality-engineer 에이전트 재실행 (최대 2회, 이전 에러 전달)
+FAIL (Docker) → quality-engineer 에이전트 재실행 (Docker 에러 메시지 포함)
 ```
 
 ### Gate 5→6: 배포 완료 (soft gate — 실패해도 진행)
@@ -122,6 +142,17 @@ find Models/ -name "*.swift" -exec md5 {} \; | sort | md5
 
 # xcodebuild 결과 확인
 xcodebuild build ... 2>&1 | tail -1 | grep -q "BUILD SUCCEEDED"
+
+# Docker 설치 확인 (Gate 1→2)
+docker --version &>/dev/null
+
+# xcconfig 확인 (Gate 2→3)
+grep -q "API_BASE_URL" Debug.xcconfig
+
+# Docker 빌드 + 기동 확인 (Gate 4→5)
+cd backend && docker compose build && docker compose up -d --wait
+curl -f http://localhost:8080/health
+docker compose down && cd ..
 ```
 
 ## Models/ 무결성 보호

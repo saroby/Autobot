@@ -40,7 +40,7 @@ Master coordination skill for building iOS 26+ apps from ideas. Manages the comp
 | 0 | Pre-flight & Setup | (self) | No | → 환경/이름 검증 | 1 |
 | 1 | Architecture + Contracts | architect | No | → 산출물 존재/구조 검증 | 2 |
 | 2 | Project Scaffold | (self) | No | → .xcodeproj 존재 검증 | 1 |
-| 3 | Parallel Coding | ui-builder + data-engineer | **Yes** | → 파일 존재 + Models/ 무결성 | 2 |
+| 3 | Parallel Coding | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 | 2 |
 | 4 | Integration & Build | quality-engineer | No | → xcodebuild 성공 | 2 |
 | 5 | TestFlight Deploy | deployer | No | → soft (실패해도 진행) | 1 |
 | 6 | Retrospective | (self) | No | — | — |
@@ -77,6 +77,7 @@ Phase 0에서 빌드 시작 전에 환경을 검증:
 ✓ 디스크 여유 공간 > 1GB
 ✓ (선택) xcodegen 설치 여부 → 있으면 사용, 없으면 fallback
 ✓ (선택) fastlane 설치 여부 → 없으면 Phase 5에서 자동 설치 시도
+✓ (선택) docker 설치 여부 → 백엔드 필요 시 Gate 1→2에서 필수 확인
 ✓ (선택) ASC 인증 정보 → 없으면 **즉시 사용자에게 경고 출력**
 ```
 
@@ -105,6 +106,13 @@ Agent(
   prompt="[data-engineer task with full context]",
   isolation="worktree"
 )
+
+# 조건부: backend_required == true일 때만 디스패치
+if build-state.json.backend_required == true:
+  Agent(
+    prompt="[backend-engineer task with full context]",
+    isolation="worktree"
+  )
 ```
 
 ### Worktree Fallback
@@ -133,7 +141,9 @@ Agent(
 | `Models/*.swift` | architect | ui-builder, data-engineer | 타입 계약 (읽기 전용) |
 | `Models/ServiceProtocols.swift` | architect | ui-builder, data-engineer | 통합 계약 (읽기 전용) |
 | `App/ServiceStubs.swift` | ui-builder | quality-engineer | 임시 stub (Phase 4에서 삭제) |
+| `Models/APIContracts.swift` | architect | data-engineer, backend-engineer | API 계약 (SSOT) |
 | `Services/*Repository.swift` | data-engineer | quality-engineer | 프로토콜 구현체 |
+| `backend/` | backend-engineer | quality-engineer | Docker 백엔드 |
 | `.autobot/learnings.json` | retrospective | Phase 0 | 과거 학습 |
 | `.autobot/deploy-status.json` | deployer | retrospective | 배포 결과 |
 
@@ -144,6 +154,7 @@ Agent(
 | architect | `.autobot/architecture.md`, `Models/` | — |
 | ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/`, `Services/` |
 | data-engineer | `Services/`, `Utilities/` | `Models/`, `Views/`, `ViewModels/`, `App/` |
+| backend-engineer | `backend/` | `Models/`, `Views/`, `ViewModels/`, `Services/`, `App/`, root `.gitignore` |
 | quality-engineer | 모든 파일 (통합 + 수정) | — |
 | deployer | `build/`, 설정 파일 | 소스 코드 |
 
@@ -208,6 +219,22 @@ git checkout -- Models/
     "4": { "status": "pending" },
     "5": { "status": "pending" },
     "6": { "status": "pending" }
+  },
+  "backend_required": false,
+  "backend": null
+}
+```
+
+`backend_required == true`일 때의 예시:
+
+```json
+{
+  "backend_required": true,
+  "backend": {
+    "tech_stack": "python-fastapi",
+    "oauth_providers": ["apple", "google"],
+    "llm_proxy": true,
+    "docker_verified": false
   }
 }
 ```
