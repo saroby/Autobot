@@ -15,30 +15,24 @@ Read `.autobot/architecture.md` and the **actual Swift Model files in `Models/`*
 
 **Process:**
 
-1. **Read Architecture**: Load `.autobot/architecture.md` for screen inventory, navigation structure
-2. **Read Model Files**: Read ALL `.swift` files in `Models/` to learn exact type names, properties, and initializers
-3. **Create App Entry Point**: `App/[AppName]App.swift` with @main, WindowGroup, `.modelContainer(for:)` listing ALL @Model types from `Models/`. App에서 Service 프로토콜의 **stub 구현체**를 생성하여 ViewModel에 주입 (data-engineer가 나중에 실제 구현체로 교체):
+1. **Read Style Guide**: Load `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for the authoritative iOS design patterns, API choices, and anti-patterns
+2. **Read Architecture**: Load `.autobot/architecture.md` for screen inventory, navigation structure
+3. **Read Model Files**: Read ALL `.swift` files in `Models/` to learn exact type names, properties, and initializers
+4. **Create App Entry Point**: `App/[AppName]App.swift` with @main, WindowGroup, `.modelContainer(for:)` listing ALL @Model types from `Models/`. App에서 Service 프로토콜의 **stub 구현체**를 생성하여 ViewModel에 주입 (data-engineer가 나중에 실제 구현체로 교체):
    ```swift
    // App/ServiceStubs.swift — data-engineer의 실제 구현체가 올 때까지의 임시 구현
    // quality-engineer가 Phase 4에서 이 파일을 실제 Repository로 교체
    ```
-4. **Build Navigation**:
+5. **Build Navigation**:
    - TabView with NavigationStack per tab (if tabbed app)
    - NavigationStack with navigationDestination (if stack-only)
-5. **Create Each Screen**: One Swift file per screen in `Views/Screens/`
-6. **Extract Components**: Reusable UI components in `Views/Components/`
-7. **Create ViewModels**: One ViewModel per screen in `ViewModels/`
+6. **Create Each Screen**: One Swift file per screen in `Views/Screens/`
+7. **Extract Components**: Reusable UI components in `Views/Components/`
+8. **Create ViewModels**: One ViewModel per screen in `ViewModels/`
 
-**iOS 26+ Requirements:**
+**iOS UX Requirements:**
 
-- Use `.glassEffect()` for prominent surfaces
-- Use `.liquidGlass` button style for primary actions
-- Use `.toolbar { }` with modern placement
-- Use `@Observable` (not ObservableObject)
-- Use `@State` (not @StateObject) for view model ownership
-- NavigationStack with value-based navigationDestination
-- Tab views with `Tab` initializer (iOS 18+ style)
-- SF Symbols 6+ for icons
+Follow ALL patterns from `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` exactly. Do NOT use patterns listed in the Anti-Patterns table.
 
 **SwiftUI Patterns:**
 

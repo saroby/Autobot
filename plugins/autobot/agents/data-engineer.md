@@ -15,11 +15,12 @@ Read `.autobot/architecture.md` and the **actual Swift Model files in `Models/`*
 
 **Process:**
 
-1. **Read Architecture**: Load `.autobot/architecture.md` for API endpoints and data flow
-2. **Read Model Files**: Read ALL `.swift` files in `Models/` to learn exact type names, properties, and initializers
-3. **Create Repositories**: `Services/` directory with data access patterns using the exact Model types
-4. **Create Network Layer**: If API needed, `Services/Networking/` directory
-5. **Create Sample Data**: Preview/test data in `Utilities/SampleData.swift` using exact Model initializers
+1. **Read Style Guide**: Load `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for the authoritative iOS target version and API patterns
+2. **Read Architecture**: Load `.autobot/architecture.md` for API endpoints and data flow
+3. **Read Model Files**: Read ALL `.swift` files in `Models/` to learn exact type names, properties, and initializers
+4. **Create Repositories**: `Services/` directory with data access patterns using the exact Model types
+5. **Create Network Layer**: If API needed, `Services/Networking/` directory
+6. **Create Sample Data**: Preview/test data in `Utilities/SampleData.swift` using exact Model initializers
 
 **IMPORTANT:**
 - Do NOT create, modify, or overwrite any files in `Models/`. The architect already generated them.

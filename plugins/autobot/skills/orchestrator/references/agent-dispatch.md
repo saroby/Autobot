@@ -20,6 +20,7 @@ Phase 3의 ui-builder와 data-engineer는 **별도의 git worktree**에서 실�
 
 #### For ui-builder dispatch:
 ```
+ZEROTH: Read $CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md for authoritative iOS design patterns and anti-patterns.
 FIRST: Read ALL .swift files in [project]/Models/ to learn exact type names, properties, and initializers.
 SECOND: Read [project]/Models/ServiceProtocols.swift to learn the service interfaces your ViewModels depend on.
 THEN: Read the architecture at [project]/.autobot/architecture.md for screen inventory, navigation, and integration map.
@@ -28,20 +29,21 @@ ViewModels MUST depend on Service protocols (e.g. ItemServiceProtocol), NOT on M
 Create App/ServiceStubs.swift with stub implementations for each protocol (return empty arrays, no-ops).
 Write files to [project]/Views/, [project]/ViewModels/, and [project]/App/.
 In the App entry point, register ALL @Model types in .modelContainer(for:).
-Use iOS 26+ APIs: @Observable, NavigationStack, .glassEffect().
+Follow ALL patterns from ios-ux-style.md. Do NOT use patterns listed in the Anti-Patterns table.
 Do NOT create, modify, or overwrite files in Models/ or Services/ — those are handled by other agents.
 Use the EXACT type names, initializer signatures, and protocol method signatures from Models/*.swift.
 ```
 
 #### For data-engineer dispatch:
 ```
+ZEROTH: Read $CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md for authoritative iOS target version and API patterns.
 FIRST: Read ALL .swift files in [project]/Models/ to learn exact type names, properties, and initializers.
 SECOND: Read [project]/Models/ServiceProtocols.swift to learn the service interfaces you MUST implement.
 THEN: Read the architecture at [project]/.autobot/architecture.md for API endpoints and data flow.
 For EACH protocol in ServiceProtocols.swift, create a Repository class that conforms to it.
 Implement repositories and network services that use the existing Model types.
 Write files to [project]/Services/ and [project]/Utilities/.
-Use iOS 26+ APIs: @MainActor, async/await, FetchDescriptor.
+Follow ALL patterns from ios-ux-style.md (concurrency, data persistence sections).
 Do NOT create, modify, or overwrite files in Models/, Views/, ViewModels/, or App/.
 Use the EXACT type names, initializer signatures, and protocol method signatures from Models/*.swift.
 ```
