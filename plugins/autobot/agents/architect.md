@@ -225,6 +225,19 @@ capability가 필요 없는 앱이면 이 섹션을 비워둔다.
 - **Privacy manifest must list ALL accessed API categories** (App Store rejection 방지)
 - **Permission descriptions must be Korean** (한국 사용자 대상)
 
+**Compilation Verification (필수):**
+
+Models/ 파일 생성 후 반드시 컴파일 검증을 수행한다. optional chaining, 누락된 import, 타입 불일치 등을 빌드 전에 잡는다:
+
+```bash
+# 생성한 모든 Swift 파일을 한 번에 검증
+swiftc -typecheck -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
+  -target arm64-apple-ios26.0-simulator \
+  Models/*.swift 2>&1
+
+# 에러 발생 시: 즉시 수정하고 재검증. Gate 1→2를 통과하려면 에러 0건이어야 한다.
+```
+
 **Constraints:**
 - Do NOT generate Views, ViewModels, Repositories, or Services — only architecture doc + Model files + Service protocols
 - Do NOT ask the user any questions

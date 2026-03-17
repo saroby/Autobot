@@ -93,6 +93,26 @@ Do NOT use background agents for:
 - Build verification (must complete before deploy)
 - Deployment (must report status)
 
+## Worktree Fallback
+
+`Cannot create agent worktree` 에러 발생 시 (세션 중 `git init`된 저장소 등):
+
+1. `isolation` 파라미터를 **제거**하고 general-purpose 에이전트로 재디스패치
+2. 두 에이전트를 **병렬로** 실행 — 파일 소유권 규칙(Views/ vs Services/)이 충돌 방지
+3. 에이전트 프롬프트는 동일하게 유지 (worktree 관련 언급만 제거)
+
+```
+# Fallback 예시
+Agent(
+  prompt="[ui-builder task - 동일 프롬프트]"
+  # isolation 파라미터 없음
+)
+Agent(
+  prompt="[data-engineer task - 동일 프롬프트]"
+  # isolation 파라미터 없음
+)
+```
+
 ## Error Recovery in Parallel Agents
 
 If one parallel agent fails:

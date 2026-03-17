@@ -77,7 +77,15 @@ Phase 0에서 빌드 시작 전에 환경을 검증:
 ✓ 디스크 여유 공간 > 1GB
 ✓ (선택) xcodegen 설치 여부 → 있으면 사용, 없으면 fallback
 ✓ (선택) fastlane 설치 여부 → 없으면 Phase 5에서 자동 설치 시도
-✓ (선택) ASC 인증 정보 → 없으면 Phase 5에서 수동 업로드 안내
+✓ (선택) ASC 인증 정보 → 없으면 **즉시 사용자에게 경고 출력**
+```
+
+**ASC 미설정 시 즉시 경고 (Phase 0에서 출력):**
+```
+⚠️ App Store Connect 인증 정보가 설정되지 않았습니다.
+   Phase 5(TestFlight 배포)가 건너뛰어집니다.
+   빌드는 로컬에서만 완료됩니다.
+   설정 방법: .env 파일에 ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH 추가
 ```
 
 하나라도 필수 항목이 실패하면 빌드를 시작하지 않고 해결 방법을 안내.
@@ -98,6 +106,21 @@ Agent(
   isolation="worktree"
 )
 ```
+
+### Worktree Fallback
+
+세션 중 `git init`된 저장소 등에서 worktree 생성이 실패할 수 있다.
+에러 `Cannot create agent worktree` 발생 시 **자동 fallback**:
+
+```
+1. isolation 파라미터 없이 general-purpose 에이전트로 재시도
+2. ui-builder → Views/, ViewModels/, App/ 에만 쓰고
+   data-engineer → Services/, Utilities/ 에만 쓰므로 충돌 없음
+3. fallback 사실을 build-state.json에 기록:
+   "phase3": { "worktreeFallback": true }
+```
+
+**주의:** fallback 시에도 두 에이전트를 **병렬로** 디스패치한다. 파일 소유권 규칙이 충돌을 방지한다.
 
 ### Agent Context Passing
 
@@ -215,6 +238,15 @@ pending → in_progress → completed
 | Axiom | Skill 도구 호출 시도 | iOS 전문 스킬 | 내장 iOS 지식 |
 | Serena | mcp__plugin_serena_serena__* 도구 존재 | 시맨틱 편집 | Edit 도구 |
 | context7 | mcp__context7__* 도구 존재 | 최신 API 문서 | 학습 데이터 |
+
+## Phase 6: Retrospective & Build Report
+
+Phase 6에서는 두 가지 산출물을 생성한다:
+
+1. **`build-report.md`** — `autobot-build-report` 스킬을 사용하여 생성. 플러그인 수준의 문제를 구조화된 보고서로 기록.
+2. **`learnings.json`** — `autobot-retrospective` 스킬을 사용하여 누적 학습 데이터 업데이트.
+
+build-report 먼저 생성하고, 그 내용을 참고하여 learnings.json을 업데이트한다.
 
 ## Additional Resources
 
