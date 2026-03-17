@@ -108,6 +108,40 @@ let descriptor = FetchDescriptor<Item>(
 func fetch() async throws -> [Item]
 ```
 
+### Keyboard Dismissal
+
+TextField/TextEditor 외부 탭 시 키보드를 자동으로 닫는다. **모든 앱의 루트 뷰에 적용 필수.**
+
+```swift
+// App 엔트리포인트에서 전역 적용
+@main
+struct MyApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .dismissKeyboardOnTap()
+        }
+    }
+}
+
+// ViewModifier — Utilities/ 또는 App/ 에 한 번만 정의
+extension View {
+    func dismissKeyboardOnTap() -> some View {
+        self.onTapGesture {
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
+        }
+    }
+}
+```
+
+ScrollView 내부에서는 추가로:
+```swift
+.scrollDismissesKeyboard(.interactively)
+```
+
 ## Accessibility
 
 - 모든 인터랙티브 요소에 `.accessibilityLabel()` 필수
