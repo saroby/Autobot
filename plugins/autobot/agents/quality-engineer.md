@@ -22,17 +22,18 @@ Validate the generated app compiles successfully, fix any errors, and write basi
    # 없으면 pbxproj 재생성
    elif [ -f "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/generate-pbxproj.py" ]; then
      python3 "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/generate-pbxproj.py" \
-       --name "<AppName>" --bundle-id "<BundleID>" --sources-dir "<AppName>/<AppName>"
+       --name "<AppName>" --bundle-id "<BundleID>" --sources-dir "<AppName>"
    fi
    ```
    **이 단계를 빌드 전에 반드시 수행한다.** 안 하면 새 .swift 파일이 빌드에 포함되지 않는다.
+   > 참고: Folder Reference(PBXFileSystemSynchronizedRootGroup) 방식이면 새 파일이 자동 포함되어 재생성이 불필요할 수 있다. 빌드 실패 시에만 재생성한다.
 
 1. **Integration Wiring** (ui-builder ↔ data-engineer 연결 — **빌드 전에 수행**):
-   - `App/ServiceStubs.swift`가 있으면 삭제하고, `Services/`의 실제 Repository 구현체로 교체
+   - `<AppName>/App/ServiceStubs.swift`가 있으면 삭제하고, `<AppName>/Services/`의 실제 Repository 구현체로 교체
    - **stub 교체 전 반드시 실제 서비스의 init 시그니처를 확인한다:**
      ```bash
      # 실제 Repository의 init 시그니처 확인
-     grep -n 'init(' Services/*Repository.swift Services/*Service.swift 2>/dev/null
+     grep -n 'init(' <AppName>/Services/*Repository.swift <AppName>/Services/*Service.swift 2>/dev/null
      ```
      stub의 init 파라미터 레이블(예: `context:`)과 실제 서비스의 레이블(예: `modelContext:`)이 다를 수 있다. **실제 서비스의 시그니처에 맞춰** App 엔트리포인트 코드를 작성한다.
    - App 엔트리포인트에서 Repository를 생성하여 ViewModel에 주입하는 코드 작성:
@@ -42,7 +43,7 @@ Validate the generated app compiles successfully, fix any errors, and write basi
      let itemService = ItemRepository(modelContext: container.mainContext)
      ContentView(itemService: itemService)
      ```
-   - `Models/ServiceProtocols.swift`의 각 프로토콜이 `Services/`에 구현체를 갖고 있는지 검증
+   - `<AppName>/Models/ServiceProtocols.swift`의 각 프로토콜이 `<AppName>/Services/`에 구현체를 갖고 있는지 검증
    - ViewModel 생성자에 올바른 Service 타입이 전달되는지 검증
    - **Backend Integration** (if backend required):
      - APIClient가 `Bundle.main`의 `API_BASE_URL`을 사용하는지 확인
@@ -52,8 +53,8 @@ Validate the generated app compiles successfully, fix any errors, and write basi
      - `backend/.env.example`에 모든 필수 키가 나열되어 있는지 확인
 
 2. **Platform Requirements** (architecture.md 기반 — **빌드 전에 수행**):
-   - **PrivacyInfo.xcprivacy**: `.autobot/architecture.md`의 Privacy API Categories와 비교하여 누락된 항목 추가
-   - **Entitlements**: architecture.md의 Entitlements를 `.entitlements` 파일에 반영
+   - **PrivacyInfo.xcprivacy**: `<AppName>/PrivacyInfo.xcprivacy`를 `.autobot/architecture.md`의 Privacy API Categories와 비교하여 누락된 항목 추가
+   - **Entitlements**: architecture.md의 Entitlements를 `<AppName>/<AppName>.entitlements` 파일에 반영
      - iCloud: `com.apple.developer.icloud-container-identifiers`, `com.apple.developer.icloud-services`
      - Push: `aps-environment`
      - HealthKit: `com.apple.developer.healthkit`
@@ -85,7 +86,7 @@ Validate the generated app compiles successfully, fix any errors, and write basi
    - After each fix, rebuild to verify
 
 4. **Test Writing**:
-   - Create `Tests/` directory with test target
+   - `<AppName>Tests/` 디렉토리에 테스트 작성 (scaffold가 이미 생성)
    - Write unit tests for data models
    - Write unit tests for repositories
    - Write basic UI test skeleton

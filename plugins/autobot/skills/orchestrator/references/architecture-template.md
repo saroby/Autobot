@@ -201,34 +201,45 @@ Response (SSE):
 
 ## File Structure
 
+> 프로젝트 루트에 `.autobot/`, `.git/`, `.xcodeproj`가 위치하고,
+> **모든 소스 파일은 `AppName/` 서브디렉토리(Xcode 소스 그룹) 안에** 있다.
+
 ```
-AppName/
-├── App/
-│   ├── AppNameApp.swift
-│   └── ServiceStubs.swift (Phase 3, Phase 4에서 삭제)
-├── Models/                  ← architect만 생성, 다른 에이전트 수정 금지
-│   ├── Item.swift
-│   ├── Tag.swift
-│   └── ServiceProtocols.swift
-├── Views/
-│   ├── Screens/
-│   │   ├── HomeView.swift
-│   │   └── DetailView.swift
-│   └── Components/
-│       └── ItemRow.swift
-├── ViewModels/
-│   ├── HomeViewModel.swift
-│   └── DetailViewModel.swift
-├── Services/
-│   ├── ItemRepository.swift
-│   └── Networking/ (if applicable)
-├── Utilities/
-│   └── SampleData.swift
-├── Assets.xcassets/
-├── PrivacyInfo.xcprivacy
-├── AppName.entitlements
-├── Debug.xcconfig (if backend required)
-├── Release.xcconfig (if backend required)
+ProjectRoot/                      ← 프로젝트 루트 (git root)
+├── .autobot/
+│   ├── architecture.md
+│   └── build-state.json
+├── .gitignore
+├── AppName.xcodeproj/
+├── AppName/                      ← Xcode 소스 그룹 (Folder Reference)
+│   ├── App/
+│   │   ├── AppNameApp.swift
+│   │   └── ServiceStubs.swift (Phase 3, Phase 4에서 삭제)
+│   ├── Models/                   ← architect만 생성, 다른 에이전트 수정 금지
+│   │   ├── Item.swift
+│   │   ├── Tag.swift
+│   │   └── ServiceProtocols.swift
+│   ├── Views/
+│   │   ├── Screens/
+│   │   │   ├── HomeView.swift
+│   │   │   └── DetailView.swift
+│   │   └── Components/
+│   │       └── ItemRow.swift
+│   ├── ViewModels/
+│   │   ├── HomeViewModel.swift
+│   │   └── DetailViewModel.swift
+│   ├── Services/
+│   │   ├── ItemRepository.swift
+│   │   └── Networking/ (if applicable)
+│   ├── Utilities/
+│   │   └── SampleData.swift
+│   ├── Assets.xcassets/
+│   ├── PrivacyInfo.xcprivacy
+│   ├── AppName.entitlements
+│   ├── Debug.xcconfig (if backend required)
+│   └── Release.xcconfig (if backend required)
+├── AppNameTests/
+│   └── AppNameTests.swift
 └── backend/ (if backend required)
     ├── Dockerfile
     ├── docker-compose.yml

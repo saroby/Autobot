@@ -54,14 +54,14 @@ Gate 통과 실패 시:
 
 상세 검증 항목은 **`references/phase-gates.md`** 참조.
 
-### Models/ 무결성 보호
+### `<AppName>/Models/` 무결성 보호
 
-Phase 1 완료 시 Models/ 디렉토리의 체크섬을 `build-state.json`에 저장.
-Gate 3→4에서 체크섬을 재계산하여 비교. 불일치 시 `git checkout -- Models/`로 자동 복원.
+Phase 1 완료 시 `<AppName>/Models/` 디렉토리의 체크섬을 `build-state.json`에 저장.
+Gate 3→4에서 체크섬을 재계산하여 비교. 불일치 시 `git checkout -- <AppName>/Models/`로 자동 복원.
 
 ```bash
 # 체크섬 계산
-find Models/ -name "*.swift" -exec md5 {} \; | sort | md5
+find <AppName>/Models/ -name "*.swift" -exec md5 {} \; | sort | md5
 ```
 
 ## Pre-flight Check (Phase 0)
@@ -114,7 +114,7 @@ if build-state.json.backend_required == true:
   )
 ```
 
-**충돌 방지:** ui-builder → `Views/`, `ViewModels/`, `App/` / data-engineer → `Services/`, `Utilities/` / backend-engineer → `backend/` — 디렉토리가 완전히 분리되어 있으므로 충돌 불가.
+**충돌 방지:** ui-builder → `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` / data-engineer → `<AppName>/Services/`, `<AppName>/Utilities/` / backend-engineer → `backend/` — 디렉토리가 완전히 분리되어 있으므로 충돌 불가.
 
 ### Agent Context Passing
 
@@ -124,23 +124,25 @@ if build-state.json.backend_required == true:
 |------|--------|--------|------|
 | `.autobot/build-state.json` | Phase 0 | 전체 | 빌드 메타데이터, 상태 추적 |
 | `.autobot/architecture.md` | architect | ui-builder, data-engineer, quality-engineer | 설계 명세 |
-| `Models/*.swift` | architect | ui-builder, data-engineer | 타입 계약 (읽기 전용) |
-| `Models/ServiceProtocols.swift` | architect | ui-builder, data-engineer | 통합 계약 (읽기 전용) |
-| `App/ServiceStubs.swift` | ui-builder | quality-engineer | 임시 stub (Phase 4에서 삭제) |
-| `Models/APIContracts.swift` | architect | data-engineer, backend-engineer | API 계약 (SSOT) |
-| `Services/*Repository.swift` | data-engineer | quality-engineer | 프로토콜 구현체 |
+| `<AppName>/Models/*.swift` | architect | ui-builder, data-engineer | 타입 계약 (읽기 전용) |
+| `<AppName>/Models/ServiceProtocols.swift` | architect | ui-builder, data-engineer | 통합 계약 (읽기 전용) |
+| `<AppName>/App/ServiceStubs.swift` | ui-builder | quality-engineer | 임시 stub (Phase 4에서 삭제) |
+| `<AppName>/Models/APIContracts.swift` | architect | data-engineer, backend-engineer | API 계약 (SSOT) |
+| `<AppName>/Services/*Repository.swift` | data-engineer | quality-engineer | 프로토콜 구현체 |
 | `backend/` | backend-engineer | quality-engineer | Docker 백엔드 |
 | `.autobot/learnings.json` | retrospective | Phase 0 | 과거 학습 |
 | `.autobot/deploy-status.json` | deployer | retrospective | 배포 결과 |
 
 ### File Ownership 규칙
 
+> 모든 소스 경로는 `<AppName>/` 서브디렉토리(Xcode 소스 그룹) 기준. `backend/`, `.autobot/`은 프로젝트 루트.
+
 | Agent | Writes To | MUST NOT Touch |
 |-------|-----------|----------------|
-| architect | `.autobot/architecture.md`, `Models/` | — |
-| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/`, `Services/` |
-| data-engineer | `Services/`, `Utilities/` | `Models/`, `Views/`, `ViewModels/`, `App/` |
-| backend-engineer | `backend/` | `Models/`, `Views/`, `ViewModels/`, `Services/`, `App/`, root `.gitignore` |
+| architect | `.autobot/architecture.md`, `<AppName>/Models/` | — |
+| ui-builder | `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` | `<AppName>/Models/`, `<AppName>/Services/` |
+| data-engineer | `<AppName>/Services/`, `<AppName>/Utilities/` | `<AppName>/Models/`, `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` |
+| backend-engineer | `backend/` | `<AppName>/`, root `.gitignore` |
 | quality-engineer | 모든 파일 (통합 + 수정) | — |
 | deployer | `build/`, 설정 파일 | 소스 코드 |
 

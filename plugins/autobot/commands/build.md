@@ -84,16 +84,28 @@ identifier name이 Swift 예약어이거나 패턴 미충족 시 재생성.
 
 architect 에이전트를 Agent 도구로 디스패치. TaskCreate로 진행 추적.
 
+**중요**: architect에게 소스 디렉토리 경로(`<AppName>/<AppName>/`)를 전달해야 한다. 모든 소스 파일은 Xcode 소스 그룹인 `<AppName>/` 서브디렉토리에 생성된다.
+
 결과물:
 1. `.autobot/architecture.md` — 설계 문서
-2. `Models/*.swift` — 컴파일 가능한 @Model 파일 (타입 계약)
-3. `Models/ServiceProtocols.swift` — 통합 계약
+2. `<AppName>/Models/*.swift` — 컴파일 가능한 @Model 파일 (타입 계약)
+3. `<AppName>/Models/ServiceProtocols.swift` — 통합 계약
 
-**→ Gate 1→2**: architecture.md + Models/ 존재 + 체크섬 저장. 실패 시 architect 재실행 (최대 2회).
+**→ Gate 1→2**: architecture.md + `<AppName>/Models/` 존재 + 체크섬 저장. 실패 시 architect 재실행 (최대 2회).
 
 ## Phase 2: Xcode 프로젝트 생성
 
-ios-scaffold 스킬 참조하여 직접 수행:
+ios-scaffold 스킬 참조하여 직접 수행. **반드시 `--project-dir .`를 전달**하여 Phase 0에서 생성한 프로젝트 디렉토리를 재사용한다:
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
+  --name "<AppName>" \
+  --bundle-id "<BundleId>" \
+  --project-dir "." \
+  --deployment-target "26.0"
+```
+
+이렇게 하면 현재 디렉토리(`.`)가 프로젝트 루트, `./<AppName>/`이 소스 디렉토리가 된다.
 
 1. Xcode 프로젝트 생성 (xcodegen 우선, fallback: pbxproj)
 2. PrivacyInfo.xcprivacy, .entitlements, .gitignore 생성
@@ -108,13 +120,13 @@ ios-scaffold 스킬 참조하여 직접 수행:
 
 | Agent | subagent_type | Writes To | Reads |
 |-------|---------------|-----------|-------|
-| ui-builder | `ui-builder` | Views/, ViewModels/, App/ | Models/, architecture.md |
-| data-engineer | `data-engineer` | Services/, Utilities/ | Models/, architecture.md |
-| backend-engineer | `backend-engineer` | backend/ | Models/APIContracts.swift, architecture.md |
+| ui-builder | `ui-builder` | `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` | `<AppName>/Models/`, architecture.md |
+| data-engineer | `data-engineer` | `<AppName>/Services/`, `<AppName>/Utilities/` | `<AppName>/Models/`, architecture.md |
+| backend-engineer | `backend-engineer` | `backend/` | `<AppName>/Models/APIContracts.swift`, architecture.md |
 
 backend-engineer는 `build-state.json.backend_required == true`일 때만 디스패치.
 
-**→ Gate 3→4**: 파일 존재 + Models/ 체크섬 무결성 확인. 불일치 시 `git checkout -- Models/` 복원.
+**→ Gate 3→4**: 파일 존재 + `<AppName>/Models/` 체크섬 무결성 확인. 불일치 시 `git checkout -- <AppName>/Models/` 복원.
 
 ## Phase 4: 통합 및 빌드 검증
 

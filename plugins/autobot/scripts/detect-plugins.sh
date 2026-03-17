@@ -1,16 +1,7 @@
 #!/bin/bash
 # Detect available plugins and tools for Autobot to leverage
-# Outputs a systemMessage JSON for the UserPromptSubmit hook
+# SessionStart hook — outputs systemMessage JSON with environment info
 set -euo pipefail
-
-# Read user prompt from stdin
-INPUT=$(cat)
-USER_PROMPT=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('user_prompt',''))" 2>/dev/null || echo "")
-
-# Only activate for autobot-related commands
-if [[ "$USER_PROMPT" != *"autobot"* ]] && [[ "$USER_PROMPT" != *"/build"* ]] && [[ "$USER_PROMPT" != *"/resume"* ]]; then
-  exit 0
-fi
 
 # ── Detect CLI tools ──
 XCODEGEN_AVAILABLE="false"

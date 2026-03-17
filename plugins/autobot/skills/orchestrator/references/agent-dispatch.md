@@ -1,63 +1,76 @@
 # Agent Dispatch Patterns
 
+## Path Convention
+
+> **모든 소스 파일은 `[sources]` 디렉토리에 작성한다.** `[sources]` = `[project]/[AppName]` (Xcode 소스 그룹).
+> `.autobot/`, `.git/`, `backend/` 등은 `[project]` 루트에 위치.
+>
+> 예: AppName이 `FocusTimer`이고 프로젝트가 `/Users/saroby/FocusTimer`이면:
+> - `[project]` = `/Users/saroby/FocusTimer`
+> - `[sources]` = `/Users/saroby/FocusTimer/FocusTimer`
+
 ## Parallel Agent Execution
 
 ### File Ownership & Type Contract
 
-Agents write to separate directories to prevent conflicts. `Models/` is the **shared type contract** (data models + service protocols) created by architect — no other agent may modify it.
+Agents write to separate directories to prevent conflicts. `[sources]/Models/` is the **shared type contract** (data models + service protocols) created by architect — no other agent may modify it.
 
 Phase 3의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지한다. 각 에이전트는 지정된 디렉토리에만 쓰고, 다른 에이전트의 디렉토리를 건드리지 않는다.
 
 | Agent | Writes To | Reads From | MUST NOT Touch |
 |-------|-----------|------------|----------------|
-| architect | `.autobot/architecture.md`, `Models/` | (user input) | — |
-| ui-builder | `Views/`, `ViewModels/`, `App/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Services/` |
-| data-engineer | `Services/`, `Utilities/` | `Models/*.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `App/` |
-| backend-engineer | `backend/` | `Models/APIContracts.swift`, `Models/ServiceProtocols.swift` | `Models/`, `Views/`, `ViewModels/`, `Services/`, `App/`, root `.gitignore` |
-| quality-engineer | `Tests/`, fixes in any file, integration wiring | All source files | — |
-| deployer | `build/`, config files | Built app | — |
+| architect | `.autobot/architecture.md`, `[sources]/Models/` | (user input) | — |
+| ui-builder | `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/` | `[sources]/Models/*.swift` | `[sources]/Models/`, `[sources]/Services/` |
+| data-engineer | `[sources]/Services/`, `[sources]/Utilities/` | `[sources]/Models/*.swift` | `[sources]/Models/`, `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/` |
+| backend-engineer | `[project]/backend/` | `[sources]/Models/APIContracts.swift` | `[sources]/`, root `.gitignore` |
+| quality-engineer | `[project]/*Tests/`, fixes in any file, integration wiring | All source files | — |
+| deployer | `[project]/build/`, config files | Built app | — |
 
 ### Agent Prompt Templates
+
+오케스트레이터는 `[project]`와 `[sources]`를 실제 경로로 치환하여 에이전트에게 전달한다.
 
 #### For ui-builder dispatch:
 ```
 ZEROTH: Read $CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md for authoritative iOS design patterns and anti-patterns.
-FIRST: Read ALL .swift files in [project]/Models/ to learn exact type names, properties, and initializers.
-SECOND: Read [project]/Models/ServiceProtocols.swift to learn the service interfaces your ViewModels depend on.
+FIRST: Read ALL .swift files in [sources]/Models/ to learn exact type names, properties, and initializers.
+SECOND: Read [sources]/Models/ServiceProtocols.swift to learn the service interfaces your ViewModels depend on.
 THEN: Read the architecture at [project]/.autobot/architecture.md for screen inventory, navigation, and integration map.
 Generate all SwiftUI views, view models, and the app entry point.
 ViewModels MUST depend on Service protocols (e.g. ItemServiceProtocol), NOT on ModelContext directly.
-Create App/ServiceStubs.swift with stub implementations for each protocol (return empty arrays, no-ops).
-Write files to [project]/Views/, [project]/ViewModels/, and [project]/App/.
+Create [sources]/App/ServiceStubs.swift with stub implementations for each protocol (return empty arrays, no-ops).
+Write files to [sources]/Views/, [sources]/ViewModels/, and [sources]/App/.
 In the App entry point, register ALL @Model types in .modelContainer(for:).
 Follow ALL patterns from ios-ux-style.md. Do NOT use patterns listed in the Anti-Patterns table.
-Do NOT create, modify, or overwrite files in Models/ or Services/ — those are handled by other agents.
-Use the EXACT type names, initializer signatures, and protocol method signatures from Models/*.swift.
+Do NOT create, modify, or overwrite files in [sources]/Models/ or [sources]/Services/ — those are handled by other agents.
+Use the EXACT type names, initializer signatures, and protocol method signatures from [sources]/Models/*.swift.
+IMPORTANT: All files MUST be inside [sources]/ — never at the project root [project]/.
 ```
 
 #### For data-engineer dispatch:
 ```
 ZEROTH: Read $CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md for authoritative iOS target version and API patterns.
-FIRST: Read ALL .swift files in [project]/Models/ to learn exact type names, properties, and initializers.
-SECOND: Read [project]/Models/ServiceProtocols.swift to learn the service interfaces you MUST implement.
+FIRST: Read ALL .swift files in [sources]/Models/ to learn exact type names, properties, and initializers.
+SECOND: Read [sources]/Models/ServiceProtocols.swift to learn the service interfaces you MUST implement.
 THEN: Read the architecture at [project]/.autobot/architecture.md for API endpoints and data flow.
 For EACH protocol in ServiceProtocols.swift, create a Repository class that conforms to it.
 Implement repositories and network services that use the existing Model types.
-Write files to [project]/Services/ and [project]/Utilities/.
+Write files to [sources]/Services/ and [sources]/Utilities/.
 Follow ALL patterns from ios-ux-style.md (concurrency, data persistence sections).
-Do NOT create, modify, or overwrite files in Models/, Views/, ViewModels/, or App/.
-Use the EXACT type names, initializer signatures, and protocol method signatures from Models/*.swift.
+Do NOT create, modify, or overwrite files in [sources]/Models/, [sources]/Views/, [sources]/ViewModels/, or [sources]/App/.
+Use the EXACT type names, initializer signatures, and protocol method signatures from [sources]/Models/*.swift.
+IMPORTANT: All files MUST be inside [sources]/ — never at the project root [project]/.
 ```
 
 #### For backend-engineer dispatch (conditional: backend_required == true):
 ```
 FIRST: Read [project]/.autobot/architecture.md — focus on Backend Requirements, API Contract, Environment Variables sections.
-SECOND: Read [project]/Models/APIContracts.swift to learn exact API request/response types.
+SECOND: Read [sources]/Models/APIContracts.swift to learn exact API request/response types.
 Generate a complete Docker-based FastAPI backend in [project]/backend/.
 All API endpoints MUST match the API Contract section exactly.
-All request/response schemas MUST match Models/APIContracts.swift types.
+All request/response schemas MUST match [sources]/Models/APIContracts.swift types.
 Server MUST start and /health MUST return 200 even with dummy .env values.
-Do NOT create, modify, or overwrite files outside backend/.
+Do NOT create, modify, or overwrite files outside [project]/backend/.
 Do NOT touch root .gitignore (already configured in Phase 2).
 ```
 
@@ -80,7 +93,7 @@ Agent(
 )
 ```
 
-All three write to disjoint directories (Views/ vs Services/ vs backend/) → conflict probability zero.
+All three write to disjoint directories (`[sources]/Views/` vs `[sources]/Services/` vs `[project]/backend/`) → conflict probability zero.
 
 ## Agent Team Integration (Primary Coordination Pattern)
 
@@ -116,9 +129,9 @@ if backend_required:
 ### 상태 수집
 
 각 멤버가 완료되면 오케스트레이터가 결과를 수신:
-- ui-builder → Views/, ViewModels/, App/ 생성 완료
-- data-engineer → Services/, Utilities/ 생성 완료
-- backend-engineer → backend/ 생성 완료
+- ui-builder → `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/` 생성 완료
+- data-engineer → `[sources]/Services/`, `[sources]/Utilities/` 생성 완료
+- backend-engineer → `[project]/backend/` 생성 완료
 - quality-engineer → 빌드/테스트 결과 보고
 
 ### Fallback: Agent Team 미사용 시

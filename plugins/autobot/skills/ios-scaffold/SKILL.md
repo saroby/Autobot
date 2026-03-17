@@ -38,12 +38,21 @@ xcodegen이 없으면 `generate-pbxproj.py`가 유효한 `.xcodeproj/project.pbx
 `scripts/create-xcode-project.sh`를 사용 (xcodegen/fallback을 자동 선택):
 
 ```bash
+# Autobot 빌드에서 사용 (Phase 0에서 이미 프로젝트 디렉토리를 생성한 경우):
 bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
   --name "AppName" \
   --bundle-id "com.saroby.appname" \
-  --team-id "AUTO" \
+  --project-dir "." \
+  --deployment-target "26.0"
+
+# 독립 실행 (새 프로젝트 디렉토리를 자동 생성):
+bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
+  --name "AppName" \
+  --bundle-id "com.saroby.appname" \
   --deployment-target "26.0"
 ```
+
+`--project-dir .`를 전달하면 현재 디렉토리를 프로젝트 루트로 사용하고, `AppName/` 서브디렉토리를 소스 그룹으로 생성한다. 생략하면 `AppName/` 디렉토리를 새로 만들어 그 안에 `AppName/AppName/` 소스 구조를 생성한다.
 
 ## Project Configuration Essentials
 

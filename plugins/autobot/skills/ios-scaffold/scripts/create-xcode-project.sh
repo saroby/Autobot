@@ -8,6 +8,7 @@ APP_NAME=""
 BUNDLE_ID=""
 TEAM_ID="AUTO"
 DEPLOYMENT_TARGET="26.0"
+PROJECT_DIR_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -15,6 +16,7 @@ while [[ $# -gt 0 ]]; do
     --bundle-id) BUNDLE_ID="$2"; shift 2;;
     --team-id) TEAM_ID="$2"; shift 2;;
     --deployment-target) DEPLOYMENT_TARGET="$2"; shift 2;;
+    --project-dir) PROJECT_DIR_OVERRIDE="$2"; shift 2;;
     *) echo "Unknown option: $1"; exit 1;;
   esac
 done
@@ -49,7 +51,13 @@ if [ -z "$BUNDLE_ID" ]; then
   BUNDLE_ID="com.saroby.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')"
 fi
 
-PROJECT_DIR="${APP_NAME}"
+# --project-dir가 지정되면 기존 디렉토리를 사용 (Phase 0에서 이미 생성됨)
+# 지정되지 않으면 새 디렉토리를 생성 (독립 실행용)
+if [ -n "$PROJECT_DIR_OVERRIDE" ]; then
+  PROJECT_DIR="$PROJECT_DIR_OVERRIDE"
+else
+  PROJECT_DIR="${APP_NAME}"
+fi
 SOURCES_DIR="${PROJECT_DIR}/${APP_NAME}"
 TESTS_DIR="${PROJECT_DIR}/${APP_NAME}Tests"
 

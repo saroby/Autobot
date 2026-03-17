@@ -106,7 +106,9 @@ Write `.autobot/architecture.md` following the **정형 템플릿** (orchestrato
 
 ### Deliverable 2: Swift Model Files (Type Contract)
 
-Generate **compilable Swift files** in the project's `Models/` directory. These files are the authoritative type contract that both ui-builder and data-engineer MUST use exactly as-is.
+Generate **compilable Swift files** in the project's **`<AppName>/Models/`** directory (Xcode 소스 그룹 내부). `<AppName>`은 identifier name과 동일하며, 프롬프트에서 전달받는다. These files are the authoritative type contract that both ui-builder and data-engineer MUST use exactly as-is.
+
+> **경로 주의**: 프로젝트 루트의 `Models/`가 아니라 `<AppName>/Models/`에 생성해야 Xcode 빌드에 포함된다.
 
 Each `@Model` class must include:
 - All stored properties with exact types
@@ -116,7 +118,7 @@ Each `@Model` class must include:
 
 Example:
 ```swift
-// Models/Item.swift
+// <AppName>/Models/Item.swift
 import Foundation
 import SwiftData
 
@@ -140,13 +142,13 @@ final class Item {
 
 If networking is needed, also generate:
 ```swift
-// Models/APIModels.swift — Codable response types
-// Models/NetworkError.swift — Error enum
+// <AppName>/Models/APIModels.swift — Codable response types
+// <AppName>/Models/NetworkError.swift — Error enum
 ```
 
 If `backend_required == true`, additionally generate:
 ```swift
-// Models/APIContracts.swift — Backend API 계약 타입 (SSOT)
+// <AppName>/Models/APIContracts.swift — Backend API 계약 타입 (SSOT)
 // data-engineer(iOS)와 backend-engineer(서버) 모두 이 타입을 기준으로 구현
 
 struct AuthResponse: Codable {
@@ -180,12 +182,12 @@ These types serve as the **Single Source of Truth** between iOS and backend.
 
 ### Deliverable 3: Service Protocol Files (Integration Contract)
 
-`Models/` 디렉토리에 **서비스 프로토콜**도 생성한다. 이 프로토콜들이 ui-builder(ViewModel)와 data-engineer(Repository) 사이의 **통합 계약** 역할을 한다.
+`<AppName>/Models/` 디렉토리에 **서비스 프로토콜**도 생성한다. 이 프로토콜들이 ui-builder(ViewModel)와 data-engineer(Repository) 사이의 **통합 계약** 역할을 한다.
 
 ui-builder는 이 프로토콜을 ViewModel에서 의존하고, data-engineer는 이 프로토콜을 Repository에서 구현한다. 두 에이전트가 독립 작업해도 컴파일 시 자동으로 연결된다.
 
 ```swift
-// Models/ServiceProtocols.swift
+// <AppName>/Models/ServiceProtocols.swift
 import Foundation
 import SwiftData
 
@@ -312,13 +314,13 @@ capability가 필요 없는 앱이면 이 섹션을 비워둔다.
 
 **Compilation Verification (필수):**
 
-Models/ 파일 생성 후 컴파일 검증을 시도한다. optional chaining, 누락된 import, 타입 불일치 등을 빌드 전에 잡는다:
+`<AppName>/Models/` 파일 생성 후 컴파일 검증을 시도한다. optional chaining, 누락된 import, 타입 불일치 등을 빌드 전에 잡는다:
 
 ```bash
 # 생성한 모든 Swift 파일을 한 번에 검증
 swiftc -typecheck -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
   -target arm64-apple-ios26.0-simulator \
-  Models/*.swift 2>&1
+  <AppName>/Models/*.swift 2>&1
 
 # 에러 발생 시: 즉시 수정하고 재검증.
 ```
@@ -327,6 +329,7 @@ swiftc -typecheck -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
 
 **Constraints:**
 - Do NOT generate Views, ViewModels, Repositories, or Services — only architecture doc + Model files + Service protocols
+- All source files MUST be written to `<AppName>/` subdirectory (e.g., `<AppName>/Models/Item.swift`), NOT to the project root
 - Do NOT ask the user any questions
 - Make all design decisions autonomously based on best practices
 - Prefer simplicity over complexity

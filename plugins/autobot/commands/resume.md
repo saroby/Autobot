@@ -54,9 +54,9 @@ Read .autobot/build-state.json
 |-----------|--------------|
 | 0 | 없음 (처음부터) |
 | 1 | Phase 0 completed |
-| 2 | Phase 1 completed + `.autobot/architecture.md` 존재 + `Models/*.swift` 존재 |
+| 2 | Phase 1 completed + `.autobot/architecture.md` 존재 + `<AppName>/Models/*.swift` 존재 |
 | 3 | Phase 2 completed + `.xcodeproj` 존재 |
-| 4 | Phase 3 completed + `Views/` 및 `Services/` 디렉토리에 .swift 파일 존재 |
+| 4 | Phase 3 completed + `<AppName>/Views/` 및 `<AppName>/Services/` 디렉토리에 .swift 파일 존재 |
 | 5 | Phase 4 completed + 마지막 빌드 성공 |
 | 6 | Phase 5 completed 또는 failed (회고는 항상 가능) |
 
@@ -127,8 +127,8 @@ Phase {resumeFrom}부터 실행합니다.
 ### Phase 3 재개
 
 - ui-builder와 data-engineer를 다시 병렬 실행
-- 기존 `Views/`, `ViewModels/`, `Services/`, `Utilities/` 파일은 **덮어쓴다**
-- `Models/`는 건드리지 않는다 (Phase 1의 타입 계약)
+- 기존 `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/Services/`, `<AppName>/Utilities/` 파일은 **덮어쓴다**
+- `<AppName>/Models/`는 건드리지 않는다 (Phase 1의 타입 계약)
 
 ### Phase 4 재개 (가장 흔한 재개 지점)
 

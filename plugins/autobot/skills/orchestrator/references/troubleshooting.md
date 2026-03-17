@@ -15,7 +15,7 @@
 
 | 증상 | 원인 | 해결 |
 |------|------|------|
-| architect가 Models/ 파일을 안 만듦 | 프롬프트 미준수 | `/autobot:resume 1`로 재실행 |
+| architect가 `<AppName>/Models/` 파일을 안 만듦 | 프롬프트 미준수 또는 경로 오류 | 에이전트가 `<AppName>/Models/`가 아닌 `Models/`에 파일을 생성했는지 확인 후 `/autobot:resume 1`로 재실행 |
 | ServiceProtocols.swift 누락 | architect 프롬프트에서 놓침 | `/autobot:resume 1` |
 | architecture.md가 불완전 | 아이디어가 너무 모호 | 더 구체적인 아이디어로 `/autobot:build` 재시작 |
 
@@ -31,9 +31,9 @@
 
 | 증상 | 원인 | 해결 |
 |------|------|------|
-| Models/ 파일이 변경됨 | 에이전트가 금지 규칙 위반 | Gate 3→4에서 자동 복원 (`git checkout -- Models/`) |
-| Views/ 비어있음 | ui-builder 에이전트 실패 | `/autobot:resume 3` |
-| Services/ 비어있음 | data-engineer 에이전트 실패 | `/autobot:resume 3` |
+| `<AppName>/Models/` 파일이 변경됨 | 에이전트가 금지 규칙 위반 | Gate 3→4에서 자동 복원 (`git checkout -- <AppName>/Models/`) |
+| `<AppName>/Views/` 비어있음 | ui-builder 에이전트 실패 또는 프로젝트 루트에 잘못 생성 | `Views/`가 `<AppName>/Views/`에 있는지 확인 후 `/autobot:resume 3` |
+| `<AppName>/Services/` 비어있음 | data-engineer 에이전트 실패 또는 경로 오류 | `/autobot:resume 3` |
 | 파일 소유권 위반 | 에이전트가 다른 에이전트 디렉토리에 쓴 경우 | 위반 파일 삭제 후 해당 에이전트 재실행 |
 | 에이전트가 컨텍스트 초과 | 화면/모델이 너무 많아 에이전트 용량 초과 | architect가 기능을 줄이도록 아이디어를 단순화하여 재빌드 |
 
@@ -67,7 +67,7 @@ rm -rf .autobot/build-state.json
 
 ### Phase 3 결과만 폐기하고 재생성
 ```bash
-rm -rf Views/ ViewModels/ Services/ Utilities/ App/ServiceStubs.swift
+rm -rf <AppName>/Views/ <AppName>/ViewModels/ <AppName>/Services/ <AppName>/Utilities/ <AppName>/App/ServiceStubs.swift
 /autobot:resume 3
 ```
 
