@@ -23,6 +23,8 @@ When analyzing an app idea, extract these dimensions:
 | "날씨", "위치" | Location services, API calls, maps |
 | "음악", "오디오" | AVFoundation, playlist, playback controls |
 | "채팅", "메시지" | Real-time messaging, contacts, notifications |
+| "로그인", "회원가입", "소셜 로그인", "계정" | Authentication, user profiles, session management |
+| "AI", "GPT", "챗봇", "자동 요약", "텍스트 생성" | LLM API proxy, streaming responses |
 
 ### 3. Screen Count Estimation
 
@@ -64,6 +66,28 @@ Are there complex interactions?
 Are there background tasks?
 ├── Yes → BGTaskScheduler consideration
 └── No → Standard foreground-only
+
+Does the app need authentication?
+├── Yes
+│   ├── Apple Sign In only → iOS native (no backend)
+│   └── Third-party OAuth (Google, GitHub, Kakao) → Backend required
+└── No → No auth
+
+Does the app need LLM/AI text generation?
+├── Explicit: "AI", "GPT", "챗봇", "LLM", "Claude" → Backend required
+├── Implicit (generation involved):
+│   "자동 요약", "텍스트 생성", "AI 추천", "자동 번역",
+│   "감정 분석 리포트", "질문 답변", "대화형 ~" → Backend required
+├── False positives (simple logic suffices):
+│   "추천" (rule-based), "검색" (full-text), "분류" (on-device CoreML) → No backend
+└── No → No LLM
+
+Backend required?
+├── Yes
+│   ├── If auth exists → Apple Sign In also routes through server (unified JWT)
+│   ├── Tech stack: Python + FastAPI (LLM SDK native support)
+│   └── Output: architecture.md Backend Requirements section
+└── No → Skip all backend sections
 ```
 
 ## Feature Prioritization

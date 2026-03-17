@@ -58,7 +58,30 @@ All generated Swift files MUST use the **identifier name** for module name, stru
 4. **Navigation Map**: Define the navigation hierarchy (tabs, stacks, modals)
 5. **Data Model Design**: Define @Model classes with relationships
 6. **API Design**: If networking needed, define endpoints and response models
-7. **File Structure**: Plan the Xcode project file organization
+7. **Backend Detection**: Determine if Docker backend is needed (OAuth/LLM)
+8. **File Structure**: Plan the Xcode project file organization
+
+**Backend Detection Logic:**
+
+다음 의사결정 트리에 따라 `backend_required`를 판단한다:
+
+1. **인증 감지**: 아이디어에 "로그인", "회원가입", "소셜 로그인", "계정", "프로필" 키워드가 있으면 인증 필요
+   - Apple Sign In은 항상 포함 (iOS 네이티브)
+   - 서드파티 OAuth(Google, GitHub, Kakao 등)가 필요하면 → `backend_required = true`
+   - Apple만이면 → 백엔드 불필요
+
+2. **LLM 감지**: 다음 키워드가 있으면 LLM API 필요
+   - 명시적: "AI", "GPT", "챗봇", "LLM", "Claude"
+   - 암시적 (텍스트 생성 수반): "자동 요약", "텍스트 생성", "AI 추천", "자동 번역", "감정 분석 리포트", "질문 답변", "대화형 ~"
+   - 오탐 제외: "추천"(규칙 기반), "검색"(전문 검색), "분류"(온디바이스 CoreML)
+   - 해당 시 → `backend_required = true`
+
+3. **통합 판단**: `backend_required == true`이면
+   - 인증이 있을 경우 Apple Sign In도 서버 검증 경로로 통합 (통합 JWT)
+   - 기술 스택: Python + FastAPI (LLM SDK 네이티브 지원)
+   - architecture.md에 `## Backend Requirements`, `## API Contract`, `## iOS Configuration` 섹션 생성
+
+4. **`backend_required == false`이면**: 위 3개 섹션을 모두 "N/A"로 기재
 
 **Output: Four deliverables**
 
@@ -121,6 +144,40 @@ If networking is needed, also generate:
 // Models/NetworkError.swift — Error enum
 ```
 
+If `backend_required == true`, additionally generate:
+```swift
+// Models/APIContracts.swift — Backend API 계약 타입 (SSOT)
+// data-engineer(iOS)와 backend-engineer(서버) 모두 이 타입을 기준으로 구현
+
+struct AuthResponse: Codable {
+    let accessToken: String
+    let user: UserInfo
+}
+
+struct UserInfo: Codable {
+    let id: String
+    let email: String
+    let name: String
+}
+
+struct ChatRequest: Codable {
+    let messages: [ChatMessage]
+}
+
+struct ChatMessage: Codable {
+    let role: String
+    let content: String
+}
+
+struct ChatStreamChunk: Codable {
+    let content: String
+    let done: Bool
+}
+```
+
+The exact types in APIContracts.swift depend on the API Contract section in architecture.md.
+These types serve as the **Single Source of Truth** between iOS and backend.
+
 ### Deliverable 3: Service Protocol Files (Integration Contract)
 
 `Models/` 디렉토리에 **서비스 프로토콜**도 생성한다. 이 프로토콜들이 ui-builder(ViewModel)와 data-engineer(Repository) 사이의 **통합 계약** 역할을 한다.
@@ -149,6 +206,24 @@ protocol ItemServiceProtocol {
 - 네트워킹이 필요하면 `async throws` 메서드 추가
 - `@MainActor`를 프로토콜에 명시 (SwiftUI 뷰에서 직접 호출 가능)
 - `ModelContext`를 프로토콜에 노출하지 않는다 (구현 세부사항)
+- `backend_required == true`이면 `AuthServiceProtocol`과 `LLMServiceProtocol`도 생성:
+  ```swift
+  @MainActor
+  protocol AuthServiceProtocol {
+      func signInWithApple(identityToken: String) async throws -> AuthResponse
+      func signInWithGoogle() async throws -> AuthResponse
+      var currentUser: UserInfo? { get }
+      func signOut()
+  }
+
+  @MainActor
+  protocol LLMServiceProtocol {
+      func chat(messages: [ChatMessage]) -> AsyncThrowingStream<ChatStreamChunk, Error>
+      func summarize(text: String) async throws -> String
+  }
+  ```
+  메서드 시그니처는 architecture.md의 API Contract에서 결정.
+  스트리밍 엔드포인트는 `AsyncThrowingStream` 반환.
 
 동시에 `.autobot/architecture.md`에 **Integration Map** 섹션을 추가하여 어떤 ViewModel이 어떤 프로토콜을 사용하는지 명시:
 

@@ -77,6 +77,96 @@ TabView
 
 > API가 필요 없는 로컬 전용 앱이면 "N/A" 기재.
 
+## Backend Requirements (if applicable)
+
+> backend가 필요 없는 앱이면 이 섹션 전체를 "N/A"로 기재.
+
+- **Required**: true/false
+- **Reason**: OAuth ([providers]) / LLM Proxy / Both
+- **Tech Stack**: Python + FastAPI
+- **Streaming**: SSE (Server-Sent Events) for LLM endpoints
+
+### Auth Architecture
+| Provider | iOS Side | Backend Side |
+|----------|----------|-------------|
+| Apple | AuthenticationServices (네이티브 UI) | POST /auth/apple — identity token 검증 + JWT 발급 |
+| [Provider] | 서버 리다이렉트 | GET /auth/[provider] → callback → JWT 발급 |
+
+> 백엔드가 존재하면 모든 인증은 서버에서 통합 JWT를 발급한다.
+> 유저 테이블은 provider-agnostic: (id, email, name, provider, provider_id)
+
+### LLM Endpoints
+| Endpoint | Method | Streaming | Upstream | Purpose |
+|----------|--------|-----------|----------|---------|
+| /api/chat | POST | ✅ SSE | OpenAI | 채팅 응답 |
+
+### Backend File Structure
+```
+backend/
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+├── app/
+│   ├── main.py
+│   ├── config.py
+│   ├── auth/
+│   │   ├── router.py
+│   │   ├── apple.py
+│   │   ├── [provider].py
+│   │   └── jwt.py
+│   └── llm/
+│       ├── router.py
+│       └── proxy.py
+├── .env
+├── .env.example
+└── DEPLOY.md
+```
+
+### Environment Variables (.env.example)
+| Variable | Purpose |
+|----------|---------|
+| APPLE_TEAM_ID | Apple Sign In 검증 |
+| JWT_SECRET | 토큰 서명 |
+| OPENAI_API_KEY | LLM 프록시 (해당 시) |
+| ALLOWED_ORIGINS | CORS 허용 도메인 |
+
+## API Contract (if backend required)
+
+> backend가 필요 없으면 "N/A"로 기재.
+> 병렬 에이전트(data-engineer, backend-engineer) 간 계약.
+> 대응하는 Swift 타입은 Models/APIContracts.swift에 정의.
+
+#### POST /auth/apple
+```
+Request:  { "identity_token": "string" }
+Response: { "access_token": "string", "user": { "id": "string", "email": "string", "name": "string" } }
+```
+
+#### POST /api/chat (example)
+```
+Request:  { "messages": [{ "role": "string", "content": "string" }] }
+Response (SSE):
+  data: { "content": "string", "done": false }
+  data: { "content": "", "done": true }
+```
+
+## iOS Configuration (if backend required)
+
+> backend가 필요 없으면 "N/A"로 기재.
+
+### xcconfig
+| Key | Debug | Release |
+|-----|-------|---------|
+| API_BASE_URL | http://localhost:8080 | https://$(PRODUCTION_HOST) |
+
+### Info.plist
+- `API_BASE_URL = $(API_BASE_URL)` — xcconfig에서 주입
+
+### NetworkService Rules
+- data-engineer는 `Bundle.main`의 `API_BASE_URL`을 base URL로 사용
+- Auth 헤더: `Authorization: Bearer <JWT>`
+- LLM 스트리밍: `URLSession` bytes iteration으로 SSE 파싱
+
 ## Privacy API Categories
 
 | API Category | Reason Code | 사용 이유 |
@@ -136,6 +226,12 @@ AppName/
 │   └── SampleData.swift
 ├── Assets.xcassets/
 ├── PrivacyInfo.xcprivacy
-└── AppName.entitlements
+├── AppName.entitlements
+├── Debug.xcconfig (if backend required)
+├── Release.xcconfig (if backend required)
+└── backend/ (if backend required)
+    ├── Dockerfile
+    ├── docker-compose.yml
+    └── app/
 ```
 ```
