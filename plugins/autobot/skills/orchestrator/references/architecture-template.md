@@ -208,7 +208,11 @@ Response (SSE):
 ProjectRoot/                      ← 프로젝트 루트 (git root)
 ├── .autobot/
 │   ├── architecture.md
-│   └── build-state.json
+│   ├── build-state.json
+│   ├── design-spec.md            ← Phase 1.5 (Stitch 사용 시)
+│   └── designs/                  ← Phase 1.5 (화면별 UI 목업)
+│       ├── HomeView.png
+│       └── DetailView.png
 ├── .gitignore
 ├── AppName.xcodeproj/
 ├── AppName/                      ← Xcode 소스 그룹 (Folder Reference)

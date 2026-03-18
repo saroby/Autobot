@@ -20,7 +20,8 @@ Phase 3의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지
 | Agent | Writes To | Reads From | MUST NOT Touch |
 |-------|-----------|------------|----------------|
 | architect | `.autobot/architecture.md`, `[sources]/Models/` | (user input) | — |
-| ui-builder | `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/` | `[sources]/Models/*.swift` | `[sources]/Models/`, `[sources]/Services/` |
+| ux-designer | `.autobot/designs/`, `.autobot/design-spec.md` | `.autobot/architecture.md` | `[sources]/`, `.autobot/architecture.md` |
+| ui-builder | `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/` | `[sources]/Models/*.swift`, `.autobot/design-spec.md` (있으면) | `[sources]/Models/`, `[sources]/Services/` |
 | data-engineer | `[sources]/Services/`, `[sources]/Utilities/` | `[sources]/Models/*.swift` | `[sources]/Models/`, `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/` |
 | backend-engineer | `[project]/backend/` | `[sources]/Models/APIContracts.swift` | `[sources]/`, root `.gitignore` |
 | quality-engineer | `[project]/*Tests/`, fixes in any file, integration wiring | All source files | — |
@@ -30,12 +31,29 @@ Phase 3의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지
 
 오케스트레이터는 `[project]`와 `[sources]`를 실제 경로로 치환하여 에이전트에게 전달한다.
 
+#### For ux-designer dispatch (Phase 1.5, 조건부):
+```
+Read the architecture at [project]/.autobot/architecture.md for:
+- App overview (display name, identifier name)
+- Screen inventory (## Screens section)
+- Navigation structure (## Navigation Structure section)
+- Feature list (## Features section)
+
+Generate UI mockup designs for each screen using Google Stitch.
+Save screenshots to [project]/.autobot/designs/<ScreenName>.png
+Write design specification to [project]/.autobot/design-spec.md
+
+App display name: [displayName]
+App identifier: [appName]
+```
+
 #### For ui-builder dispatch:
 ```
 ZEROTH: Read $CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md for authoritative iOS design patterns and anti-patterns.
 FIRST: Read ALL .swift files in [sources]/Models/ to learn exact type names, properties, and initializers.
 SECOND: Read [sources]/Models/ServiceProtocols.swift to learn the service interfaces your ViewModels depend on.
 THEN: Read the architecture at [project]/.autobot/architecture.md for screen inventory, navigation, and integration map.
+IF [project]/.autobot/design-spec.md EXISTS: Read it for visual design references, design tokens, and UI pattern guidance from Stitch mockups. Check [project]/.autobot/designs/ for screen mockup images.
 Generate all SwiftUI views, view models, and the app entry point.
 ViewModels MUST depend on Service protocols (e.g. ItemServiceProtocol), NOT on ModelContext directly.
 Create [sources]/App/ServiceStubs.swift with stub implementations for each protocol (return empty arrays, no-ops).

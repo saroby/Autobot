@@ -6,14 +6,6 @@ set -euo pipefail
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 
-# ── Step 0: .env.example 자동 복사 ──
-if [ ! -f "${PROJECT_DIR}/.env" ] && [ ! -f "${PROJECT_DIR}/.env.example" ]; then
-  TEMPLATE="${PLUGIN_ROOT}/.env.example"
-  if [ -n "$PLUGIN_ROOT" ] && [ -f "$TEMPLATE" ]; then
-    cp "$TEMPLATE" "${PROJECT_DIR}/.env.example"
-  fi
-fi
-
 # ── Step 1: .env 파일 탐색 ──
 ENV_FILE=""
 if [ -f "${PROJECT_DIR}/.env" ]; then

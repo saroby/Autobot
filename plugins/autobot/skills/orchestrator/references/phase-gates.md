@@ -19,7 +19,7 @@ CHECK:
 FAIL → Phase 0 재실행
 ```
 
-### Gate 1→2: 아키텍처 + 타입 계약 완료
+### Gate 1→1.5: 아키텍처 + 타입 계약 완료
 
 ```
 CHECK:
@@ -37,6 +37,21 @@ CHECK:
   ✓ (backend_required) docker --version 종료 코드 == 0
 FAIL → architect 에이전트 재실행 (최대 2회)
 FAIL (docker 미설치) → 사용자에게 Docker Desktop 설치 안내 후 빌드 중단
+```
+
+### Gate 1.5→2: UX 디자인 완료 (soft gate)
+
+```
+CONDITION: build-state.json.environment.stitch == true
+  → Phase 1.5 실행됨:
+    CHECK:
+      ✓ .autobot/design-spec.md 존재
+      ✓ .autobot/designs/ 디렉토리에 .png 파일 1개 이상 존재
+    SOFT FAIL → Phase 2 진행 (디자인 없이도 ui-builder가 architecture.md로 구현 가능)
+
+CONDITION: build-state.json.environment.stitch == false
+  → Phase 1.5 스킵 (status: "skipped")
+  → Phase 2로 즉시 진행
 ```
 
 ### Gate 2→3: Xcode 프로젝트 생성 완료

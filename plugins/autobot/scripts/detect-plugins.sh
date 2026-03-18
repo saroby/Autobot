@@ -59,8 +59,16 @@ AXIOM_AVAILABLE=$(detect_plugin "axiom")
 SERENA_AVAILABLE=$(detect_plugin "serena")
 CONTEXT7_AVAILABLE=$(detect_plugin "context7")
 
+# ── Detect Google Stitch MCP ──
+STITCH_AVAILABLE="false"
+if command -v stitch-mcp &>/dev/null; then
+  STITCH_AVAILABLE="true"
+elif npx @_davideast/stitch-mcp doctor &>/dev/null 2>&1; then
+  STITCH_AVAILABLE="true"
+fi
+
 cat << EOF
 {
-  "systemMessage": "[Autobot Environment] axiom=${AXIOM_AVAILABLE}, serena=${SERENA_AVAILABLE}, context7=${CONTEXT7_AVAILABLE}, xcodegen=${XCODEGEN_AVAILABLE}, fastlane=${FASTLANE_AVAILABLE}, asc_configured=${ASC_CONFIGURED}. Note: plugin detection is best-effort; 'unknown' means runtime check needed."
+  "systemMessage": "[Autobot Environment] axiom=${AXIOM_AVAILABLE}, serena=${SERENA_AVAILABLE}, context7=${CONTEXT7_AVAILABLE}, stitch=${STITCH_AVAILABLE}, xcodegen=${XCODEGEN_AVAILABLE}, fastlane=${FASTLANE_AVAILABLE}, asc_configured=${ASC_CONFIGURED}. Note: plugin detection is best-effort; 'unknown' means runtime check needed."
 }
 EOF

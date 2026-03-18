@@ -14,17 +14,17 @@ Master coordination skill for building iOS 26+ apps from ideas. Manages the comp
                     │              AUTOBOT BUILD PIPELINE                  │
                     └──────────────────────────────────────────────────────┘
 
- ┌─────────┐  Gate   ┌───────────┐  Gate   ┌──────────┐  Gate   ┌────────────────┐
- │ Phase 0  │──0→1──▶│  Phase 1   │──1→2──▶│ Phase 2   │──2→3──▶│    Phase 3      │
- │ Pre-     │        │ Architect  │        │ Scaffold  │        │  ┌──────────┐  │
- │ flight   │        │ (opus)     │        │ (self)    │        │  │ui-builder│  │
- │ (self)   │        │            │        │           │        │  └──────────┘  │
- └─────────┘        └───────────┘        └──────────┘        │  ┌──────────┐  │
-                                                                │  │data-eng. │  │
-                                                                │  └──────────┘  │
-                                                                └───────┬────────┘
-                                                                        │ Gate 3→4
-                    ┌─────────┐  Gate   ┌───────────┐  Gate            ▼
+ ┌─────────┐ Gate  ┌───────────┐ Gate  ┌──────────────┐ soft  ┌──────────┐ Gate  ┌───────────────┐
+ │ Phase 0  │─0→1─▶│  Phase 1   │─1→──▶│  Phase 1.5   │─────▶│ Phase 2   │─2→3─▶│   Phase 3     │
+ │ Pre-     │      │ Architect  │      │ UX Design    │      │ Scaffold  │      │ ┌──────────┐  │
+ │ flight   │      │ (opus)     │      │ (Stitch MCP) │      │ (self)    │      │ │ui-builder│  │
+ │ (self)   │      │            │      │ ★ 조건부     │      │           │      │ └──────────┘  │
+ └─────────┘      └───────────┘      └──────────────┘      └──────────┘      │ ┌──────────┐  │
+                                                                               │ │data-eng. │  │
+                                                                               │ └──────────┘  │
+                                                                               └───────┬───────┘
+                                                                                       │ Gate 3→4
+                    ┌─────────┐  Gate   ┌───────────┐  Gate                           ▼
                     │ Phase 6  │◀─soft──│  Phase 5   │◀─4→5──┌────────────────┐
                     │ Retro-   │        │ Deploy     │       │    Phase 4      │
                     │ spective │        │ (sonnet)   │       │ Quality Eng.    │
@@ -38,6 +38,7 @@ Master coordination skill for building iOS 26+ apps from ideas. Manages the comp
 |-------|------|-------|----------|------|-----------|
 | 0 | Pre-flight & Setup | (self) | No | → 환경/이름 검증 | 1 |
 | 1 | Architecture + Contracts | architect | No | → 산출물 존재/구조 검증 | 2 |
+| 1.5 | UX Design (조건부) | ux-designer | No | → soft (실패/스킵해도 진행) | 1 |
 | 2 | Project Scaffold | (self) | No | → .xcodeproj 존재 검증 | 1 |
 | 3 | Parallel Coding | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 | 2 |
 | 4 | Integration & Build | quality-engineer | No | → xcodebuild 성공 | 2 |
@@ -90,6 +91,27 @@ Phase 0에서 빌드 시작 전에 환경을 검증:
 
 하나라도 필수 항목이 실패하면 빌드를 시작하지 않고 해결 방법을 안내.
 
+## Phase 1.5: UX Design with Stitch (Conditional)
+
+`build-state.json.environment.stitch == true`일 때만 실행.
+
+```
+if environment.stitch == true:
+    Agent(
+      subagent_type="ux-designer",
+      prompt="[ux-designer task with architecture.md path, app name, screen list]"
+    )
+    → .autobot/designs/*.png + .autobot/design-spec.md 생성
+    → build-state.json에 stitch.projectId 기록
+else:
+    phases["1.5"].status = "skipped"
+    → Phase 2로 진행
+```
+
+Phase 1.5는 **soft gate** — 실패해도 Phase 2로 진행한다. Stitch 없이도 ui-builder는 architecture.md만으로 UI를 구현할 수 있다.
+
+상세 워크플로우는 **`autobot-ux-design` 스킬** 참조.
+
 ## Agent Dispatch Strategy
 
 ### Parallel Execution (Phase 3)
@@ -123,7 +145,9 @@ if build-state.json.backend_required == true:
 | 파일 | 생성자 | 소비자 | 용도 |
 |------|--------|--------|------|
 | `.autobot/build-state.json` | Phase 0 | 전체 | 빌드 메타데이터, 상태 추적 |
-| `.autobot/architecture.md` | architect | ui-builder, data-engineer, quality-engineer | 설계 명세 |
+| `.autobot/architecture.md` | architect | ux-designer, ui-builder, data-engineer, quality-engineer | 설계 명세 |
+| `.autobot/design-spec.md` | ux-designer | ui-builder | UX 디자인 명세 (Stitch 사용 시) |
+| `.autobot/designs/*.png` | ux-designer | ui-builder | 화면별 UI 목업 스크린샷 |
 | `<AppName>/Models/*.swift` | architect | ui-builder, data-engineer | 타입 계약 (읽기 전용) |
 | `<AppName>/Models/ServiceProtocols.swift` | architect | ui-builder, data-engineer | 통합 계약 (읽기 전용) |
 | `<AppName>/App/ServiceStubs.swift` | ui-builder | quality-engineer | 임시 stub (Phase 4에서 삭제) |
@@ -140,6 +164,7 @@ if build-state.json.backend_required == true:
 | Agent | Writes To | MUST NOT Touch |
 |-------|-----------|----------------|
 | architect | `.autobot/architecture.md`, `<AppName>/Models/` | — |
+| ux-designer | `.autobot/designs/`, `.autobot/design-spec.md` | `<AppName>/`, `.autobot/architecture.md` |
 | ui-builder | `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` | `<AppName>/Models/`, `<AppName>/Services/` |
 | data-engineer | `<AppName>/Services/`, `<AppName>/Utilities/` | `<AppName>/Models/`, `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` |
 | backend-engineer | `backend/` | `<AppName>/`, root `.gitignore` |
@@ -197,11 +222,18 @@ git checkout -- Models/
     "xcodegen": true,
     "fastlane": false,
     "ascConfigured": true,
-    "axiom": true
+    "axiom": true,
+    "stitch": true
+  },
+  "stitch": {
+    "projectId": "stitch-project-12345",
+    "screenCount": 5,
+    "designsPath": ".autobot/designs/"
   },
   "phases": {
     "0": { "status": "completed", "completedAt": "..." },
     "1": { "status": "completed", "completedAt": "...", "modelsChecksum": "..." },
+    "1.5": { "status": "completed", "completedAt": "..." },
     "2": { "status": "completed", "completedAt": "..." },
     "3": { "status": "failed", "error": "...", "failedAt": "...", "retryCount": 1 },
     "4": { "status": "pending" },
@@ -253,6 +285,7 @@ pending → in_progress → completed
 | Axiom | Skill 도구 호출 시도 | iOS 전문 스킬 | 내장 iOS 지식 |
 | Serena | mcp__plugin_serena_serena__* 도구 존재 | 시맨틱 편집 | Edit 도구 |
 | context7 | mcp__context7__* 도구 존재 | 최신 API 문서 | 학습 데이터 |
+| Stitch | `npx @_davideast/stitch-mcp doctor` 성공 | Phase 1.5 UX 디자인 생성 | architecture.md만으로 UI 구현 |
 
 ## Phase 6: Retrospective & Build Report
 

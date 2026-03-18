@@ -54,7 +54,8 @@ Read .autobot/build-state.json
 |-----------|--------------|
 | 0 | 없음 (처음부터) |
 | 1 | Phase 0 completed |
-| 2 | Phase 1 completed + `.autobot/architecture.md` 존재 + `<AppName>/Models/*.swift` 존재 |
+| 1.5 | Phase 1 completed + `.autobot/architecture.md` 존재 + `<AppName>/Models/*.swift` 존재 |
+| 2 | Phase 1 completed (Phase 1.5는 조건부 — completed 또는 skipped) |
 | 3 | Phase 2 completed + `.xcodeproj` 존재 |
 | 4 | Phase 3 completed + `<AppName>/Views/` 및 `<AppName>/Services/` 디렉토리에 .swift 파일 존재 |
 | 5 | Phase 4 completed + 마지막 빌드 성공 |
@@ -118,6 +119,13 @@ Phase {resumeFrom}부터 실행합니다.
 
 - architect 에이전트를 다시 실행
 - 기존 `.autobot/architecture.md`와 `Models/` 파일은 **덮어쓴다** (architect가 처음부터 다시 설계)
+
+### Phase 1.5 재개
+
+- `build-state.json.environment.stitch == true`일 때만 실행
+- ux-designer 에이전트를 다시 실행
+- 기존 `.autobot/designs/`와 `.autobot/design-spec.md`는 **덮어쓴다**
+- Stitch 프로젝트 ID가 `build-state.json.stitch.projectId`에 있으면 기존 프로젝트 재사용 시도
 
 ### Phase 2 재개
 

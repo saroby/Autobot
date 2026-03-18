@@ -50,10 +50,11 @@ git --version                             # Git
 ```bash
 command -v xcodegen   # → 있으면 사용, 없으면 pbxproj fallback
 command -v fastlane   # → 없으면 Phase 5에서 auto-install
+npx @_davideast/stitch-mcp doctor  # → 성공하면 Phase 1.5 UX 디자인 활성화
 ```
 
 1. `.autobot/learnings.json` 읽기 (있으면) — 과거 빌드 교훈 적용
-2. Axiom/Serena/context7 플러그인 감지 (orchestrator 스킬의 Plugin Detection 참조)
+2. Axiom/Serena/context7/Stitch 플러그인 감지 (orchestrator 스킬의 Plugin Detection 참조)
 
 **ASC 인증 미설정 시 즉시 경고:**
 ```
@@ -91,7 +92,35 @@ architect 에이전트를 Agent 도구로 디스패치. TaskCreate로 진행 추
 2. `<AppName>/Models/*.swift` — 컴파일 가능한 @Model 파일 (타입 계약)
 3. `<AppName>/Models/ServiceProtocols.swift` — 통합 계약
 
-**→ Gate 1→2**: architecture.md + `<AppName>/Models/` 존재 + 체크섬 저장. 실패 시 architect 재실행 (최대 2회).
+**→ Gate 1→1.5**: architecture.md + `<AppName>/Models/` 존재 + 체크섬 저장. 실패 시 architect 재실행 (최대 2회).
+
+## Phase 1.5: UX Design (Stitch MCP — 조건부)
+
+`build-state.json.environment.stitch == true`일 때만 실행. Stitch가 없으면 `skipped`로 마킹하고 Phase 2로 진행.
+
+ux-designer 에이전트를 Agent 도구로 디스패치.
+
+에이전트에게 전달할 컨텍스트:
+- `.autobot/architecture.md` 경로
+- 앱 display name과 identifier name
+- 화면 목록 (architecture.md의 `## Screens` 섹션)
+
+결과물:
+1. `.autobot/designs/*.png` — 화면별 UI 목업 스크린샷
+2. `.autobot/design-spec.md` — 디자인 명세 (토큰, 패턴, 구현 가이드)
+
+Phase 완료 시 `build-state.json`에 stitch 정보 기록:
+```json
+{
+  "stitch": {
+    "projectId": "<stitch-project-id>",
+    "screenCount": 5,
+    "designsPath": ".autobot/designs/"
+  }
+}
+```
+
+**→ Gate 1.5→2**: `design-spec.md` 존재 또는 `skipped` 상태. 실패해도 Phase 2 진행 (soft gate).
 
 ## Phase 2: Xcode 프로젝트 생성
 
@@ -120,7 +149,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
 
 | Agent | subagent_type | Writes To | Reads |
 |-------|---------------|-----------|-------|
-| ui-builder | `ui-builder` | `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` | `<AppName>/Models/`, architecture.md |
+| ui-builder | `ui-builder` | `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` | `<AppName>/Models/`, architecture.md, design-spec.md (있으면) |
 | data-engineer | `data-engineer` | `<AppName>/Services/`, `<AppName>/Utilities/` | `<AppName>/Models/`, architecture.md |
 | backend-engineer | `backend-engineer` | `backend/` | `<AppName>/Models/APIContracts.swift`, architecture.md |
 
