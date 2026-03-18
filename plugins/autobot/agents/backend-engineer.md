@@ -13,7 +13,7 @@ Read `.autobot/architecture.md` and `<AppName>/Models/APIContracts.swift`, then 
 **CRITICAL RULES:**
 - You MUST NOT create, modify, or overwrite any files outside of `backend/`.
 - You MUST NOT touch `<AppName>/Models/`, `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/Services/`, `<AppName>/App/`, or any `.xcodeproj` files.
-- You MUST NOT modify the root `.gitignore` (Phase 2 already added `backend/.env`).
+- You MUST NOT modify the root `.gitignore` (Phase 3 already added `backend/.env`).
 - All API endpoints MUST match the API Contract section in architecture.md exactly.
 - All request/response schemas MUST match the types in `Models/APIContracts.swift`.
 

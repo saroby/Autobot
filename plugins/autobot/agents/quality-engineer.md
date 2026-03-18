@@ -14,7 +14,7 @@ Validate the generated app compiles successfully, fix any errors, and write basi
 
 > **Step 순서가 중요하다**: 먼저 stub을 실제 서비스로 교체하고(1), 플랫폼 요구사항을 반영한 뒤(2), 빌드 검증(3)을 수행한다. stub이 남아있는 상태에서 빌드하면 stub 교체 후 다시 빌드해야 하므로 시간 낭비다.
 
-0. **Xcode 프로젝트에 새 파일 등록** (Phase 3에서 생성된 파일 반영):
+0. **Xcode 프로젝트에 새 파일 등록** (Phase 4에서 생성된 파일 반영):
    ```bash
    # xcodegen이 있으면
    if command -v xcodegen &>/dev/null && [ -f project.yml ]; then

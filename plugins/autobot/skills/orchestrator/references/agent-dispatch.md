@@ -15,7 +15,7 @@
 
 Agents write to separate directories to prevent conflicts. `[sources]/Models/` is the **shared type contract** (data models + service protocols) created by architect — no other agent may modify it.
 
-Phase 3의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지한다. 각 에이전트는 지정된 디렉토리에만 쓰고, 다른 에이전트의 디렉토리를 건드리지 않는다.
+Phase 4의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지한다. 각 에이전트는 지정된 디렉토리에만 쓰고, 다른 에이전트의 디렉토리를 건드리지 않는다.
 
 | Agent | Writes To | Reads From | MUST NOT Touch |
 |-------|-----------|------------|----------------|
@@ -31,7 +31,7 @@ Phase 3의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지
 
 오케스트레이터는 `[project]`와 `[sources]`를 실제 경로로 치환하여 에이전트에게 전달한다.
 
-#### For ux-designer dispatch (Phase 1.5, 조건부):
+#### For ux-designer dispatch (Phase 2, 필수):
 ```
 Read the architecture at [project]/.autobot/architecture.md for:
 - App overview (display name, identifier name)
@@ -53,7 +53,8 @@ ZEROTH: Read $CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md for authoritative iO
 FIRST: Read ALL .swift files in [sources]/Models/ to learn exact type names, properties, and initializers.
 SECOND: Read [sources]/Models/ServiceProtocols.swift to learn the service interfaces your ViewModels depend on.
 THEN: Read the architecture at [project]/.autobot/architecture.md for screen inventory, navigation, and integration map.
-IF [project]/.autobot/design-spec.md EXISTS: Read it for visual design references, design tokens, and UI pattern guidance from Stitch mockups. Check [project]/.autobot/designs/ for screen mockup images.
+THEN: Read [project]/.autobot/design-spec.md for visual design references, design tokens, and UI pattern guidance from Stitch mockups. Check [project]/.autobot/designs/ for screen mockup images. This is the PRIMARY design input — if it exists, it takes precedence over architecture.md for visual decisions.
+IF design-spec.md DOES NOT EXIST (fallback mode): Proceed with architecture.md alone for UI decisions.
 Generate all SwiftUI views, view models, and the app entry point.
 ViewModels MUST depend on Service protocols (e.g. ItemServiceProtocol), NOT on ModelContext directly.
 Create [sources]/App/ServiceStubs.swift with stub implementations for each protocol (return empty arrays, no-ops).
@@ -89,12 +90,12 @@ All API endpoints MUST match the API Contract section exactly.
 All request/response schemas MUST match [sources]/Models/APIContracts.swift types.
 Server MUST start and /health MUST return 200 even with dummy .env values.
 Do NOT create, modify, or overwrite files outside [project]/backend/.
-Do NOT touch root .gitignore (already configured in Phase 2).
+Do NOT touch root .gitignore (already configured in Phase 3).
 ```
 
 ### Three-Agent Parallel Pattern (backend_required == true)
 
-When `build-state.json` has `backend_required: true`, Phase 3 dispatches three agents in parallel:
+When `build-state.json` has `backend_required: true`, Phase 4 dispatches three agents in parallel:
 
 ```
 Agent(
@@ -115,7 +116,7 @@ All three write to disjoint directories (`[sources]/Views/` vs `[sources]/Servic
 
 ## Agent Team Integration (Primary Coordination Pattern)
 
-Agent Team을 사용하여 Phase 3의 병렬 에이전트를 조율한다.
+Agent Team을 사용하여 Phase 4의 병렬 에이전트를 조율한다.
 
 ### Team 생성
 

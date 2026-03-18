@@ -47,19 +47,19 @@ Read .autobot/build-state.json
 
 ### 사용자가 Phase 번호를 지정한 경우
 
-`/autobot:resume 4` → Phase 4부터 강제 재시작.
+`/autobot:resume 4` → Phase 5부터 강제 재시작.
 지정된 Phase 이전의 Phase들이 완료되어 있는지 검증:
 
 | 재개 Phase | 필수 선행 조건 |
 |-----------|--------------|
 | 0 | 없음 (처음부터) |
 | 1 | Phase 0 completed |
-| 1.5 | Phase 1 completed + `.autobot/architecture.md` 존재 + `<AppName>/Models/*.swift` 존재 |
-| 2 | Phase 1 completed (Phase 1.5는 조건부 — completed 또는 skipped) |
-| 3 | Phase 2 completed + `.xcodeproj` 존재 |
-| 4 | Phase 3 completed + `<AppName>/Views/` 및 `<AppName>/Services/` 디렉토리에 .swift 파일 존재 |
-| 5 | Phase 4 completed + 마지막 빌드 성공 |
-| 6 | Phase 5 completed 또는 failed (회고는 항상 가능) |
+| 2 | Phase 1 completed + `.autobot/architecture.md` 존재 + `<AppName>/Models/*.swift` 존재 |
+| 3 | Phase 1 completed + Phase 2 completed 또는 fallback |
+| 4 | Phase 3 completed + `.xcodeproj` 존재 |
+| 5 | Phase 4 completed + `<AppName>/Views/` 및 `<AppName>/Services/` 디렉토리에 .swift 파일 존재 |
+| 6 | Phase 5 completed + 마지막 빌드 성공 |
+| 7 | Phase 6 completed 또는 failed (회고는 항상 가능) |
 
 선행 조건이 충족되지 않으면:
 ```
@@ -86,7 +86,7 @@ Read .autobot/build-state.json
 
 ```
 1. Read .autobot/build-state.json → appName, displayName, bundleId, projectPath 추출
-2. Read .autobot/architecture.md (Phase 2 이후 재개 시)
+2. Read .autobot/architecture.md (Phase 3 이후 재개 시)
 3. Read .autobot/learnings.json (있으면)
 4. 프로젝트 디렉토리로 이동하여 현재 파일 상태 확인
 ```
@@ -120,25 +120,25 @@ Phase {resumeFrom}부터 실행합니다.
 - architect 에이전트를 다시 실행
 - 기존 `.autobot/architecture.md`와 `Models/` 파일은 **덮어쓴다** (architect가 처음부터 다시 설계)
 
-### Phase 1.5 재개
+### Phase 2 재개
 
 - `build-state.json.environment.stitch == true`일 때만 실행
 - ux-designer 에이전트를 다시 실행
 - 기존 `.autobot/designs/`와 `.autobot/design-spec.md`는 **덮어쓴다**
 - Stitch 프로젝트 ID가 `build-state.json.stitch.projectId`에 있으면 기존 프로젝트 재사용 시도
 
-### Phase 2 재개
+### Phase 3 재개
 
 - 기존 `.xcodeproj`가 있으면 삭제 후 재생성
 - 디렉토리 구조는 유지 (기존 소스 파일 보존)
 
-### Phase 3 재개
+### Phase 4 재개
 
 - ui-builder와 data-engineer를 다시 병렬 실행
 - 기존 `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/Services/`, `<AppName>/Utilities/` 파일은 **덮어쓴다**
 - `<AppName>/Models/`는 건드리지 않는다 (Phase 1의 타입 계약)
 
-### Phase 4 재개 (가장 흔한 재개 지점)
+### Phase 5 재개 (가장 흔한 재개 지점)
 
 - 빌드 검증만 다시 실행
 - quality-engineer 에이전트가 컴파일 에러 수정 + 테스트 작성
@@ -149,13 +149,13 @@ Phase {resumeFrom}부터 실행합니다.
   이 문제를 우선적으로 해결하세요.
   ```
 
-### Phase 5 재개
+### Phase 6 재개
 
 - deployer 에이전트를 다시 실행
 - **이전 실패 사유**를 에이전트 프롬프트에 포함
 - 앱 등록(fastlane produce)은 멱등하므로 안전하게 재실행
 
-### Phase 6 재개
+### Phase 7 재개
 
 - 회고만 다시 실행
 - 이전 빌드 과정의 에러/성공을 모두 포함하여 학습 데이터 갱신

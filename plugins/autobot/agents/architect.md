@@ -233,7 +233,7 @@ protocol ItemServiceProtocol {
       // ...
   }
   ```
-  Swift 프로토콜은 `init` 요구사항을 정의할 수 있지만 `ModelContext`를 노출하게 되므로, 대신 **문서화 주석**으로 init 계약을 명시한다. 이 주석이 없으면 stub과 실제 서비스의 init 파라미터 레이블이 달라져 Phase 4에서 컴파일 에러가 발생한다.
+  Swift 프로토콜은 `init` 요구사항을 정의할 수 있지만 `ModelContext`를 노출하게 되므로, 대신 **문서화 주석**으로 init 계약을 명시한다. 이 주석이 없으면 stub과 실제 서비스의 init 파라미터 레이블이 달라져 Phase 5에서 컴파일 에러가 발생한다.
 - `backend_required == true`이면 `AuthServiceProtocol`과 `LLMServiceProtocol`도 생성:
   ```swift
   @MainActor
@@ -341,7 +341,7 @@ swiftc -typecheck -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
 # 에러 발생 시: 즉시 수정하고 재검증.
 ```
 
-> **참고**: `@Model` 매크로는 SwiftData 프레임워크에 의존하므로 `swiftc -typecheck`로 완전한 검증이 불가할 수 있다. 매크로 관련 에러는 무시하고, import 누락, 타입 불일치, optional chaining 오류 등 **순수 Swift 문법 에러만** 수정한다. 최종 컴파일 검증은 Phase 4(xcodebuild)에서 수행된다.
+> **참고**: `@Model` 매크로는 SwiftData 프레임워크에 의존하므로 `swiftc -typecheck`로 완전한 검증이 불가할 수 있다. 매크로 관련 에러는 무시하고, import 누락, 타입 불일치, optional chaining 오류 등 **순수 Swift 문법 에러만** 수정한다. 최종 컴파일 검증은 Phase 5(xcodebuild)에서 수행된다.
 
 **Constraints:**
 - Do NOT generate Views, ViewModels, Repositories, or Services — only architecture doc + Model files + Service protocols

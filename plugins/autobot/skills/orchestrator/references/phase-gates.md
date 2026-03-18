@@ -19,7 +19,7 @@ CHECK:
 FAIL → Phase 0 재실행
 ```
 
-### Gate 1→1.5: 아키텍처 + 타입 계약 완료
+### Gate 1→2: 아키텍처 + 타입 계약 완료
 
 ```
 CHECK:
@@ -39,22 +39,27 @@ FAIL → architect 에이전트 재실행 (최대 2회)
 FAIL (docker 미설치) → 사용자에게 Docker Desktop 설치 안내 후 빌드 중단
 ```
 
-### Gate 1.5→2: UX 디자인 완료 (soft gate)
+### Gate 2→3: UX 디자인 완료 (필수, fallback 포함)
 
 ```
 CONDITION: build-state.json.environment.stitch == true
-  → Phase 1.5 실행됨:
+  → Phase 2 실행됨 (primary 경로):
     CHECK:
       ✓ .autobot/design-spec.md 존재
       ✓ .autobot/designs/ 디렉토리에 .png 파일 1개 이상 존재
-    SOFT FAIL → Phase 2 진행 (디자인 없이도 ui-builder가 architecture.md로 구현 가능)
+    FAIL → 1회 재시도
+    FAIL (재시도 후) → fallback 모드로 전환:
+      - phases["2"].status = "fallback"
+      - ⚠️ 경고 출력: "Stitch 디자인 생성 실패. architecture.md 기반 fallback 모드로 진행합니다."
+      - Phase 3로 진행
 
 CONDITION: build-state.json.environment.stitch == false
-  → Phase 1.5 스킵 (status: "skipped")
-  → Phase 2로 즉시 진행
+  → Phase 2 fallback (status: "fallback")
+  → ⚠️ 경고 출력: "Stitch MCP 미설치. fallback 모드로 진행합니다."
+  → Phase 3로 진행
 ```
 
-### Gate 2→3: Xcode 프로젝트 생성 완료
+### Gate 3→4: Xcode 프로젝트 생성 완료
 
 ```
 CHECK:
@@ -71,7 +76,7 @@ CHECK:
 FAIL → scaffold 재실행
 ```
 
-### Gate 3→4: 병렬 코드 생성 완료
+### Gate 4→5: 병렬 코드 생성 완료
 
 ```
 CHECK:
@@ -82,7 +87,7 @@ CHECK:
   ✓ <AppName>/Models/*.swift 파일이 Phase 1과 동일 (수정되지 않음 — checksum 비교)
   ✓ 에이전트 간 파일 소유권 위반 없음 (각자 지정 디렉토리에만 쓰기)
 FAIL:
-  - <AppName>/Models/ 변경됨 → git checkout으로 <AppName>/Models/ 복원 후 Phase 3 재실행
+  - <AppName>/Models/ 변경됨 → git checkout으로 <AppName>/Models/ 복원 후 Phase 4 재실행
   - 파일 누락 → 해당 에이전트만 재실행
   ✓ (backend_required) backend/ 디렉토리 존재
   ✓ (backend_required) backend/Dockerfile 존재
@@ -92,7 +97,7 @@ FAIL:
   - backend/ 누락 → backend-engineer만 재실행
 ```
 
-### Gate 4→5: 빌드 성공
+### Gate 5→6: 빌드 성공
 
 ```
 CHECK:
@@ -108,13 +113,13 @@ FAIL → quality-engineer 에이전트 재실행 (최대 2회, 이전 에러 전
 FAIL (Docker) → quality-engineer 에이전트 재실행 (Docker 에러 메시지 포함)
 ```
 
-### Gate 5→6: 배포 완료 (soft gate — 실패해도 진행)
+### Gate 6→7: 배포 완료 (soft gate — 실패해도 진행)
 
 ```
 CHECK:
   ✓ .autobot/deploy-status.json 존재
   ✓ deploy-status.json에 archive_path 또는 upload_success 존재
-SOFT FAIL → Phase 6 진행 (배포 실패도 학습 대상)
+SOFT FAIL → Phase 7 진행 (배포 실패도 학습 대상)
 ```
 
 ## Gate 실행 방법
@@ -138,7 +143,7 @@ Gate N→N+1 검증
   ↓ FAIL
 재시도 가능? (retryCount < maxRetry)
   ├─ Yes → Phase N 재실행
-  └─ No  → build-state.json에 "failed" 기록, Phase 6으로 건너뜀
+  └─ No  → build-state.json에 "failed" 기록, Phase 7으로 건너뜀
 ```
 
 ## Gate에서 사용하는 검증 명령
@@ -162,10 +167,10 @@ xcodebuild build ... 2>&1 | tail -1 | grep -q "BUILD SUCCEEDED"
 # Docker 설치 확인 (Gate 1→2)
 docker --version &>/dev/null
 
-# xcconfig 확인 (Gate 2→3)
+# xcconfig 확인 (Gate 3→4)
 grep -q "API_BASE_URL" Debug.xcconfig
 
-# Docker 빌드 + 기동 확인 (Gate 4→5)
+# Docker 빌드 + 기동 확인 (Gate 5→6)
 cd backend && docker compose build && docker compose up -d --wait
 curl -f http://localhost:8080/health
 docker compose down && cd ..
@@ -186,4 +191,4 @@ Phase 1 완료 시 `<AppName>/Models/` 디렉토리의 체크섬을 `build-state
 }
 ```
 
-Phase 3 완료 후 Gate 3→4에서 체크섬을 재계산하여 비교. 불일치 시 `git checkout -- <AppName>/Models/`로 복원.
+Phase 4 완료 후 Gate 4→5에서 체크섬을 재계산하여 비교. 불일치 시 `git checkout -- <AppName>/Models/`로 복원.

@@ -16,7 +16,7 @@ Register the app on App Store Connect (if needed), archive the app, upload to Ap
 
 ### Step 0: ASC 인증 사전 검증
 
-Phase 5 시작 전에 ASC 인증 가능 여부를 확인한다. 미설정 시 archive + 로컬 IPA export까지만 진행하고 업로드를 건너뛴다.
+Phase 6 시작 전에 ASC 인증 가능 여부를 확인한다. 미설정 시 archive + 로컬 IPA export까지만 진행하고 업로드를 건너뛴다.
 
 ```bash
 # build-state.json에서 ascConfigured 확인

@@ -1,6 +1,6 @@
 ---
 name: autobot-build-report
-description: Use when an Autobot build completes (Phase 6) or when the user requests a post-build report. Collects plugin-level issues found during the build, distinct from learnings.json cumulative data.
+description: Use when an Autobot build completes (Phase 7) or when the user requests a post-build report. Collects plugin-level issues found during the build, distinct from learnings.json cumulative data.
 ---
 
 # Build Report Generator
@@ -15,7 +15,7 @@ description: Use when an Autobot build completes (Phase 6) or when the user requ
 | 범위 | 단일 빌드 | 전체 빌드 누적 |
 | 대상 독자 | 사람 (플러그인 개발자) | 기계 (Phase 0에서 읽음) |
 | 목적 | 플러그인 문제 진단 + 수정 제안 | 반복 패턴 학습 + 자동 적용 |
-| 생성 시점 | Phase 6 | Phase 6 |
+| 생성 시점 | Phase 7 | Phase 7 |
 
 ## 데이터 수집
 
@@ -35,10 +35,10 @@ cat .autobot/build-state.json
 |----------|----------|------|
 | **에이전트 실패** | 어떤 에이전트가 왜 실패했는지 | 타임아웃, 파일 소유권 위반 |
 | **수동 개입** | 오케스트레이터가 자동 처리 못해서 수동으로 한 작업 | 에이전트 타입 전환, 코드 직접 수정 |
-| **컴파일 에러** | Phase 4 이전에 발견된 코드 생성 문제 | optional chaining 오류, import 누락 |
+| **컴파일 에러** | Phase 5 이전에 발견된 코드 생성 문제 | optional chaining 오류, import 누락 |
 | **Gate 실패** | Phase 전환 시 검증 실패 내역 | 산출물 누락, 체크섬 불일치 |
 | **Fallback 발동** | 기본 경로 실패로 대체 경로 사용 | xcodegen → pbxproj 직접 생성 |
-| **성능 이상** | 예상보다 오래 걸린 Phase | Phase 3 > 10분 |
+| **성능 이상** | 예상보다 오래 걸린 Phase | Phase 4 > 10분 |
 
 ### 3. 프로젝트 산출물 검사
 ```bash
@@ -64,7 +64,7 @@ xcodebuild -project *.xcodeproj -scheme * build 2>&1 | grep -E "warning:|error:"
 - **증상**: `APIModels.swift`에서 `[GeminiPart]`에 `parts?.compactMap` 사용
 - **에러**: `Cannot use optional chaining on non-optional value of type '[GeminiPart]'`
 - **원인**: architect 에이전트가 Codable 모델 생성 시 optional/non-optional 구분을 실수
-- **영향**: Gate 1→2 통과 후 Phase 4에서 수동 수정 필요 (+2분)
+- **영향**: Gate 1→2 통과 후 Phase 5에서 수동 수정 필요 (+2분)
 - **수정 대상**: `plugins/autobot/agents/architect.md`
 - **수정 제안**: architect 프롬프트에 "Models/ 생성 후 `swiftc -typecheck`로 컴파일 검증" 지침 추가
 ```
