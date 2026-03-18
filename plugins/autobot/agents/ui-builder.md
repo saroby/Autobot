@@ -96,6 +96,35 @@ enum PreviewData {
 }
 ```
 
+**Sharing Patterns:**
+- **UIImage 공유 시 `ShareLink(items:)` 사용 금지.** `UIImage`는 `Transferable`을 기본 준수하지 않으므로 `ShareLink(items:)`와 직접 사용할 수 없다. `@retroactive Transferable` 확장을 추가해도 `ShareLink(items:subject:message:)` 이니셜라이저와 호환되지 않는다.
+- **단일 이미지 공유**: 이미지를 임시 파일 URL로 저장한 뒤 `ShareLink(item:preview:)`로 URL을 공유:
+  ```swift
+  // 이미지를 임시 파일로 저장 후 URL 공유
+  func tempURL(for image: UIImage) -> URL? {
+      guard let data = image.pngData() else { return nil }
+      let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+      try? data.write(to: url)
+      return url
+  }
+  // ShareLink(item: imageURL, preview: SharePreview("이미지", image: Image(uiImage: image)))
+  ```
+- **다중 이미지/복합 공유**: `UIActivityViewController`를 `UIViewControllerRepresentable`로 래핑하되, **iPad 크래시 방지를 위해 `popoverPresentationController`를 설정**:
+  ```swift
+  struct ActivityView: UIViewControllerRepresentable {
+      let items: [Any]
+      func makeUIViewController(context: Context) -> UIActivityViewController {
+          let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
+          // iPad에서 popover 미설정 시 크래시
+          vc.popoverPresentationController?.permittedArrowDirections = []
+          vc.popoverPresentationController?.sourceRect = .init(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY, width: 0, height: 0)
+          return vc
+      }
+      func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+  }
+  ```
+- `String`, `URL` 등 `Transferable` 준수 타입은 `ShareLink`를 그대로 사용해도 된다.
+
 **Quality Standards:**
 - Every view must support Dynamic Type
 - Use semantic colors (primary, secondary, etc.)

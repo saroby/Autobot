@@ -50,11 +50,29 @@ git --version                             # Git
 ```bash
 command -v xcodegen   # → 있으면 사용, 없으면 pbxproj fallback
 command -v fastlane   # → 없으면 Phase 5에서 auto-install
-npx @_davideast/stitch-mcp doctor  # → 성공하면 Phase 1.5 UX 디자인 활성화
 ```
 
 1. `.autobot/learnings.json` 읽기 (있으면) — 과거 빌드 교훈 적용
 2. Axiom/Serena/context7/Stitch 플러그인 감지 (orchestrator 스킬의 Plugin Detection 참조)
+
+### environment 감지 및 build-state.json 기록 (필수)
+
+Phase 0에서 **반드시** 아래 감지를 수행하고 결과를 `build-state.json`의 `environment` 객체에 기록한다. 이 값들이 이후 Phase의 조건부 로직을 결정한다.
+
+| 항목 | 감지 방법 | 키 |
+|------|----------|-----|
+| xcodegen | `command -v xcodegen` | `environment.xcodegen` |
+| fastlane | `command -v fastlane` | `environment.fastlane` |
+| ASC 인증 | `.env`에 `ASC_KEY_ID` + `ASC_ISSUER_ID` + `ASC_KEY_PATH` 존재 | `environment.ascConfigured` |
+| Axiom | Skill 도구로 `axiom:axiom-using-axiom` 호출 가능 여부 | `environment.axiom` |
+| Stitch MCP | `mcp__stitch__list_projects` 도구 존재 확인 (도구 목록에서 탐색) | `environment.stitch` |
+
+**Stitch 감지 — 반드시 도구 존재로 확인:**
+- `mcp__stitch__list_projects` 도구가 사용 가능한 도구 목록에 있으면 → `environment.stitch = true`
+- 없으면 → `environment.stitch = false`
+- `npx @_davideast/stitch-mcp doctor`는 보조 확인용. **도구 존재 확인이 1차 기준**이다.
+
+`environment.stitch == true`이면 Phase 1.5가 활성화되고, `false`이면 Phase 1.5를 `skipped`로 마킹한다.
 
 **ASC 인증 미설정 시 즉시 경고:**
 ```
@@ -77,7 +95,25 @@ identifier name이 Swift 예약어이거나 패턴 미충족 시 재생성.
 
 프로젝트 디렉토리 생성 (identifier name 사용), git init, `.autobot/build-state.json` 생성.
 
-상태 파일 스키마와 `environment` 필드는 orchestrator 스킬의 **Build State Management** 섹션 참조. `ascConfigured`가 `false`이면 Phase 5에서 업로드를 건너뛴다.
+상태 파일 스키마는 orchestrator 스킬의 **Build State Management** 섹션 참조. `build-state.json` 초기화 시 **반드시 `environment` 객체를 포함**한다:
+
+```json
+{
+  "buildId": "build-YYYYMMDD-appname",
+  "appName": "AppName",
+  "displayName": "앱 이름",
+  "environment": {
+    "xcodegen": true,
+    "fastlane": false,
+    "ascConfigured": false,
+    "axiom": true,
+    "stitch": true
+  },
+  "phases": { ... }
+}
+```
+
+`environment.ascConfigured == false`이면 Phase 5에서 업로드를 건너뛴다. `environment.stitch == true`이면 Phase 1.5를 실행한다.
 
 **→ Gate 0→1 검증 후 진행**
 
@@ -93,6 +129,25 @@ architect 에이전트를 Agent 도구로 디스패치. TaskCreate로 진행 추
 3. `<AppName>/Models/ServiceProtocols.swift` — 통합 계약
 
 **→ Gate 1→1.5**: architecture.md + `<AppName>/Models/` 존재 + 체크섬 저장. 실패 시 architect 재실행 (최대 2회).
+
+### Gate 1→1.5: backend_required 교차 검증 (필수)
+
+architect가 `backend_required`를 올바르게 설정했는지 **오케스트레이터가 독립적으로 검증**한다:
+
+1. `architecture.md`의 `## Backend Requirements` 섹션을 읽는다
+2. 다음 **어느 하나라도** 해당하면 `backend_required`는 `true`여야 한다:
+   - `ServiceProtocols.swift`에 외부 AI/LLM API 호출 메서드가 있다 (예: `generate`, `chat`, `analyze`, `summarize` + `async throws`)
+   - `architecture.md`에 외부 AI 서비스 이름이 언급된다 (OpenAI, Gemini, Anthropic, DALL-E, Replicate 등)
+   - `architecture.md`의 Features에 이미지 생성, 텍스트 생성, AI 분석 등 외부 API가 필요한 기능이 있다
+   - `<AppName>/Models/*.swift` 파일 중 외부 API 엔드포인트 URL(예: `generativelanguage.googleapis.com`, `api.openai.com`)이나 API 키 저장 패턴(예: `apiKey`, `API_KEY`, `UserDefaults`)이 포함되어 있다
+3. 검증 결과 `backend_required`가 `false`인데 위 조건에 해당하면:
+   - `build-state.json`의 `backend_required`를 `true`로 **오버라이드**
+   - architect를 **재실행**하여 `## Backend Requirements`, `## API Contract`, `APIContracts.swift` 생성
+   - 재실행 프롬프트: "architecture.md에 외부 AI API 호출이 감지되었으나 backend_required가 false입니다. Backend Requirements, API Contract, iOS Configuration 섹션과 APIContracts.swift를 추가하세요. 외부 AI API를 iOS에서 직접 호출하는 설계는 금지됩니다."
+
+> **이 검증이 필요한 이유**: architect가 "사용자가 API 키를 직접 입력" 같은 논리로
+> `backend_required = false`를 잘못 판단할 수 있다. 외부 AI API는 반드시
+> 백엔드 프록시를 경유해야 한다 (보안, 비용 통제, UX, App Store 리뷰).
 
 ## Phase 1.5: UX Design (Stitch MCP — 조건부)
 

@@ -65,16 +65,32 @@ All generated Swift files MUST use the **identifier name** for module name, stru
 
 다음 의사결정 트리에 따라 `backend_required`를 판단한다:
 
+> **절대 규칙: 외부 AI/LLM API를 iOS 앱에서 직접 호출하지 않는다.**
+> "사용자가 API 키를 직접 입력"하는 설계는 **금지**한다. 이유:
+> - 일반 사용자는 API 키를 가지고 있지 않다 (UX 파괴)
+> - UserDefaults/Keychain에 저장된 키가 유출될 수 있다 (보안 위험)
+> - 요청량/비용을 서버 측에서 제어할 수 없다 (비용 폭주)
+> - App Store 리뷰어가 테스트할 수 없다 (리뷰 리젝 위험)
+>
+> AI/LLM API가 필요하면 **반드시** `backend_required = true`로 설정하고,
+> 백엔드 프록시를 통해 호출한다. 예외 없음.
+
 1. **인증 감지**: 아이디어에 "로그인", "회원가입", "소셜 로그인", "계정", "프로필" 키워드가 있으면 인증 필요
    - Apple Sign In은 항상 포함 (iOS 네이티브)
    - 서드파티 OAuth(Google, GitHub, Kakao 등)가 필요하면 → `backend_required = true`
    - Apple만이면 → 백엔드 불필요
 
-2. **LLM 감지**: 다음 키워드가 있으면 LLM API 필요
-   - 명시적: "AI", "GPT", "챗봇", "LLM", "Claude"
-   - 암시적 (텍스트 생성 수반): "자동 요약", "텍스트 생성", "AI 추천", "자동 번역", "감정 분석 리포트", "질문 답변", "대화형 ~"
-   - 오탐 제외: "추천"(규칙 기반), "검색"(전문 검색), "분류"(온디바이스 CoreML)
-   - 해당 시 → `backend_required = true`
+2. **AI/LLM API 감지**: 다음 중 하나라도 해당하면 → `backend_required = true`
+   - **텍스트 생성**: "AI", "GPT", "챗봇", "LLM", "Claude", "Gemini", "자동 요약", "텍스트 생성", "AI 추천", "자동 번역", "감정 분석 리포트", "질문 답변", "대화형 ~"
+   - **이미지 생성**: "이미지 생성", "그림 생성", "AI 그림", "웹툰", "만화 생성", "DALL-E", "Stable Diffusion", "Midjourney", "텍스트→이미지", "스타일 변환"
+   - **멀티모달**: "이미지 분석", "사진 설명", "OCR+AI", "음성→텍스트(외부 API)", "비전 AI"
+   - **API 이름 직접 언급**: "OpenAI", "Anthropic", "Google AI", "Gemini API", "Replicate", "Hugging Face"
+   - **판단 기준**: 기능 구현에 **외부 AI/LLM 서비스의 HTTP API 호출**이 필요하면 `backend_required = true`
+   - **오탐 제외** (백엔드 불필요):
+     - "추천" (규칙 기반 로직)
+     - "검색" (전문 검색/SQLite FTS)
+     - "분류"/"인식" (온디바이스 CoreML/Vision/Foundation Models)
+     - Apple Foundation Models (iOS 26+ 온디바이스, API 키 불필요)
 
 3. **통합 판단**: `backend_required == true`이면
    - 인증이 있을 경우 Apple Sign In도 서버 검증 경로로 통합 (통합 JWT)
