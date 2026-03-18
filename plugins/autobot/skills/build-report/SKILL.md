@@ -1,6 +1,6 @@
 ---
 name: autobot-build-report
-description: Use when an Autobot build completes (Phase 7) or when the user requests a post-build report. Collects plugin-level issues found during the build, distinct from learnings.json cumulative data.
+description: Use when an Autobot build completes (Phase 7) or when the user requests a post-build report. Also use when diagnosing why a build failed, reviewing agent performance, or identifying plugin improvements after a build.
 ---
 
 # Build Report Generator
@@ -41,13 +41,19 @@ cat .autobot/build-state.json
 | **성능 이상** | 예상보다 오래 걸린 Phase | Phase 4 > 10분 |
 
 ### 3. 프로젝트 산출물 검사
+
+빌드 로그는 **Phase 5(quality-engineer)에서 이미 수행한 xcodebuild의 출력을 재활용**한다.
+Phase 7에서 xcodebuild를 다시 실행하지 않는다 — 불필요한 시간 소비이고 결과도 동일하다.
+
 ```bash
 # 생성된 파일 구조 확인
-find . -name "*.swift" | head -50
+ls -R <AppName>/Views/ <AppName>/Services/ <AppName>/ViewModels/ 2>/dev/null
 
-# 빌드 로그에서 경고/에러 추출
-xcodebuild -project *.xcodeproj -scheme * build 2>&1 | grep -E "warning:|error:" | tail -20
+# Phase 5의 빌드 결과는 세션 컨텍스트에서 직접 수집
+# (quality-engineer가 보고한 최종 빌드 상태, 수정한 에러, 남은 경고)
 ```
+
+> **원칙**: Phase 7은 데이터를 **수집하고 정리**하는 Phase이지, 새로운 빌드를 실행하는 Phase가 아니다.
 
 ## 보고서 생성
 
@@ -97,6 +103,23 @@ xcodebuild -project *.xcodeproj -scheme * build 2>&1 | grep -E "warning:|error:"
 | **major** | 수동 개입 필요 | 에이전트 재실행 필요, 컴파일 에러 |
 | **minor** | 불편하지만 빌드는 완료 | 경고 메시지 부재, 느린 Phase |
 | **info** | 개선 기회 | 더 나은 패턴 발견, 성능 최적화 가능 |
+
+## 부분 빌드 처리
+
+Phase 중간에서 빌드가 중단된 경우에도 보고서를 생성한다:
+
+1. `build-state.json`의 `phases` 에서 마지막 `completed` Phase까지만 보고
+2. 실패한 Phase의 에러 정보를 중심으로 문제 섹션 작성
+3. 미실행 Phase는 빌드 통계에 "미실행"으로 표시
+4. Circuit Breaker 발동 시 해당 Phase의 재시도 이력을 모두 기록
+
+```
+예: Phase 4에서 중단된 빌드
+├── Phase 0~3: 정상 기록
+├── Phase 4: 실패 원인 + 재시도 이력
+├── Phase 5~6: "미실행"
+└── 문제 섹션: Phase 4 실패를 유발한 에이전트/산출물 분석
+```
 
 ## 보고서 출력
 

@@ -4,6 +4,21 @@
 
 `.autobot/learnings.json` in the project's working directory.
 
+## Phase 이름 매핑
+
+`build-state.json`의 숫자 키를 `learnings.json`의 문자열 키로 변환:
+
+| build-state.json | learnings.json |
+|-------------------|---------------|
+| `"0"` | `preflight` |
+| `"1"` | `architecture` |
+| `"2"` | `ux_design` |
+| `"3"` | `scaffold` |
+| `"4"` | `parallel_coding` |
+| `"5"` | `quality` |
+| `"6"` | `deploy` |
+| `"7"` | `retrospective` |
+
 ## Schema
 
 ```json
@@ -20,12 +35,14 @@
       "ideaSummary": "소셜 피트니스 트래킹 앱",
       "success": true,
       "phases": {
+        "preflight": {"duration_sec": 10, "retries": 0},
         "architecture": {"duration_sec": 45, "retries": 0},
+        "ux_design": {"duration_sec": 120, "retries": 0},
         "scaffold": {"duration_sec": 30, "retries": 0},
-        "ui_build": {"duration_sec": 180, "retries": 0},
-        "data_build": {"duration_sec": 120, "retries": 0},
+        "parallel_coding": {"duration_sec": 180, "retries": 0},
         "quality": {"duration_sec": 90, "retries": 2},
-        "deploy": {"duration_sec": 300, "retries": 1}
+        "deploy": {"duration_sec": 300, "retries": 1},
+        "retrospective": {"duration_sec": 15, "retries": 0}
       },
       "errors": [
         {
@@ -36,7 +53,12 @@
           "recurring": true
         }
       ],
-      "notes": "TabView + NavigationStack pattern worked well for this app type"
+      "notes": "TabView + NavigationStack pattern worked well for this app type",
+      "cost": {
+        "total_tokens_estimate": 165000,
+        "models_used": ["opus", "sonnet"],
+        "total_duration_sec": 540
+      }
     }
   ],
   "patterns": {

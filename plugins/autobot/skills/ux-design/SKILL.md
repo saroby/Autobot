@@ -1,6 +1,6 @@
 ---
 name: autobot-ux-design
-description: Use when generating UX designs for an iOS app using Google Stitch. Defines the Stitch integration workflow, design prompt patterns, and design token extraction process for Phase 2.
+description: Use when generating UX mockup designs for an iOS app using Stitch MCP, extracting design tokens from generated screens, or creating design specifications for SwiftUI implementation. Also use when the Autobot build pipeline needs visual UI mockups before coding begins (Phase 2), or when Stitch integration fails and fallback design decisions are needed.
 ---
 
 # UX Design with Google Stitch
@@ -24,12 +24,19 @@ npx @_davideast/stitch-mcp doctor
 
 ### 환경 검증 (Phase 0에서 수행)
 
+두 가지 방법으로 Stitch 사용 가능 여부를 확인한다:
+
 ```bash
-# stitch-mcp 사용 가능 여부 확인
+# 방법 1: MCP 도구 존재 확인 (권장 — 도구 목록에 mcp__stitch__* 존재 여부)
+# 오케스트레이터가 MCP 도구 호출을 시도하여 확인
+
+# 방법 2: CLI 인증 확인
 npx @_davideast/stitch-mcp doctor 2>&1
 # 종료 코드 0 → stitch=true (Phase 2 실행)
 # 종료 코드 != 0 → stitch=false (Phase 2 fallback)
 ```
+
+MCP 도구(`mcp__stitch__check_antigravity_auth`)로 인증 상태를 확인할 수도 있다.
 
 ## Execution Strategy
 
@@ -43,10 +50,23 @@ if build-state.json.environment.stitch == true:
 else:
     → Phase 2를 fallback으로 마킹 (status: "fallback")
     → ⚠️ 경고: "Stitch MCP 미설치. UI는 architecture.md 기반으로 생성됩니다."
-    → ui-builder는 architecture.md만으로 UI 결정 (디자인 일관성 저하 가능)
+    → ui-builder는 architecture.md + fallback 디자인 원칙으로 UI 결정
 ```
 
-> **참고**: Stitch MCP가 설치된 환경에서의 Phase 2 실패는 재시도 후에도 해결되지 않으면 fallback으로 전환되지만, 이는 예외적 상황이다. 정상적인 빌드에서는 항상 Stitch 디자인이 생성되어야 한다.
+### Fallback 모드 디자인 원칙
+
+Stitch가 없을 때 ui-builder가 따라야 할 디자인 기준:
+
+| 항목 | Fallback 기준 |
+|------|--------------|
+| **색상** | iOS semantic colors만 사용 (`Color.primary`, `Color(.systemBackground)`, `Color.accentColor`) |
+| **타이포그래피** | Dynamic Type 기본 스타일만 사용 (`.largeTitle`, `.body`, `.caption`) |
+| **레이아웃** | Apple HIG 기본 여백 — `.padding()` (16pt), 스택 기본 spacing |
+| **컴포넌트** | 네이티브 SwiftUI 컴포넌트 우선 (`List`, `NavigationStack`, `TabView`, `.searchable()`) |
+| **글래스 효과** | `.glassEffect()`를 toolbar와 tab bar에만 적용 |
+| **다크모드** | semantic color 사용으로 자동 지원 확인 |
+
+fallback 모드에서는 커스텀 디자인 토큰 없이 iOS 시스템 기본값에 의존하므로, 시각적 일관성은 iOS 플랫폼 기본을 따르게 된다.
 
 ## Workflow
 
@@ -97,40 +117,37 @@ Interactive States:
 
 ### Step 3: Stitch 프로젝트 생성 및 화면 생성
 
-```bash
-# 사용 가능한 Stitch 도구 목록 확인
-npx @_davideast/stitch-mcp tool --list
+Stitch MCP 도구를 사용한다. 두 가지 호출 방식이 있으며, MCP 도구 직접 호출을 우선 사용한다:
 
-# Stitch 도구를 사용하여 앱 프로젝트 생성/화면 디자인 생성
-# (구체적 도구 이름은 stitch-mcp 버전의 --list 출력 참조)
-npx @_davideast/stitch-mcp tool <tool_name> -d '<json_params>'
+| 작업 | MCP 도구 (권장) | CLI fallback |
+|------|----------------|-------------|
+| 프로젝트 생성 | `mcp__stitch__create_project` | `npx @_davideast/stitch-mcp tool create_project -d '{...}'` |
+| 화면 일괄 생성 | `mcp__stitch__batch_generate_screens` | `npx @_davideast/stitch-mcp tool batch_generate_screens -d '{...}'` |
+| 화면 개별 생성 | `mcp__stitch__generate_screen_from_text` | `npx @_davideast/stitch-mcp tool generate_screen_from_text -d '{...}'` |
+| 화면 목록 | `mcp__stitch__list_screens` | `npx @_davideast/stitch-mcp tool list_screens -d '{...}'` |
+| 스크린샷 | `mcp__stitch__fetch_screen_image` | `npx @_davideast/stitch-mcp tool fetch_screen_image -d '{...}'` |
+| HTML/CSS | `mcp__stitch__fetch_screen_code` | `npx @_davideast/stitch-mcp tool fetch_screen_code -d '{...}'` |
 
-# 생성된 화면 목록 확인
-npx @_davideast/stitch-mcp screens -p <projectId>
-```
+**생성 순서:**
+
+a. `create_project`로 앱 이름의 Stitch 프로젝트 생성 → `projectId` 확보
+b. `batch_generate_screens`로 모든 화면을 한 번에 생성 (효율적)
+   - 실패 시 `generate_screen_from_text`로 화면별 개별 생성으로 전환
+c. `list_screens`로 생성된 화면 ID 목록 확인
 
 ### Step 4: 스크린샷 수집
 
-```bash
-# 각 화면의 스크린샷을 base64로 가져오기
-npx @_davideast/stitch-mcp tool get_screen_image -d '{
-  "projectId": "<projectId>",
-  "screenId": "<screenId>"
-}'
+각 화면에 대해 `fetch_screen_image`로 스크린샷 이미지를 가져와서 저장한다:
 
-# base64 → PNG 파일로 저장
+```bash
+# MCP 도구 결과의 base64 데이터를 PNG 파일로 저장
+mkdir -p .autobot/designs
 echo "<base64_data>" | base64 -d > .autobot/designs/<ScreenName>.png
 ```
 
 ### Step 5: Design Token 추출
 
-```bash
-# 화면의 HTML/CSS 코드 가져오기
-npx @_davideast/stitch-mcp tool get_screen_code -d '{
-  "projectId": "<projectId>",
-  "screenId": "<screenId>"
-}'
-```
+각 화면에 대해 `fetch_screen_code`로 HTML/CSS를 가져온다.
 
 HTML/CSS에서 추출할 디자인 토큰:
 - **Colors**: 배경색, 텍스트색, 강조색 → iOS semantic color로 매핑
@@ -149,6 +166,23 @@ HTML/CSS에서 추출할 디자인 토큰:
 | 화면별 UI 패턴 노트 | ui-builder가 참조할 구현 가이드 |
 | 디자인 토큰 매핑 | Stitch CSS → SwiftUI 속성 |
 | 네비게이션 흐름 | 화면 간 전환 시각화 |
+
+## Partial Screen Failure Recovery
+
+일부 화면 생성이 실패한 경우 전체를 실패 처리하지 않는다:
+
+1. **즉시 저장**: 성공한 화면의 스크린샷은 바로 `.autobot/designs/`에 저장
+2. **개별 재시도**: 실패한 화면은 `generate_screen_from_text`로 개별 재시도 (1회)
+3. **기록**: 최종 실패 화면은 `design-spec.md`의 `## Failed Screens` 섹션에 기록
+4. **판정**: 부분 성공 = 성공. 전체 화면의 절반 이상 생성되면 Phase 2는 `completed`
+   - ui-builder가 누락 화면은 architecture.md 기반으로 구현
+   - 절반 미만이면 fallback 전환
+
+```
+총 화면 5개:
+├── 3개 이상 성공 → Phase 2 completed (design-spec.md에 실패 화면 표시)
+└── 2개 이하 성공 → fallback 전환 (Stitch 디자인 생성 실패로 판단)
+```
 
 ## iOS Design Token Mapping
 

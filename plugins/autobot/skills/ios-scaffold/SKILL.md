@@ -1,6 +1,6 @@
 ---
 name: autobot-ios-scaffold
-description: Use when creating a new Xcode project from scratch, setting up iOS 26+ project structure, configuring targets and schemes, or when the "/autobot:build" command needs to scaffold a project.
+description: Use when creating a new Xcode project from scratch, setting up iOS 26+ project structure, configuring targets and schemes, or when the Autobot build pipeline needs project scaffolding (Phase 3). Also use when xcodegen or pbxproj generation fails, or when troubleshooting scaffold issues.
 ---
 
 # iOS Project Scaffolding
@@ -45,6 +45,14 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
   --project-dir "." \
   --deployment-target "26.0"
 
+# backend_required == true일 때 --backend 플래그 추가:
+bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
+  --name "AppName" \
+  --bundle-id "com.saroby.appname" \
+  --project-dir "." \
+  --deployment-target "26.0" \
+  --backend
+
 # 독립 실행 (새 프로젝트 디렉토리를 자동 생성):
 bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
   --name "AppName" \
@@ -52,7 +60,27 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
   --deployment-target "26.0"
 ```
 
-`--project-dir .`를 전달하면 현재 디렉토리를 프로젝트 루트로 사용하고, `AppName/` 서브디렉토리를 소스 그룹으로 생성한다. 생략하면 `AppName/` 디렉토리를 새로 만들어 그 안에 `AppName/AppName/` 소스 구조를 생성한다.
+`--project-dir` 유무에 따른 디렉토리 구조 차이:
+
+```
+# --project-dir . (Autobot 빌드 — Phase 0에서 이미 프로젝트 디렉토리 생성)
+현재디렉토리/              ← 프로젝트 루트
+├── AppName.xcodeproj/
+├── AppName/              ← 소스 그룹
+│   ├── App/
+│   ├── Assets.xcassets/
+│   └── ...
+└── AppNameTests/
+
+# --project-dir 생략 (독립 실행 — 새 프로젝트)
+현재디렉토리/
+└── AppName/              ← 프로젝트 루트
+    ├── AppName.xcodeproj/
+    ├── AppName/          ← 소스 그룹
+    │   ├── App/
+    │   └── ...
+    └── AppNameTests/
+```
 
 ## Project Configuration Essentials
 
@@ -93,6 +121,18 @@ architecture.md에 `Backend Requirements: Required: true`가 있으면 추가로
 3. 빌드 설정에 xcconfig 참조 + `API_BASE_URL` Info.plist 키 추가
 
 이 작업은 Phase 3에서 scaffold 시 수행한다. backend-engineer가 root `.gitignore`를 수정할 필요가 없도록 미리 준비한다.
+
+## Troubleshooting
+
+| 증상 | 원인 | 해결 |
+|------|------|------|
+| "python3: command not found" | pbxproj fallback에 Python 3.8+ 필요 | `python3 --version` 확인. Homebrew: `brew install python3` |
+| "xcodegen generate failed" | project.yml 문법 오류 | `project.yml` 삭제 후 pbxproj fallback으로 재시도 |
+| "Permission denied: create-xcode-project.sh" | 스크립트 실행 권한 없음 | `chmod +x` 또는 `bash` 명시 호출로 해결 |
+| pbxproj 생성됐지만 Xcode에서 열리지 않음 | objectVersion 불일치 | Xcode 16.3+ 필요 (`objectVersion = 77`). Xcode 버전 확인: `xcodebuild -version` |
+| "The file couldn't be opened" | 잘못된 JSON in pbxproj | `generate-pbxproj.py`의 AppName에 특수문자/공백 포함 여부 확인 |
+| Asset catalog 경고 | AppIcon이 비어있음 | 정상 — 아이콘 없이도 빌드 가능. Phase 5에서 1024x1024 이미지 추가 가능 |
+| `.entitlements` 파일 없다는 에러 | Scaffold가 빈 entitlements 생성 실패 | Gate 3→4에서 잡힘. `touch <AppName>/<AppName>.entitlements` 후 재시도 |
 
 ## Additional Resources
 

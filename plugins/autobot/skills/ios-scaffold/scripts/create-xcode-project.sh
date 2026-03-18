@@ -9,6 +9,7 @@ BUNDLE_ID=""
 TEAM_ID="AUTO"
 DEPLOYMENT_TARGET="26.0"
 PROJECT_DIR_OVERRIDE=""
+BACKEND_REQUIRED="false"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -17,6 +18,7 @@ while [[ $# -gt 0 ]]; do
     --team-id) TEAM_ID="$2"; shift 2;;
     --deployment-target) DEPLOYMENT_TARGET="$2"; shift 2;;
     --project-dir) PROJECT_DIR_OVERRIDE="$2"; shift 2;;
+    --backend) BACKEND_REQUIRED="true"; shift;;
     *) echo "Unknown option: $1"; exit 1;;
   esac
 done
@@ -98,6 +100,30 @@ fastlane_api_key.json
 .env
 GITIGNORE_EOF
 
+# ── Backend-aware scaffold (--backend 플래그가 전달된 경우) ──
+if [ "$BACKEND_REQUIRED" = "true" ]; then
+  # .gitignore에 backend/.env 추가
+  echo "backend/.env" >> "${PROJECT_DIR}/.gitignore"
+
+  # Debug.xcconfig (프로젝트 루트에 생성 — 소스 디렉토리에 넣으면 xcodegen folder reference에 포함됨)
+  if [ ! -f "${PROJECT_DIR}/Debug.xcconfig" ]; then
+    cat > "${PROJECT_DIR}/Debug.xcconfig" << 'XCCONFIG_EOF'
+// Debug configuration
+API_BASE_URL = http:/$()/localhost:8080
+XCCONFIG_EOF
+    echo "Generated: ${PROJECT_DIR}/Debug.xcconfig"
+  fi
+
+  # Release.xcconfig
+  if [ ! -f "${PROJECT_DIR}/Release.xcconfig" ]; then
+    cat > "${PROJECT_DIR}/Release.xcconfig" << 'XCCONFIG_EOF'
+// Release configuration
+API_BASE_URL = https:/$()/$(PRODUCTION_HOST)
+XCCONFIG_EOF
+    echo "Generated: ${PROJECT_DIR}/Release.xcconfig"
+  fi
+fi
+
 # Create directory structure
 mkdir -p "${SOURCES_DIR}/App"
 mkdir -p "${SOURCES_DIR}/Models"
@@ -146,7 +172,8 @@ cat > "${SOURCES_DIR}/Assets.xcassets/AppIcon.appiconset/Contents.json" << 'ICON
 ICON_EOF
 
 # ── PrivacyInfo.xcprivacy (Required for App Store since 2024) ──
-# Minimal privacy manifest — architect 에이전트가 필요한 API 카테고리를 추가함
+# 이미 존재하면 건너뛰기 — Phase 5 QE가 추가한 API 카테고리 보호
+if [ ! -f "${SOURCES_DIR}/PrivacyInfo.xcprivacy" ]; then
 cat > "${SOURCES_DIR}/PrivacyInfo.xcprivacy" << 'PRIVACY_EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -172,8 +199,10 @@ cat > "${SOURCES_DIR}/PrivacyInfo.xcprivacy" << 'PRIVACY_EOF'
 </dict>
 </plist>
 PRIVACY_EOF
+fi
 
 # ── Entitlements (기본 틀 — architect가 기능별로 추가) ──
+if [ ! -f "${SOURCES_DIR}/${APP_NAME}.entitlements" ]; then
 cat > "${SOURCES_DIR}/${APP_NAME}.entitlements" << 'ENT_EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -181,8 +210,10 @@ cat > "${SOURCES_DIR}/${APP_NAME}.entitlements" << 'ENT_EOF'
 <dict/>
 </plist>
 ENT_EOF
+fi
 
-# Create App Entry Point
+# Create App Entry Point (이미 존재하면 건너뛰기 — 에이전트 산출물 보호)
+if [ ! -f "${SOURCES_DIR}/App/${APP_NAME}App.swift" ]; then
 cat > "${SOURCES_DIR}/App/${APP_NAME}App.swift" << SWIFT_EOF
 import SwiftUI
 import SwiftData
@@ -196,8 +227,10 @@ struct ${APP_NAME}App: App {
     }
 }
 SWIFT_EOF
+fi
 
-# Create ContentView placeholder
+# Create ContentView placeholder (이미 존재하면 건너뛰기)
+if [ ! -f "${SOURCES_DIR}/Views/Screens/ContentView.swift" ]; then
 cat > "${SOURCES_DIR}/Views/Screens/ContentView.swift" << SWIFT_EOF
 import SwiftUI
 
@@ -215,8 +248,10 @@ struct ContentView: View {
     ContentView()
 }
 SWIFT_EOF
+fi
 
-# Create Test file
+# Create Test file (이미 존재하면 건너뛰기)
+if [ ! -f "${TESTS_DIR}/${APP_NAME}Tests.swift" ]; then
 cat > "${TESTS_DIR}/${APP_NAME}Tests.swift" << SWIFT_EOF
 import Testing
 @testable import ${APP_NAME}
@@ -229,6 +264,7 @@ struct ${APP_NAME}Tests {
     }
 }
 SWIFT_EOF
+fi
 
 # Check if xcodegen is available for project generation
 if command -v xcodegen &>/dev/null; then
@@ -275,7 +311,7 @@ targets:
       - target: ${APP_NAME}
 YAML_EOF
 
-  cd "${PROJECT_DIR}" && xcodegen generate && cd ..
+  (cd "${PROJECT_DIR}" && xcodegen generate)
   echo "Xcode project generated with xcodegen"
 else
   # Fallback: generate .xcodeproj using Python pbxproj generator

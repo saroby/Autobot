@@ -6,6 +6,14 @@ set -euo pipefail
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 
+# ── Step 0: .env.example 자동 복사 ──
+if [ ! -f "${PROJECT_DIR}/.env" ] && [ ! -f "${PROJECT_DIR}/.env.example" ]; then
+  TEMPLATE="${PLUGIN_ROOT}/.env.example"
+  if [ -n "$PLUGIN_ROOT" ] && [ -f "$TEMPLATE" ]; then
+    cp "$TEMPLATE" "${PROJECT_DIR}/.env.example"
+  fi
+fi
+
 # ── Step 1: .env 파일 탐색 ──
 ENV_FILE=""
 if [ -f "${PROJECT_DIR}/.env" ]; then
@@ -34,14 +42,14 @@ LEARNINGS_SUMMARY=""
 
 if [ -f "$LEARNINGS_FILE" ]; then
   LEARNINGS_SUMMARY=$(python3 -c "
-import json
-d=json.load(open('$LEARNINGS_FILE'))
+import json, sys
+d=json.load(open(sys.argv[1]))
 total=d.get('totalBuilds', 0)
 rate=d.get('successRate', 0)
 errors=d.get('patterns',{}).get('common_build_errors',[])
 top_errors='; '.join([f\"{e['pattern']} -> {e['fix']}\" for e in errors[:3]])
 print(f'total_builds={total}, success_rate={rate*100:.0f}%, top_errors=[{top_errors}]')
-" 2>/dev/null || echo "parse_error")
+" "$LEARNINGS_FILE" 2>/dev/null || echo "parse_error")
 else
   LEARNINGS_SUMMARY="no_history"
 fi
@@ -51,8 +59,8 @@ BUILD_STATE=""
 STATE_FILE="${PROJECT_DIR}/.autobot/build-state.json"
 if [ -f "$STATE_FILE" ]; then
   BUILD_STATE=$(python3 -c "
-import json
-d=json.load(open('$STATE_FILE'))
+import json, sys
+d=json.load(open(sys.argv[1]))
 app=d.get('appName','?')
 phases=d.get('phases',{})
 failed=[k for k,v in phases.items() if v.get('status')=='failed']
@@ -63,7 +71,7 @@ elif last_ok < 6:
     print(f'resumable=true, app={app}, next_phase={last_ok+1}, last_completed={last_ok}')
 else:
     print(f'resumable=false, app={app}, all_completed=true')
-" 2>/dev/null || echo "parse_error")
+" "$STATE_FILE" 2>/dev/null || echo "parse_error")
 else
   BUILD_STATE="no_state"
 fi

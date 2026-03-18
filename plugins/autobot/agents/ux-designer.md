@@ -18,15 +18,16 @@ Read the architecture document to understand app screens and navigation, then us
    - Navigation structure (tabs, stacks, modals)
    - Feature list with priorities
 
-2. **Discover Stitch Tools**: List available Stitch MCP tools:
-   ```bash
-   npx @_davideast/stitch-mcp tool --list
-   ```
-   Use the output to determine which tools are available for project creation, screen generation, and image retrieval.
+2. **Create Stitch Project**: `mcp__stitch__create_project`로 앱 프로젝트를 생성한다.
+   - MCP 도구를 사용할 수 없으면 CLI fallback: `npx @_davideast/stitch-mcp tool create_project -d '{...}'`
+   - 생성된 `projectId`를 이후 모든 단계에서 사용
 
-3. **Generate Designs via Stitch**: For each screen in the architecture:
+3. **Generate Designs via Stitch**: 모든 화면을 생성한다.
 
-   a. Craft a mobile-focused design prompt:
+   a. 먼저 `mcp__stitch__batch_generate_screens`로 일괄 생성을 시도한다 (더 효율적).
+      실패 시 `mcp__stitch__generate_screen_from_text`로 화면별 개별 생성으로 전환.
+
+   b. 각 화면의 디자인 프롬프트:
    ```
    iOS mobile app - [App Display Name]
    Screen: [ScreenName]
@@ -38,28 +39,18 @@ Read the architecture document to understand app screens and navigation, then us
    Color: iOS system colors, light/dark compatible
    ```
 
-   b. Use Stitch tools to generate the screen design
+   c. `mcp__stitch__list_screens`로 생성된 화면 ID 목록 확인
 
-   c. Retrieve screenshot:
-   ```bash
-   npx @_davideast/stitch-mcp tool get_screen_image -d '{
-     "projectId": "<projectId>",
-     "screenId": "<screenId>"
-   }'
-   ```
+   d. 각 화면의 스크린샷 저장:
+      - `mcp__stitch__fetch_screen_image`로 이미지 데이터 가져오기
+      - base64 → PNG 변환: `echo "<base64_data>" | base64 -d > .autobot/designs/<ScreenName>.png`
 
-   d. Save to `.autobot/designs/<ScreenName>.png`:
-   ```bash
-   echo "<base64_data>" | base64 -d > .autobot/designs/<ScreenName>.png
-   ```
+   e. **부분 실패 처리**: 일부 화면 생성이 실패하면:
+      - 성공한 화면은 즉시 저장
+      - 실패한 화면은 `generate_screen_from_text`로 개별 재시도 (1회)
+      - 최종 실패 화면은 design-spec.md에 기록 (ui-builder가 architecture.md 기반으로 구현)
 
-4. **Extract Design Tokens**: For each screen, retrieve HTML/CSS:
-   ```bash
-   npx @_davideast/stitch-mcp tool get_screen_code -d '{
-     "projectId": "<projectId>",
-     "screenId": "<screenId>"
-   }'
-   ```
+4. **Extract Design Tokens**: 각 화면에 대해 `mcp__stitch__fetch_screen_code`로 HTML/CSS를 가져온다.
    Map web design tokens to iOS equivalents:
    - `font-size: 34px; font-weight: bold` → `.font(.largeTitle)`
    - `font-size: 17px` → `.font(.body)`
@@ -119,7 +110,8 @@ Read the architecture document to understand app screens and navigation, then us
 - Do NOT create or modify any Swift source files
 - Save all outputs to `.autobot/designs/` and `.autobot/design-spec.md`
 - If Stitch is not authenticated, exit with setup instructions: `npx @_davideast/stitch-mcp init`
-- If a screen generation fails, log the failure and continue with remaining screens
+- If a screen generation fails, retry once with `generate_screen_from_text`, then log the failure and continue
+- If more than half the screens fail, report Phase 2 as needing fallback
 - Do NOT ask the user any questions — make all design decisions autonomously
 - Prefer iOS-native design patterns over web patterns when interpreting Stitch output
 - All screens should be designed for iPhone portrait as the primary layout

@@ -32,14 +32,14 @@ detect_plugin() {
   local settings="${HOME}/.claude/settings.json"
   if [ -f "$settings" ]; then
     if python3 -c "
-import json
+import json, sys
 try:
-    d = json.load(open('$settings'))
+    d = json.load(open(sys.argv[1]))
     enabled = d.get('enabledPlugins', {})
-    print('true' if any('$pattern' in str(k) and v for k, v in enabled.items()) else 'false')
+    print('true' if any(sys.argv[2] in str(k) and v for k, v in enabled.items()) else 'false')
 except:
     print('false')
-" 2>/dev/null | grep -q "true"; then
+" "$settings" "$pattern" 2>/dev/null | grep -q "true"; then
       echo "true"
       return
     fi

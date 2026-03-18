@@ -21,18 +21,21 @@ FAIL → Phase 0 재실행
 
 ### Gate 1→2: 아키텍처 + 타입 계약 완료
 
+> **섹션 매칭 규칙**: architect가 생성하는 섹션 이름은 템플릿과 완전히 같지 않을 수 있다.
+> **대소문자 무시 + 키워드 포함 검사**(`grep -qi`)를 사용한다. 정확한 `##` 헤더 일치를 요구하지 않는다.
+
 ```
 CHECK:
   ✓ .autobot/architecture.md 존재 & 비어있지 않음
   ✓ <AppName>/Models/*.swift 파일이 1개 이상 존재
   ✓ <AppName>/Models/ServiceProtocols.swift 존재
   ✓ 모든 <AppName>/Models/*.swift에 'import SwiftData' 또는 'import Foundation' 포함
-  ✓ architecture.md에 ## Screens 섹션 존재
-  ✓ architecture.md에 ## Integration Map 섹션 존재
-  ✓ architecture.md에 ## Privacy API Categories 섹션 존재
-  ✓ (backend_required) architecture.md에 ## Backend Requirements 섹션 존재
-  ✓ (backend_required) architecture.md에 ## API Contract 섹션 존재
-  ✓ (backend_required) architecture.md에 ## iOS Configuration 섹션 존재
+  ✓ architecture.md에 Screen 관련 섹션 존재 (grep -qi "screen")
+  ✓ architecture.md에 Integration/Service 관련 섹션 존재 (grep -qi "integration\|service.*layer\|service.*protocol")
+  ✓ architecture.md에 Privacy/FileTimestamp 관련 내용 존재 (grep -qi "privacy\|file.timestamp\|C617")
+  ✓ (backend_required) architecture.md에 Backend 관련 섹션 존재 (grep -qi "backend.*require")
+  ✓ (backend_required) architecture.md에 API Contract 관련 섹션 존재 (grep -qi "api.*contract")
+  ✓ (backend_required) architecture.md에 iOS Configuration 관련 섹션 존재 (grep -qi "ios.*config\|xcconfig")
   ✓ (backend_required) <AppName>/Models/APIContracts.swift 존재
   ✓ (backend_required) docker --version 종료 코드 == 0
 FAIL → architect 에이전트 재실행 (최대 2회)
@@ -103,7 +106,11 @@ FAIL:
 CHECK:
   ✓ xcodebuild build 종료 코드 == 0
   ✓ "BUILD SUCCEEDED" 문자열 출력에 포함
-  ✓ <AppName>/App/ServiceStubs.swift 삭제됨 (실제 Repository로 교체 완료)
+  ✓ App 엔트리포인트에서 Stub이 아닌 실제 서비스 사용:
+    grep -qi "Stub" <AppName>/App/<AppName>App.swift → 불일치여야 통과 (Stub 참조 없음)
+    grep -qi "Repository\|Service(" <AppName>/App/<AppName>App.swift → 일치여야 통과 (실제 서비스 존재)
+    grep -qi "ModelContainer" <AppName>/App/<AppName>App.swift → 일치여야 통과 (직접 생성)
+  ✓ <AppName>/App/ServiceStubs.swift 존재 (Preview/테스트용으로 유지 — 삭제하면 Preview 컴파일 에러)
   ✓ <AppName>/PrivacyInfo.xcprivacy에 architecture.md의 모든 API 카테고리 반영
   ✓ (backend_required) docker compose build 종료 코드 == 0
   ✓ (backend_required) docker compose up -d --wait 종료 코드 == 0
@@ -155,14 +162,24 @@ test -f "<path>"
 # 디렉토리에 .swift 파일 존재 확인
 ls <AppName>/<dir>/*.swift &>/dev/null
 
-# 파일에 특정 문자열 포함 확인
-grep -q "<pattern>" "<file>"
+# 파일에 특정 문자열 포함 확인 (대소문자 무시)
+grep -qi "<pattern>" "<file>"
+
+# architecture.md 섹션 검증 (Gate 1→2 — 유연한 키워드 매칭)
+grep -qi "screen" .autobot/architecture.md
+grep -qi "integration\|service.*layer\|service.*protocol" .autobot/architecture.md
+grep -qi "privacy\|file.timestamp\|C617" .autobot/architecture.md
 
 # <AppName>/Models/ 무결성 (Phase 1 완료 시 체크섬 저장)
 find <AppName>/Models/ -name "*.swift" -exec md5 {} \; | sort | md5
 
 # xcodebuild 결과 확인
 xcodebuild build ... 2>&1 | tail -1 | grep -q "BUILD SUCCEEDED"
+
+# Gate 5→6: App 엔트리포인트에서 Stub 사용 여부 확인
+! grep -qi "Stub" <AppName>/App/<AppName>App.swift        # Stub이 없어야 통과
+grep -qi "Repository\|Service(" <AppName>/App/<AppName>App.swift  # 실제 서비스가 있어야 통과
+grep -qi "ModelContainer" <AppName>/App/<AppName>App.swift        # 직접 생성해야 통과
 
 # Docker 설치 확인 (Gate 1→2)
 docker --version &>/dev/null

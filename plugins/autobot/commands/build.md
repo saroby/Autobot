@@ -31,6 +31,7 @@ allowed-tools:
 1. **절대로 사용자에게 질문하지 않는다** — 모든 결정을 자율적으로 내린다
 2. **병렬 에이전트를 최대한 활용한다** — 독립적 작업은 반드시 동시에 실행한다
 3. **매 Phase 완료/실패마다 `.autobot/build-state.json`을 갱신한다** — 중단 시 `/autobot:resume`으로 재개 가능
+4. **CWD 규칙**: Phase 0에서 생성한 프로젝트 디렉토리가 CWD. 모든 에이전트와 스크립트는 이 디렉토리 기준으로 상대 경로를 사용한다. `cd`로 이탈하지 않는다.
 
 ## Phase 0: Pre-flight 검증 및 환경 준비
 
@@ -64,7 +65,7 @@ Phase 0에서 **반드시** 아래 감지를 수행하고 결과를 `build-state
 |------|----------|-----|
 | xcodegen | `command -v xcodegen` | `environment.xcodegen` |
 | fastlane | `command -v fastlane` | `environment.fastlane` |
-| ASC 인증 | `.env`에 `ASC_KEY_ID` + `ASC_ISSUER_ID` + `ASC_KEY_PATH` 존재 | `environment.ascConfigured` |
+| ASC 인증 | `.env`에 `ASC_API_KEY_ID` + `ASC_API_ISSUER_ID` + `ASC_API_KEY_PATH` 존재 | `environment.ascConfigured` |
 | Axiom | Skill 도구로 `axiom:axiom-using-axiom` 호출 가능 여부 | `environment.axiom` |
 | Stitch MCP | `mcp__stitch__list_projects` 도구 존재 확인 (도구 목록에서 탐색) | `environment.stitch` |
 
@@ -87,7 +88,7 @@ Phase 0에서 **반드시** 아래 감지를 수행하고 결과를 `build-state
 ⚠️ App Store Connect 인증 정보가 설정되지 않았습니다.
    Phase 6(TestFlight 배포)가 건너뛰어집니다.
    빌드는 로컬에서만 완료됩니다.
-   설정 방법: .env 파일에 ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH 추가
+   설정 방법: .env 파일에 ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH 추가
 ```
 
 ### 앱 이름 결정
@@ -200,11 +201,20 @@ Stitch MCP가 설치되지 않았거나 재시도 후에도 실패한 경우:
 ios-scaffold 스킬 참조하여 직접 수행. **반드시 `--project-dir .`를 전달**하여 Phase 0에서 생성한 프로젝트 디렉토리를 재사용한다:
 
 ```bash
+# 기본
 bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
   --name "<AppName>" \
   --bundle-id "<BundleId>" \
   --project-dir "." \
   --deployment-target "26.0"
+
+# backend_required == true일 때 --backend 플래그 추가:
+bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
+  --name "<AppName>" \
+  --bundle-id "<BundleId>" \
+  --project-dir "." \
+  --deployment-target "26.0" \
+  --backend
 ```
 
 이렇게 하면 현재 디렉토리(`.`)가 프로젝트 루트, `./<AppName>/`이 소스 디렉토리가 된다.
@@ -212,7 +222,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
 1. Xcode 프로젝트 생성 (xcodegen 우선, fallback: pbxproj)
 2. PrivacyInfo.xcprivacy, .entitlements, .gitignore 생성
 3. architecture.md의 Permissions/Dependencies 반영
-4. (backend_required) xcconfig + .gitignore backend/.env 추가
+4. (`--backend`) xcconfig + .gitignore backend/.env 추가
 
 **→ Gate 3→4**: .xcodeproj + 필수 파일 존재 확인.
 
@@ -234,9 +244,9 @@ backend-engineer는 `build-state.json.backend_required == true`일 때만 디스
 
 quality-engineer 에이전트를 Agent 도구로 디스패치. **직접 수행하지 않는다.**
 
-수행 순서: 파일 등록 → stub→Repository 교체 → Platform Requirements → 빌드 검증(최대 5회) → 테스트 → Docker 검증(해당 시)
+수행 순서: 파일 등록 → App 엔트리포인트에 실제 Repository 주입 (ServiceStubs.swift는 Preview용으로 보존) → SPM Dependencies → Platform Requirements → 빌드 검증(최대 5회) → 테스트 → Docker 검증(해당 시)
 
-**→ Gate 5→6**: BUILD SUCCEEDED + ServiceStubs.swift 삭제 완료. 실패 시 재실행 (최대 2회).
+**→ Gate 5→6**: BUILD SUCCEEDED + App에서 실제 Repository 사용 + ServiceStubs.swift 존재(Preview용). 실패 시 재실행 (최대 2회).
 
 ## Phase 6: TestFlight 배포
 

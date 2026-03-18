@@ -107,14 +107,16 @@ Write `.autobot/architecture.md` following the **정형 템플릿** (orchestrato
 
 **모든 섹션이 존재해야 Gate 1→2를 통과한다.** 해당 없는 섹션은 "N/A"로 표시.
 
-필수 섹션:
+> **⚠️ 섹션 이름은 아래의 정확한 `##` 헤더를 사용하는 것을 강력히 권장한다.** Gate 검증은 유연한 키워드 매칭을 사용하지만, 이름이 크게 다르면 실패할 수 있다.
+
+필수 섹션 (정확한 `##` 헤더):
 - `## Overview` — 핵심 가치, 대상 사용자
 - `## Features` — 기능 목록 (P0/P1/P2 우선순위)
 - `## Screens` — 화면 목록, 탭/네비게이션 구조
 - `## Navigation Structure` — 화면 계층 트리
-- `## Data Models` — 관계 개요 (상세는 Models/*.swift)
+- `## Data Models` — 관계 개요 (상세는 `<AppName>/Models/*.swift`)
 - `## Integration Map` — ViewModel ↔ ServiceProtocol 매핑
-- `## Privacy API Categories` — PrivacyInfo.xcprivacy에 넣을 항목
+- `## Privacy API Categories` — PrivacyInfo.xcprivacy에 넣을 항목 (SwiftData 사용 시 FileTimestamp 필수 포함)
 - `## Required Permissions` — Info.plist 권한 키 + 한국어 설명
 - `## Entitlements` — 필요한 capability
 - `## Dependencies` — SPM 패키지 (없으면 N/A)
@@ -278,7 +280,9 @@ protocol ItemServiceProtocol {
 | NSPrivacyAccessedAPICategoryUserDefaults | CA92.1 | 앱 설정 저장 |
 ```
 
-기본 제공: `FileTimestamp` (SwiftData 사용 시 필수). 추가 API는 기능에 따라 결정.
+> **필수 규칙**: SwiftData를 사용하는 앱은 `FileTimestamp` (C617.1)를 **반드시** 포함해야 한다. 이 항목을 빠뜨리면 App Store에서 리젝된다.
+> 이 섹션을 "N/A"로 표시하지 않는다 — 최소한 FileTimestamp는 항상 포함한다.
+> 추가 API는 기능에 따라 결정한다.
 
 #### Info.plist Permission Descriptions
 앱이 필요로 하는 시스템 권한과 사용자에게 보여줄 설명:

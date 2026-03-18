@@ -56,7 +56,7 @@ THEN: Read the architecture at [project]/.autobot/architecture.md for screen inv
 THEN: Read [project]/.autobot/design-spec.md for visual design references, design tokens, and UI pattern guidance from Stitch mockups. Check [project]/.autobot/designs/ for screen mockup images. This is the PRIMARY design input — if it exists, it takes precedence over architecture.md for visual decisions.
 IF design-spec.md DOES NOT EXIST (fallback mode): Proceed with architecture.md alone for UI decisions.
 Generate all SwiftUI views, view models, and the app entry point.
-ViewModels MUST depend on Service protocols (e.g. ItemServiceProtocol), NOT on ModelContext directly.
+ViewModels MUST depend on Service protocols using existential types (e.g. `any ItemServiceProtocol`), NOT on ModelContext directly.
 Create [sources]/App/ServiceStubs.swift with stub implementations for each protocol (return empty arrays, no-ops).
 Write files to [sources]/Views/, [sources]/ViewModels/, and [sources]/App/.
 In the App entry point, register ALL @Model types in .modelContainer(for:).

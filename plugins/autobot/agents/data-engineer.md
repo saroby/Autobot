@@ -38,7 +38,8 @@ Read `.autobot/architecture.md` and the **actual Swift Model files in `<AppName>
 `Models/ServiceProtocols.swift`에 정의된 프로토콜을 구현한다. ui-builder의 ViewModel이 이 프로토콜에 의존하므로, **정확한 메서드 시그니처**를 따라야 한다.
 
 ```swift
-@Observable @MainActor
+// Repository는 상태를 갖지 않으므로 @Observable 불필요. @MainActor만 사용.
+@MainActor
 final class ItemRepository: ItemServiceProtocol {
     private let modelContext: ModelContext
 
@@ -106,7 +107,7 @@ enum NetworkError: LocalizedError {
 **Backend-Aware Networking (if architecture.md has Backend Requirements):**
 
 ```swift
-@Observable @MainActor
+@MainActor
 final class APIClient {
     private let session: URLSession
     private let baseURL: URL
@@ -173,7 +174,7 @@ final class APIClient {
 AuthServiceProtocol과 LLMServiceProtocol의 Repository 구현체를 생성:
 
 ```swift
-@Observable @MainActor
+@MainActor
 final class AuthRepository: AuthServiceProtocol {
     private let apiClient: APIClient
     private(set) var currentUser: UserInfo?
