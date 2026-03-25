@@ -56,10 +56,11 @@ All generated Swift files MUST use the **identifier name** for module name, stru
 2. **Feature Definition**: Define 3-7 core features, prioritized by importance
 3. **Screen Inventory**: List all screens with their purpose and key UI elements
 4. **Navigation Map**: Define the navigation hierarchy (tabs, stacks, modals)
-5. **Data Model Design**: Define @Model classes with relationships
-6. **API Design**: If networking needed, define endpoints and response models
-7. **Backend Detection**: Determine if Docker backend is needed (OAuth/LLM)
-8. **File Structure**: Plan the Xcode project file organization
+5. **Design Direction**: Define the app's visual identity (see below)
+6. **Data Model Design**: Define @Model classes with relationships
+7. **API Design**: If networking needed, define endpoints and response models
+8. **Backend Detection**: Determine if Docker backend is needed (OAuth/LLM)
+9. **File Structure**: Plan the Xcode project file organization
 
 **Backend Detection Logic:**
 
@@ -99,6 +100,39 @@ All generated Swift files MUST use the **identifier name** for module name, stru
 
 4. **`backend_required == false`이면**: 위 3개 섹션을 모두 "N/A"로 기재
 
+**Design Direction Principles:**
+
+앱의 도메인과 사용자 기대에 맞는 시각적 아이덴티티를 설계한다. system blue(#007AFF)를 그대로 쓰면 템플릿처럼 보인다 — 반드시 앱 고유의 색상을 선택한다.
+
+도메인별 디자인 감각:
+- **Health/Fitness**: Energetic green (#34C759→더 따뜻하게), vibrant orange, .rounded, bold weights, 큰 숫자/stat 카드
+- **Finance/Business**: Deep navy, emerald/gold accent, .default, restrained weights, compact density
+- **Food/Recipe**: Warm terracotta/coral, sage green, .rounded or .serif, photo-forward 큰 카드
+- **Social/Communication**: Vibrant saturated palette, .rounded, medium density, avatar-centric
+- **Productivity/Todo**: Muted slate/teal, clean contrast, .default, compact rows, efficient density
+- **Education/Learning**: Friendly blue-teal, warm yellow accent, .rounded, card-based sections
+- **Meditation/Wellness**: Soft lavender/sage, muted earth tones, .default or .serif, spacious layout
+- **Music/Entertainment**: Dark surfaces, neon/vivid accent, .default, bold contrast, immersive
+- **Travel/Exploration**: Sky blue, sunset coral/amber, .default, hero images, inspiring typography
+
+색상 선택 규칙:
+1. Primary — 앱을 대표하는 단 하나의 색상. 사용자가 앱을 떠올리면 이 색이 연상되어야 한다
+2. Secondary — Primary를 보완. 동일 색상의 밝거나 어두운 변형, 또는 보색
+3. Accent — 작고 강한 강조: 배지, 알림 dot, 중요 수치
+4. Surface — 카드/elevated 영역의 배경. Primary를 극도로 희석한 틴트 (Light: alpha 5-8%, Dark: alpha 10-15%)
+5. Dark Mode — Light의 채도를 10-20% 낮추고 밝기를 5-10% 올린다. Surface는 더 어두운 gray 계열
+
+Typography 선택:
+- `.rounded` — 친근하고 부드러운 느낌 (건강, 교육, 소셜, 레시피)
+- `.default` — 전문적이고 깔끔한 느낌 (금융, 생산성, 여행, 음악)
+- `.serif` — 에디토리얼, 읽기 중심 (독서, 저널, 뉴스)
+
+Component 선택:
+- 사진이 핵심인 앱 → photo-forward 카드 (큰 이미지 + 하단 메타데이터)
+- 데이터/수치가 핵심 → stat 카드 (큰 숫자 + 작은 레이블 + 트렌드 아이콘)
+- 목록이 핵심 → icon-led row (tinted circle 아이콘 + 제목/부제목)
+- Empty states는 반드시 SF Symbol + 안내 메시지 + 액션 버튼으로 구성
+
 **Output: Four deliverables**
 
 ### Deliverable 1: Architecture Document
@@ -114,6 +148,7 @@ Write `.autobot/architecture.md` following the **정형 템플릿** (orchestrato
 - `## Features` — 기능 목록 (P0/P1/P2 우선순위)
 - `## Screens` — 화면 목록, 탭/네비게이션 구조
 - `## Navigation Structure` — 화면 계층 트리
+- `## Design Direction` — 색상 팔레트, 타이포그래피, 컴포넌트 스타일 (template 참조)
 - `## Data Models` — 관계 개요 (상세는 `<AppName>/Models/*.swift`)
 - `## Integration Map` — ViewModel ↔ ServiceProtocol 매핑
 - `## Privacy API Categories` — PrivacyInfo.xcprivacy에 넣을 항목 (SwiftData 사용 시 FileTimestamp 필수 포함)

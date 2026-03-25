@@ -51,6 +51,38 @@ TabView
     └── SettingsView
 ```
 
+## Design Direction
+
+### App Personality
+[3-5 adjectives: e.g., "warm, organic, personal" or "bold, energetic, data-driven"]
+
+### Color Palette
+| Role | Name | Light | Dark | Usage |
+|------|------|-------|------|-------|
+| Primary | [color name] | #XXXXXX | #XXXXXX | Brand identity, CTAs, key highlights |
+| Secondary | [color name] | #XXXXXX | #XXXXXX | Supporting UI, section headers, tags |
+| Accent | [color name] | #XXXXXX | #XXXXXX | Badges, notifications, small emphasis |
+| Surface | [color name] | #XXXXXX | #XXXXXX | Card backgrounds, elevated surfaces |
+
+> Primary는 system blue(#007AFF)를 피한다 — 앱만의 고유 색상을 선택.
+> Dark Mode는 Light의 채도를 낮추거나 밝기를 조정한 변형.
+
+### Typography Style
+| Element | Font Design | Weight | 용도 |
+|---------|------------|--------|------|
+| Display | .rounded / .default / .serif | .bold | 화면 타이틀, 히어로 텍스트 |
+| Headline | [design] | .semibold | 섹션 헤더, 리스트 타이틀 |
+| Body | .default | .regular | 본문, 설명 텍스트 |
+
+### Component Patterns
+| Component | Style | 설명 |
+|-----------|-------|------|
+| Cards | [photo-forward / compact / stat] | [e.g., "큰 이미지 + 하단 캡션, 16pt radius, subtle shadow"] |
+| List Rows | [icon-led / content-led / minimal] | [e.g., "tinted circle 아이콘 + 제목/부제목 + 우측 메타데이터"] |
+| Buttons | [filled-capsule / outline / text] | [e.g., "Primary: filled capsule, Secondary: tinted outline"] |
+| Empty States | [icon+message / minimal] | [e.g., "SF Symbol + 안내 메시지 + 액션 버튼"] |
+| Section Headers | [bold / subtle / accented] | [e.g., "bold + primary underline"] |
+
 ## Data Models
 
 > 정확한 타입 정의는 `Models/*.swift` 파일 참조.
@@ -236,6 +268,7 @@ ProjectRoot/                      ← 프로젝트 루트 (git root)
 │   │   ├── ItemRepository.swift
 │   │   └── Networking/ (if applicable)
 │   ├── Utilities/
+│   │   ├── Theme.swift
 │   │   └── SampleData.swift
 │   ├── Assets.xcassets/
 │   ├── PrivacyInfo.xcprivacy

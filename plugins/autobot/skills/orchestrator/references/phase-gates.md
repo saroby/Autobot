@@ -167,6 +167,7 @@ grep -qi "<pattern>" "<file>"
 
 # architecture.md 섹션 검증 (Gate 1→2 — 유연한 키워드 매칭)
 grep -qi "screen" .autobot/architecture.md
+grep -qi "design.*direction\|color.*palette\|palette.*role" .autobot/architecture.md
 grep -qi "integration\|service.*layer\|service.*protocol" .autobot/architecture.md
 grep -qi "privacy\|file.timestamp\|C617" .autobot/architecture.md
 

@@ -26,7 +26,76 @@ Read `.autobot/architecture.md` and the **actual Swift Model files in `<AppName>
    이 파일은 Phase 2 (Stitch MCP)에서 생성되며, 존재할 경우 architecture.md보다 시각적 결정에서 우선한다.
    **Fallback**: `design-spec.md`가 존재하지 않으면 (Stitch 미설치 또는 실패) architecture.md만으로 UI를 결정한다. 이 경우 디자인 일관성이 낮아질 수 있다.
 4. **Read Model Files**: Read ALL `.swift` files in `<AppName>/Models/` to learn exact type names, properties, and initializers
-5. **Create App Entry Point**: `<AppName>/App/[AppName]App.swift` with @main, WindowGroup, `.modelContainer(for:)` listing ALL @Model types from `<AppName>/Models/`. App에서 Service 프로토콜의 **stub 구현체**를 생성하여 ViewModel에 주입 (data-engineer가 나중에 실제 구현체로 교체):
+5. **Generate Theme (Design Direction이 있을 때)**:
+   architecture.md의 `## Design Direction` 섹션을 읽고 아래를 생성한다:
+
+   a. **Asset Catalog 색상 세트** — 각 팔레트 색상에 대해 Light/Dark 변형 포함:
+   ```
+   <AppName>/Assets.xcassets/
+   ├── ThemePrimary.colorset/Contents.json
+   ├── ThemeSecondary.colorset/Contents.json
+   ├── ThemeAccent.colorset/Contents.json
+   └── ThemeSurface.colorset/Contents.json
+   ```
+   색상 세트 JSON 형식:
+   ```json
+   {
+     "colors": [
+       {
+         "idiom": "universal",
+         "color": { "color-space": "srgb", "components": { "red": "0.XX", "green": "0.XX", "blue": "0.XX", "alpha": "1.0" } }
+       },
+       {
+         "idiom": "universal",
+         "appearances": [{ "appearance": "luminosity", "value": "dark" }],
+         "color": { "color-space": "srgb", "components": { "red": "0.XX", "green": "0.XX", "blue": "0.XX", "alpha": "1.0" } }
+       }
+     ],
+     "info": { "version": 1, "author": "xcode" }
+   }
+   ```
+   hex를 RGB 0.0-1.0으로 변환: `0xFF` → `1.000`, `0x80` → `0.502` 등.
+   AccentColor.colorset도 Primary 색상으로 덮어쓴다.
+
+   b. **`<AppName>/Utilities/Theme.swift`** — 디자인 토큰 중앙 정의:
+   ```swift
+   import SwiftUI
+
+   enum Theme {
+       // MARK: - Colors (Asset Catalog 기반, Light/Dark 자동 전환)
+       static let primary = Color("ThemePrimary")
+       static let secondary = Color("ThemeSecondary")
+       static let accent = Color("ThemeAccent")
+       static let surface = Color("ThemeSurface")
+
+       // MARK: - Typography (Design Direction에서 결정)
+       static func display(_ style: Font.TextStyle = .largeTitle) -> Font {
+           .system(style, design: .rounded, weight: .bold)  // font design은 Design Direction 참조
+       }
+       static func headline(_ style: Font.TextStyle = .headline) -> Font {
+           .system(style, design: .rounded, weight: .semibold)
+       }
+       static func body(_ style: Font.TextStyle = .body) -> Font {
+           .system(style, design: .default, weight: .regular)
+       }
+
+       // MARK: - Layout
+       static let cornerRadius: CGFloat = 16
+       static let cardPadding: CGFloat = 16
+       static let sectionSpacing: CGFloat = 24
+       static let itemSpacing: CGFloat = 12
+   }
+   ```
+
+   c. **재사용 컴포넌트** — Component Patterns에 따라 `<AppName>/Views/Components/`에 생성:
+   - `ThemedCard.swift` — Surface 배경 + cornerRadius + shadow 조합의 카드
+   - `ThemedSectionHeader.swift` — Primary 색상 강조가 있는 섹션 헤더
+   - `EmptyStateView.swift` — SF Symbol + 메시지 + 액션 버튼 패턴
+   - 기타 Component Patterns에 명시된 스타일
+
+   **Design Direction이 없으면** (Fallback): 이 단계를 건너뛰고 기존 semantic colors 방식으로 진행.
+
+6. **Create App Entry Point**: `<AppName>/App/[AppName]App.swift` with @main, WindowGroup, `.modelContainer(for:)` listing ALL @Model types from `<AppName>/Models/`. App에서 Service 프로토콜의 **stub 구현체**를 생성하여 ViewModel에 주입 (data-engineer가 나중에 실제 구현체로 교체):
    ```swift
    // <AppName>/App/ServiceStubs.swift — data-engineer의 실제 구현체가 올 때까지의 임시 구현
    // quality-engineer가 Phase 5에서 App 엔트리포인트를 실제 Repository로 교체 (이 파일은 Preview/테스트용으로 보존)
@@ -153,8 +222,10 @@ struct ContentView: View {
 - `String`, `URL` 등 `Transferable` 준수 타입은 `ShareLink`를 그대로 사용해도 된다.
 
 **Quality Standards:**
+- **Theme.swift가 존재하면 반드시 `Theme.*` 토큰을 사용한다** — `Color.accentColor`, `Color.primary` 등 시스템 기본값 직접 사용 금지. `Theme.primary`, `Theme.surface`, `Theme.display()` 등으로 대체
+- Cards, buttons, section headers는 Component Patterns에 정의된 스타일로 통일
+- EmptyStateView를 모든 빈 목록/빈 상태에 적용 — 빈 화면을 방치하지 않는다
 - Every view must support Dynamic Type
-- Use semantic colors (primary, secondary, etc.)
 - Include accessibility labels for interactive elements
 - No hardcoded sizes — use relative sizing
 - Preview providers for every screen

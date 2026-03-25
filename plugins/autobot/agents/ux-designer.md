@@ -27,17 +27,24 @@ Read the architecture document to understand app screens and navigation, then us
    a. 먼저 `mcp__stitch__batch_generate_screens`로 일괄 생성을 시도한다 (더 효율적).
       실패 시 `mcp__stitch__generate_screen_from_text`로 화면별 개별 생성으로 전환.
 
-   b. 각 화면의 디자인 프롬프트:
+   b. 각 화면의 디자인 프롬프트 — architecture.md의 `## Design Direction`을 반드시 반영:
    ```
    iOS mobile app - [App Display Name]
    Screen: [ScreenName]
    Purpose: [from architecture.md Screens table]
-   Style: Modern iOS with translucent glass materials, clean sans-serif typography, generous whitespace
+   Visual personality: [App Personality adjectives from Design Direction]
+   Primary color: [Primary hex from Color Palette] — use as main brand color, CTAs, key highlights
+   Secondary color: [Secondary hex] — supporting UI, headers
+   Accent color: [Accent hex] — badges, emphasis
+   Surface color: [Surface hex] — card backgrounds
+   Typography: [Font Design from Typography Style] (e.g., rounded for friendly, default for clean)
+   Component style: [from Component Patterns — card style, list row style, etc.]
+   Style: Modern iOS with translucent glass materials, generous whitespace
    Navigation: [Tab bar / Navigation bar / Modal sheet]
    Key Elements: [from architecture.md]
    Device: iPhone, portrait, safe area aware
-   Color: iOS system colors, light/dark compatible
    ```
+   Design Direction이 없으면 기존 fallback (iOS system colors, generic modern style)을 사용한다.
 
    c. `mcp__stitch__list_screens`로 생성된 화면 ID 목록 확인
 

@@ -30,14 +30,16 @@ Button("Action") { }
 
 ### Colors & Materials
 
-- Semantic colors 사용: `.primary`, `.secondary`, `.accent`
-- 하드코딩 컬러 금지
-- Dark Mode 자동 지원
+- **architect가 `## Design Direction`에서 정의한 커스텀 팔레트가 있으면 `Theme.*` 토큰을 사용** (Theme.primary, Theme.surface 등)
+- Theme이 없는 fallback에서만 시스템 semantic colors 사용: `.primary`, `.secondary`, `.accent`
+- 하드코딩 컬러(hex literal) 금지 — Asset Catalog 기반 `Color("name")` 사용
+- Dark Mode 자동 지원 (Asset Catalog Light/Dark 변형)
 
 ### Typography
 
 - Dynamic Type 필수 지원
 - 하드코딩 폰트 사이즈 금지
+- **Theme이 있으면 `Theme.display()`, `Theme.headline()`, `Theme.body()` 사용** — font design(.rounded/.default/.serif)이 앱 성격에 맞게 설정됨
 
 ## SwiftUI Patterns
 
