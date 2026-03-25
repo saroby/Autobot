@@ -31,6 +31,8 @@ CHECK:
   ✓ <AppName>/Models/ServiceProtocols.swift 존재
   ✓ 모든 <AppName>/Models/*.swift에 'import SwiftData' 또는 'import Foundation' 포함
   ✓ architecture.md에 Screen 관련 섹션 존재 (grep -qi "screen")
+  ✓ architecture.md에 Design Direction 섹션 존재 (grep -qi "design.*direction\|color.*palette")
+  ✓ architecture.md에 Layout Personality 섹션 존재 (grep -qi "layout.*personality\|layout.*pattern")
   ✓ architecture.md에 Integration/Service 관련 섹션 존재 (grep -qi "integration\|service.*layer\|service.*protocol")
   ✓ architecture.md에 Privacy/FileTimestamp 관련 내용 존재 (grep -qi "privacy\|file.timestamp\|C617")
   ✓ (backend_required) architecture.md에 Backend 관련 섹션 존재 (grep -qi "backend.*require")
@@ -168,6 +170,33 @@ grep -qi "<pattern>" "<file>"
 # architecture.md 섹션 검증 (Gate 1→2 — 유연한 키워드 매칭)
 grep -qi "screen" .autobot/architecture.md
 grep -qi "design.*direction\|color.*palette\|palette.*role" .autobot/architecture.md
+grep -qi "layout.*personality\|layout.*pattern" .autobot/architecture.md
+
+# Design Direction hex 형식 검증 + WCAG 대비율 경고 (Gate 1→2)
+# architecture.md에서 hex 색상 추출 후 형식 확인 및 대비율 계산
+python3 -c "
+import re, sys
+text = open('.autobot/architecture.md').read()
+hexes = re.findall(r'#([0-9A-Fa-f]{6})\b', text)
+if len(hexes) < 2:
+    print('WARNING: Design Direction에 hex 색상이 2개 미만')
+    sys.exit(0)
+def luminance(hex_str):
+    r, g, b = int(hex_str[0:2],16)/255, int(hex_str[2:4],16)/255, int(hex_str[4:6],16)/255
+    def ch(c): return c/12.92 if c <= 0.04045 else ((c+0.055)/1.055)**2.4
+    return 0.2126*ch(r) + 0.7152*ch(g) + 0.0722*ch(b)
+def contrast(h1, h2):
+    l1, l2 = luminance(h1), luminance(h2)
+    if l1 < l2: l1, l2 = l2, l1
+    return (l1 + 0.05) / (l2 + 0.05)
+white_hex = 'FFFFFF'
+for h in hexes:
+    cr = contrast(h, white_hex)
+    if cr < 4.5:
+        print(f'WCAG WARNING: #{h} vs white = {cr:.1f}:1 (AA requires 4.5:1)')
+print(f'Design Direction: {len(hexes)} colors validated')
+" 2>/dev/null || echo "WCAG check skipped (python3 unavailable)"
+
 grep -qi "integration\|service.*layer\|service.*protocol" .autobot/architecture.md
 grep -qi "privacy\|file.timestamp\|C617" .autobot/architecture.md
 

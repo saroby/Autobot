@@ -100,12 +100,72 @@ Read `.autobot/architecture.md` and the **actual Swift Model files in `<AppName>
    // <AppName>/App/ServiceStubs.swift — data-engineer의 실제 구현체가 올 때까지의 임시 구현
    // quality-engineer가 Phase 5에서 App 엔트리포인트를 실제 Repository로 교체 (이 파일은 Preview/테스트용으로 보존)
    ```
-6. **Build Navigation**:
+7. **Build Navigation**:
    - TabView with NavigationStack per tab (if tabbed app)
    - NavigationStack with navigationDestination (if stack-only)
-7. **Create Each Screen**: One Swift file per screen in `<AppName>/Views/Screens/`
+8. **Create Each Screen** (Layout Personality 반영): One Swift file per screen in `<AppName>/Views/Screens/`
    - **Primary (design-spec.md 존재 시)**: 해당 화면의 디자인 토큰, 레이아웃 노트, 목업 이미지(`.autobot/designs/<ScreenName>.png`)를 참조하여 Stitch 디자인을 충실히 구현
    - **Fallback (design-spec.md 미존재 시)**: architecture.md의 Key UI Elements와 iOS HIG를 기반으로 자율적으로 UI 결정
+   - **Layout Personality 적용**: architecture.md의 `Layout Personality` 섹션을 읽고 화면별로 아래 패턴을 적용한다:
+
+   **data-driven 패턴:**
+   ```swift
+   // 큰 숫자 stat 카드 + LazyVGrid 대시보드
+   ScrollView {
+       LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Theme.itemSpacing) {
+           StatCard(title: "Steps", value: "12,345", trend: .up)  // 큰 숫자 + 트렌드 아이콘
+           StatCard(title: "Calories", value: "890", trend: .down)
+       }
+       // 하단에 차트나 상세 리스트
+   }
+   ```
+
+   **content-forward 패턴:**
+   ```swift
+   // 큰 이미지 카드 피드
+   ScrollView {
+       LazyVStack(spacing: Theme.sectionSpacing) {
+           ForEach(items) { item in
+               ContentCard(image: item.image, title: item.title, subtitle: item.description)
+                   .frame(height: 280)  // photo-forward: 이미지가 카드의 60%+
+           }
+       }
+   }
+   ```
+
+   **utility 패턴:**
+   ```swift
+   // Form 기반 단계별 레이아웃
+   Form {
+       Section("Step 1") {
+           TextField("Name", text: $name)
+           DatePicker("Date", selection: $date)
+       }
+       Section("Step 2") {
+           // 체크리스트 또는 피커
+       }
+   }
+   ```
+
+   **social 패턴:**
+   ```swift
+   // 타임라인 + 프로필 헤더 + FAB
+   ZStack(alignment: .bottomTrailing) {
+       List(posts) { post in
+           PostRow(avatar: post.author.avatar, name: post.author.name, content: post.content, timestamp: post.date)
+       }
+       Button(action: { showCompose = true }) {
+           Image(systemName: "plus")
+               .font(.title2.weight(.semibold))
+       }
+       .buttonStyle(.borderedProminent)
+       .clipShape(Circle())
+       .padding()
+   }
+   ```
+
+   > 화면별로 다른 Layout Personality가 지정된 경우 각 화면에 맞는 패턴을 적용한다.
+   > Layout Personality가 없으면 Screens 테이블의 Key UI Elements에서 추론한다.
 8. **Extract Components**: Reusable UI components in `<AppName>/Views/Components/`
 9. **Create ViewModels**: One ViewModel per screen in `<AppName>/ViewModels/`
 

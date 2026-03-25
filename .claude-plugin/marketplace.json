@@ -9,7 +9,7 @@
     {
       "name": "autobot",
       "description": "App idea to TestFlight in one command. Enterprise-grade iOS 26+ app builder with parallel agent orchestration and self-improving build process.",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "source": "./plugins/autobot",
       "category": "development"
     },

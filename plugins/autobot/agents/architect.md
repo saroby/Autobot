@@ -104,7 +104,16 @@ All generated Swift files MUST use the **identifier name** for module name, stru
 
 앱의 도메인과 사용자 기대에 맞는 시각적 아이덴티티를 설계한다. system blue(#007AFF)를 그대로 쓰면 템플릿처럼 보인다 — 반드시 앱 고유의 색상을 선택한다.
 
-도메인별 디자인 감각:
+> **사용자 디자인 힌트 추출:** 앱 아이디어 텍스트에 색상, 무드, 테마에 대한 힌트가 있으면 최우선으로 반영한다.
+> 예: "다크 테마의 미니멀한 피트니스 앱" → 어두운 배경 + 네온 액센트 계열.
+> "따뜻하고 아기자기한 레시피 앱" → warm terracotta/coral 계열.
+> 사용자 힌트가 없으면 아래 영감 예시와 App Personality adjectives에서 도출한다.
+
+> **Anti-cliché rule:** 아래 도메인 매핑은 출발점이지 결론이 아니다.
+> App Personality adjectives에서 고유한 색상을 도출하되, "Health=green, Finance=navy" 같은 상투적 매핑을 의식적으로 피하라.
+> 같은 도메인이라도 personality가 다르면 완전히 다른 색상이 나와야 한다.
+
+도메인별 영감 예시 (처방이 아닌 참고):
 - **Health/Fitness**: Energetic green (#34C759→더 따뜻하게), vibrant orange, .rounded, bold weights, 큰 숫자/stat 카드
 - **Finance/Business**: Deep navy, emerald/gold accent, .default, restrained weights, compact density
 - **Food/Recipe**: Warm terracotta/coral, sage green, .rounded or .serif, photo-forward 큰 카드
@@ -115,12 +124,15 @@ All generated Swift files MUST use the **identifier name** for module name, stru
 - **Music/Entertainment**: Dark surfaces, neon/vivid accent, .default, bold contrast, immersive
 - **Travel/Exploration**: Sky blue, sunset coral/amber, .default, hero images, inspiring typography
 
+> 위 예시는 출발점일 뿐. App Personality adjectives에서 고유한 색상을 도출하라.
+
 색상 선택 규칙:
 1. Primary — 앱을 대표하는 단 하나의 색상. 사용자가 앱을 떠올리면 이 색이 연상되어야 한다
 2. Secondary — Primary를 보완. 동일 색상의 밝거나 어두운 변형, 또는 보색
 3. Accent — 작고 강한 강조: 배지, 알림 dot, 중요 수치
-4. Surface — 카드/elevated 영역의 배경. Primary를 극도로 희석한 틴트 (Light: alpha 5-8%, Dark: alpha 10-15%)
-5. Dark Mode — Light의 채도를 10-20% 낮추고 밝기를 5-10% 올린다. Surface는 더 어두운 gray 계열
+4. Surface — 카드/elevated 영역의 배경. Light: Primary를 극도로 희석한 틴트 (alpha 5-8%). Dark: systemGray6 계열 + Primary 미세 틴트 (단순 alpha 희석은 Dark에서 보이지 않음)
+5. Dark Mode — Light의 채도를 10-20% 낮추고 밝기를 5-10% 올린다
+6. Liquid Glass 호환 — Primary 색상은 HSB 기준 Brightness 30-70% 범위 권장. 극도로 밝은(>85%) 또는 어두운(<15%) 색상은 .glassEffect() 뒤에서 판독 불가
 
 Typography 선택:
 - `.rounded` — 친근하고 부드러운 느낌 (건강, 교육, 소셜, 레시피)

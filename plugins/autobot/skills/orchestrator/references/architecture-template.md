@@ -66,6 +66,16 @@ TabView
 
 > Primary는 system blue(#007AFF)를 피한다 — 앱만의 고유 색상을 선택.
 > Dark Mode는 Light의 채도를 낮추거나 밝기를 조정한 변형.
+>
+> **접근성 가이드라인:**
+> - Primary/Secondary 색상은 해당 모드의 배경색 위에서 WCAG AA (4.5:1) 이상의 대비율 확보
+> - Large text (18pt+ 또는 14pt bold)는 3:1 이상
+> - Surface 색상은 그 위에 올라갈 텍스트와 충분한 대비를 갖출 것
+>
+> **색상 조화:** Primary-Secondary-Accent는 다음 중 하나를 따른다:
+> - Analogous (유사색): 색상환에서 인접한 색 — 조화롭고 차분
+> - Complementary (보색): 반대편 색 — 대비가 강하고 역동적
+> - Split-complementary: 보색의 양 옆 — 대비+조화 균형
 
 ### Typography Style
 | Element | Font Design | Weight | 용도 |
@@ -82,6 +92,24 @@ TabView
 | Buttons | [filled-capsule / outline / text] | [e.g., "Primary: filled capsule, Secondary: tinted outline"] |
 | Empty States | [icon+message / minimal] | [e.g., "SF Symbol + 안내 메시지 + 액션 버튼"] |
 | Section Headers | [bold / subtle / accented] | [e.g., "bold + primary underline"] |
+
+### Layout Personality
+
+앱의 핵심 콘텐츠 유형에 따라 화면별 레이아웃 패턴을 결정한다.
+
+| Type | Pattern | 특징 | 적합한 앱 |
+|------|---------|------|----------|
+| data-driven | Dashboard + Grid | 큰 숫자 stat 카드, LazyVGrid, 차트 영역, compact density | 피트니스 트래커, 금융, 대시보드 |
+| content-forward | Card Feed | 큰 이미지 카드, ScrollView, pull-to-refresh, spacious | 레시피, 소셜, 뉴스, 여행 |
+| utility | Step / Form | 순차 단계, Form + Section, 체크리스트, efficient density | 할일, 설정, 유틸리티 |
+| social | Feed + Compose | 타임라인 리스트, 프로필 헤더, FAB compose, avatar-centric | 소셜, 커뮤니티, 메시징 |
+
+```
+Layout Personality: [data-driven / content-forward / utility / social]
+```
+
+> 앱의 주요 화면이 여러 유형을 혼합할 수 있다 (예: 홈=dashboard, 상세=content-forward).
+> 이 경우 화면별로 다른 패턴을 지정한다.
 
 ## Data Models
 
