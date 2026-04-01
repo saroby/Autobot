@@ -109,24 +109,54 @@ ownership = {
     "ux-designer": [".autobot/designs/", ".autobot/design-spec.md"],
     "quality-engineer": [],
 }
+
+# Models/ is always forbidden for all agents.
+# Pipeline control files are forbidden for non-orchestrator agents.
 forbidden_always = [f"{app_name}/Models/"]
+forbidden_infra = [
+    ".autobot/build-state.json",
+    ".autobot/architecture.md",
+    ".autobot/contracts/",
+    ".autobot/build-log.jsonl",
+    ".autobot/build.lock",
+    ".autobot/learnings.json",
+    ".autobot/active-learnings.md",
+    ".autobot/phase-learnings/",
+]
+
+# Per-agent forbidden: prevents ownership overlap conflicts.
+forbidden_per_agent = {
+    "data-engineer": [f"{app_name}/Utilities/Theme.swift"],
+    "ui-builder": [f"{app_name}/Services/"],
+}
 
 violations = []
 allowed_dirs = ownership.get(agent, [])
+agent_forbidden = forbidden_per_agent.get(agent, [])
 
 for path in touched:
-    if agent != "quality-engineer" and any(forbidden in path for forbidden in forbidden_always):
+    # Check always-forbidden (Models/)
+    if any(path.startswith(f) or f"/{f}" in path for f in forbidden_always):
         violations.append(f"FORBIDDEN: {agent} touched Models/ → {path}")
         continue
 
+    # Check infrastructure files (all agents)
+    if any(path.startswith(f) for f in forbidden_infra):
+        violations.append(f"INFRA: {agent} touched pipeline control file → {path}")
+        continue
+
+    # Check per-agent forbidden
+    if any(path.startswith(f) or path == f for f in agent_forbidden):
+        violations.append(f"OVERLAP: {agent} touched another agent's file → {path}")
+        continue
+
+    # Check allowlist (skip for quality-engineer which has broad access)
     if agent != "quality-engineer" and allowed_dirs:
-        if not any(allowed in path for allowed in allowed_dirs):
+        if not any(path.startswith(allowed) or path == allowed for allowed in allowed_dirs):
             violations.append(f"OWNERSHIP: {agent} touched outside allowed dirs → {path}")
 
-if agent == "quality-engineer":
-    for path in touched:
-        if any(forbidden in path for forbidden in forbidden_always):
-            violations.append(f"FORBIDDEN: quality-engineer modified Models/ → {path}")
+# quality-engineer: broad access but still can't touch Models/ or infra
+# (already checked above for all agents)
 
 if violations:
     for violation in violations:

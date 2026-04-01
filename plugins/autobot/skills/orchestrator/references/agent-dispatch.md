@@ -21,11 +21,13 @@ Phase 4의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지
 |-------|-----------|------------|----------------|
 | architect | `.autobot/architecture.md`, `[sources]/Models/` | (user input) | — |
 | ux-designer | `.autobot/designs/`, `.autobot/design-spec.md` | `.autobot/architecture.md` | `[sources]/`, `.autobot/architecture.md` |
-| ui-builder | `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/` | `[sources]/Models/*.swift`, `.autobot/design-spec.md` (있으면) | `[sources]/Models/`, `[sources]/Services/` |
-| data-engineer | `[sources]/Services/`, `[sources]/Utilities/` | `[sources]/Models/*.swift` | `[sources]/Models/`, `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/` |
-| backend-engineer | `[project]/backend/` | `[sources]/Models/APIContracts.swift` | `[sources]/`, root `.gitignore` |
-| quality-engineer | `[project]/*Tests/`, fixes in any file, integration wiring | All source files | — |
-| deployer | `[project]/build/`, config files | Built app | — |
+| ui-builder | `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/`, `[sources]/Utilities/Theme.swift` | `[sources]/Models/*.swift`, `.autobot/design-spec.md` (있으면) | `[sources]/Models/`, `[sources]/Services/`, `.autobot/*` (infra) |
+| data-engineer | `[sources]/Services/`, `[sources]/Utilities/` (Theme.swift 제외) | `[sources]/Models/*.swift` | `[sources]/Models/`, `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/`, `[sources]/Utilities/Theme.swift`, `.autobot/*` (infra) |
+| backend-engineer | `[project]/backend/` | `[sources]/Models/APIContracts.swift` | `[sources]/`, root `.gitignore`, `.autobot/*` (infra) |
+| quality-engineer | `[project]/*Tests/`, fixes in any file, integration wiring | All source files | `[sources]/Models/`, `.autobot/*` (infra) |
+| deployer | `[project]/build/`, config files | Built app | `.autobot/*` (infra) |
+
+> **`.autobot/*` (infra)** = `build-state.json`, `architecture.md`, `contracts/`, `build-log.jsonl`, `build.lock`, `learnings.json`, `active-learnings.md`, `phase-learnings/`. 파이프라인 제어 파일은 오케스트레이터만 수정한다.
 
 ## Agent Sandbox (파일 소유권 강제)
 
