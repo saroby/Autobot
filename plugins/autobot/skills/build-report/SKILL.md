@@ -139,7 +139,7 @@ Phase 중간에서 빌드가 중단된 경우에도 보고서를 생성한다:
 
 ```
 사용 예시:
-1. /autobot:build 로 앱 생성
+1. /autobot:make 로 앱 생성
 2. build-report.md 자동 생성됨
 3. Autobot 플러그인 폴더에서:
    "build-report.md를 읽고 문제를 수정해"

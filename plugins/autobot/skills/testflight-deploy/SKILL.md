@@ -1,6 +1,6 @@
 ---
 name: autobot-testflight-deploy
-description: Use when deploying an iOS app to TestFlight, setting up code signing, archiving builds, uploading to App Store Connect, creating beta tester groups, or when the "/autobot:build" deployment phase is reached. Also use when troubleshooting archive failures, signing certificate issues, upload errors, or ASC authentication problems.
+description: Use when deploying an iOS app to TestFlight, setting up code signing, archiving builds, uploading to App Store Connect, creating beta tester groups, or when the "/autobot:make" deployment phase is reached. Also use when troubleshooting archive failures, signing certificate issues, upload errors, or ASC authentication problems.
 ---
 
 # TestFlight Deployment

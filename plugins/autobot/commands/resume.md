@@ -25,7 +25,7 @@ Phase 정의와 상태 의미는 `plugins/autobot/spec/pipeline.json`이 SSOT이
 
 ## CRITICAL RULES
 
-1. **`.autobot/build-state.json`이 없으면 즉시 중단** — "이전 빌드 상태를 찾을 수 없습니다. `/autobot:build`로 새 빌드를 시작하세요." 출력
+1. **`.autobot/build-state.json`이 없으면 즉시 중단** — "이전 빌드 상태를 찾을 수 없습니다. `/autobot:make`로 새 빌드를 시작하세요." 출력
 2. **상태 파일의 `projectPath`를 신뢰한다** — 해당 경로에 프로젝트가 실제 존재하는지 검증
 3. **재개 시에도 각 Phase 완료마다 상태를 저장한다** — build 커맨드와 동일한 상태 저장 로직 사용
 4. **이미 completed인 Phase는 건너뛴다** — 단, 사용자가 명시적으로 Phase 번호를 지정하면 `pipeline.sh start-phase --allow-terminal-restart` 규칙으로 해당 Phase부터 재실행
@@ -72,7 +72,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 
 상태 파일이 없으면:
 ```
-"이전 빌드 상태를 찾을 수 없습니다. `/autobot:build <앱 아이디어>`로 새 빌드를 시작하세요."
+"이전 빌드 상태를 찾을 수 없습니다. `/autobot:make <앱 아이디어>`로 새 빌드를 시작하세요."
 → 종료
 ```
 
@@ -151,7 +151,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase <N> --detail 
 
 재개 지점부터 build 커맨드와 **동일한 Phase 로직**을 실행한다.
 
-각 Phase의 상세 구현은 `/autobot:build` 커맨드를 참조한다. 여기서는 재개 시 주의사항만 기술:
+각 Phase의 상세 구현은 `/autobot:make` 커맨드를 참조한다. 여기서는 재개 시 주의사항만 기술:
 
 ### Phase 0 재개
 

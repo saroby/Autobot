@@ -38,7 +38,7 @@ EOF
 ### 3. 빌드
 
 ```bash
-/autobot:build 소셜 피트니스 트래킹 앱
+/autobot:make 소셜 피트니스 트래킹 앱
 ```
 
 ### 4. 중단 시 재개
@@ -166,7 +166,7 @@ TestFlight 자동 배포용. 미설정 시 빌드까지는 정상 동작.
 plugins/autobot/
 ├── .claude-plugin/plugin.json          # 플러그인 매니페스트
 ├── commands/
-│   ├── build.md                        # /autobot:build — 전체 빌드 파이프라인
+│   ├── make.md                         # /autobot:make — 전체 빌드 파이프라인
 │   └── resume.md                       # /autobot:resume — 중단된 빌드 재개
 ├── agents/
 │   ├── architect.md                    # Phase 1: 아키텍처 + 타입/통합 계약
@@ -260,7 +260,7 @@ Autobot은 위험도 기준으로 동작합니다:
 | Phase 실패 | `/autobot:resume` (자동 재개) 또는 `/autobot:resume <N>` (특정 Phase부터) |
 | 빌드 에러 반복 | `/autobot:resume 4` (코드 재생성부터) |
 | 배포만 재시도 | `/autobot:resume 6` |
-| 전체 초기화 | `rm -rf .autobot/build-state.json` 후 `/autobot:build` |
+| 전체 초기화 | `rm -rf .autobot/build-state.json` 후 `/autobot:make` |
 
 ## 라이선스
 

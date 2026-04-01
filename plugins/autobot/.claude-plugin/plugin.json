@@ -1,6 +1,6 @@
 {
   "name": "autobot",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "App idea to TestFlight in one command. Enterprise-grade iOS 26+ app builder with parallel agent orchestration and self-improving build process.",
   "author": {
     "name": "saroby"

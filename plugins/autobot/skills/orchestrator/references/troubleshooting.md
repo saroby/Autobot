@@ -9,7 +9,7 @@
 | "xcode-select: error" | Command Line Tools 미설치 | `xcode-select --install` |
 | "No available simulators" | Simulator 런타임 미설치 | Xcode → Settings → Platforms → iOS 다운로드 |
 | ".env 로드 안됨" | SessionStart 훅이 .env를 못 찾음 | 작업 디렉토리에 `.env` 파일 확인, 또는 `~/.config/autobot/.env` |
-| "build-state.json 없음" | /autobot:resume 실행했지만 이전 빌드 없음 | `/autobot:build`로 새 빌드 시작 |
+| "build-state.json 없음" | /autobot:resume 실행했지만 이전 빌드 없음 | `/autobot:make`로 새 빌드 시작 |
 
 ### Phase 1: 아키텍처 실패
 
@@ -17,7 +17,7 @@
 |------|------|------|
 | architect가 `<AppName>/Models/` 파일을 안 만듦 | 프롬프트 미준수 또는 경로 오류 | 에이전트가 `<AppName>/Models/`가 아닌 `Models/`에 파일을 생성했는지 확인 후 `/autobot:resume 1`로 재실행 |
 | ServiceProtocols.swift 누락 | architect 프롬프트에서 놓침 | `/autobot:resume 1` |
-| architecture.md가 불완전 | 아이디어가 너무 모호 | 더 구체적인 아이디어로 `/autobot:build` 재시작 |
+| architecture.md가 불완전 | 아이디어가 너무 모호 | 더 구체적인 아이디어로 `/autobot:make` 재시작 |
 
 ### Phase 3: 프로젝트 생성 실패
 
@@ -62,7 +62,7 @@
 ### 전체 초기화 (프로젝트는 유지, 빌드 상태만 리셋)
 ```bash
 rm -rf .autobot/build-state.json
-# 그 후 /autobot:resume 또는 /autobot:build 재실행
+# 그 후 /autobot:resume 또는 /autobot:make 재실행
 ```
 
 ### Phase 4 결과만 폐기하고 재생성
@@ -79,7 +79,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore --app-name "<Ap
 ### 프로젝트 전체 폐기하고 재빌드
 ```bash
 cd .. && rm -rf <AppName>/
-/autobot:build <아이디어>
+/autobot:make <아이디어>
 ```
 
 ## 성능 문제

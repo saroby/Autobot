@@ -1,5 +1,5 @@
 ---
-name: build
+name: make
 description: "앱 아이디어를 입력하면 질문 없이 엔터프라이즈급 iOS 26+ 앱을 빌드하고 TestFlight에 업로드합니다."
 argument-hint: "<앱 아이디어 설명>"
 allowed-tools:

@@ -1,6 +1,6 @@
 ---
 name: autobot-orchestrator
-description: Use when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:build" or "/autobot:resume". Also use when a build stalls, needs error recovery, or requires phase-level retry coordination.
+description: Use when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:make" or "/autobot:resume". Also use when a build stalls, needs error recovery, or requires phase-level retry coordination.
 ---
 
 # Autobot Orchestrator
@@ -13,7 +13,7 @@ Master coordination skill for building iOS 26+ apps from ideas. Manages the comp
 
 - Phase 번호, 이름, 상태 전이, retry, gate 정의는 실행 스펙을 기준으로 한다
 - build/resume의 상태 전이, Gate 실행/기록, Phase lifecycle 로그는 `scripts/pipeline.sh` 경로만 사용한다
-- 이 문서와 `build.md`, `resume.md`는 실행 스펙의 설명/운영 가이드다
+- 이 문서와 `make.md`, `resume.md`는 실행 스펙의 설명/운영 가이드다
 - README는 개요와 사용법만 다룬다
 - 문서 간 충돌이 있으면 실행 스펙이 우선한다
 
