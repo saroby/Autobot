@@ -12,11 +12,24 @@ Gate를 통과하지 못하면 Phase를 `failed`로 마킹하고 재시도하거
 ### Gate 0→1: 환경 준비 완료
 
 ```
-CHECK:
+CHECK (environment_ready):
   ✓ 프로젝트 디렉토리 존재
   ✓ .autobot/ 디렉토리 존재
-  ✓ .autobot/build-state.json 존재 & 유효한 JSON
+  ✓ .autobot/build-state.json 존재
+  ✓ Xcode CLI Tools 설치됨 (xcode-select -p)
+  ✓ iOS Simulator 런타임 존재 (xcrun simctl list runtimes | grep iOS)
+  ✓ python3 사용 가능
+  ✓ 디스크 여유 공간 > 1GB
+CHECK (project_name_resolved):
   ✓ appName이 /^[A-Z][a-zA-Z0-9]*$/ 패턴 충족
+CHECK (build_state_initialized):
+  ✓ build-state.json 유효한 JSON & buildId/appName 필드 존재
+CHECK (environment_recorded):
+  ✓ build-state.json에 environment 객체 존재
+  ✓ environment.xcodegen 기록됨
+  ✓ environment.fastlane 기록됨
+  ✓ environment.ascConfigured 기록됨
+  ✓ environment.stitch 기록됨
 FAIL → Phase 0 재실행
 ```
 

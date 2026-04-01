@@ -248,7 +248,8 @@
       "checks": [
         "environment_ready",
         "project_name_resolved",
-        "build_state_initialized"
+        "build_state_initialized",
+        "environment_recorded"
       ]
     },
     "1->2": {

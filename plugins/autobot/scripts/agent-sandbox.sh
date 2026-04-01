@@ -73,8 +73,8 @@ case "$MODE" in
 
   after)
     if [[ ! -f "$SNAPSHOT_FILE" ]]; then
-      echo "WARN: No 'before' snapshot found for agent '${AGENT}'. Skipping verification." >&2
-      exit 0
+      echo "ERROR: No 'before' snapshot found for agent '${AGENT}'. Refusing to skip sandbox verification." >&2
+      exit 2
     fi
 
     AFTER_FILE="${SANDBOX_DIR}/${AGENT}.after.json"

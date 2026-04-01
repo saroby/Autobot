@@ -81,11 +81,48 @@ def _file_grep(
 # ── Gate 0→1 checks ──
 
 
+def _run_cmd(cmd: list[str], *, timeout: int = 10) -> tuple[bool, str]:
+    """Run a shell command and return (success, output)."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return result.returncode == 0, result.stdout.strip() or result.stderr.strip()
+    except FileNotFoundError:
+        return False, f"command not found: {cmd[0]}"
+    except subprocess.TimeoutExpired:
+        return False, f"timeout after {timeout}s"
+
+
 def check_environment_ready(proj: Path, app: str, state: dict) -> list[dict]:
-    return [
+    results = [
+        _dir_exists(proj, "project_dir"),
         _dir_exists(proj / ".autobot", "autobot_dir"),
         _file_exists(proj / ".autobot" / "build-state.json", "build_state_file"),
     ]
+
+    # Xcode CLI Tools
+    ok, out = _run_cmd(["xcode-select", "-p"])
+    results.append(_ok("xcode_cli_tools", ok, out if ok else "Xcode CLI Tools not installed"))
+
+    # iOS Simulator runtime
+    ok, out = _run_cmd(["xcrun", "simctl", "list", "runtimes"])
+    has_ios = ok and "iOS" in out
+    results.append(_ok("ios_simulator_runtime", has_ios,
+                       "iOS runtime found" if has_ios else "No iOS Simulator runtime"))
+
+    # python3
+    ok, out = _run_cmd(["python3", "--version"])
+    results.append(_ok("python3_available", ok, out if ok else "python3 not found"))
+
+    # Disk space > 1GB
+    try:
+        import shutil
+        usage = shutil.disk_usage(str(proj))
+        free_gb = usage.free / (1024 ** 3)
+        results.append(_ok("disk_space", free_gb > 1.0, f"{free_gb:.1f} GB free"))
+    except OSError as exc:
+        results.append(_ok("disk_space", False, f"cannot check: {exc}"))
+
+    return results
 
 
 def check_project_name_resolved(proj: Path, app: str, state: dict) -> list[dict]:
@@ -103,6 +140,20 @@ def check_build_state_initialized(proj: Path, app: str, state: dict) -> list[dic
             results.append(_ok("build_state_schema", has_keys, "required fields present" if has_keys else "missing buildId/appName"))
         except (json.JSONDecodeError, OSError) as exc:
             results.append(_ok("build_state_schema", False, f"parse error: {exc}"))
+    return results
+
+
+def check_environment_recorded(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify that environment detection results are recorded in build-state.json."""
+    env = state.get("environment", {})
+    if not env:
+        return [_ok("env_recorded", False, "environment object missing from build-state.json")]
+
+    results = []
+    for key in ("xcodegen", "fastlane", "ascConfigured", "stitch"):
+        present = key in env
+        results.append(_ok(f"env_{key}", present,
+                           f"{key}={env[key]}" if present else f"{key} not recorded"))
     return results
 
 
@@ -331,6 +382,7 @@ GATE_CHECKS: dict[str, Any] = {
     "environment_ready": check_environment_ready,
     "project_name_resolved": check_project_name_resolved,
     "build_state_initialized": check_build_state_initialized,
+    "environment_recorded": check_environment_recorded,
     # Gate 1→2
     "architecture_document_exists": check_architecture_document_exists,
     "models_exist": check_models_exist,
