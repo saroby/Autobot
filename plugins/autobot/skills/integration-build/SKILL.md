@@ -179,13 +179,23 @@ xcodebuild -project *.xcodeproj -scheme <scheme> \
 
 ### 반복 전략
 
+각 빌드 시도마다 이벤트 로그에 기록한다:
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_attempt \
+  --detail "{\"attempt\":${N},\"errors\":${ERROR_COUNT}}"
+
+# 수정 후
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_fix \
+  --detail "{\"category\":\"import\",\"files\":[\"Views/HomeView.swift\"]}"
+```
+
 | 반복 횟수 | 전략 |
 |----------|------|
 | 1회차 | 에러 전체 분류 → 근본 원인 수정 → 연쇄 해결 기대 |
 | 2회차 | 남은 에러 개별 수정 |
 | 3회차 | 남은 에러 개별 수정 + 파일 간 의존성 재확인 |
 | 4회차 | 구조적 문제 의심 → 문제 파일을 처음부터 재작성 |
-| 5회차 | 최후 시도. 실패하면 Phase 4 재생성 권고 |
+| 5회차 | 최후 시도. 실패하면 Phase 4 스냅샷 복원 또는 재생성 권고 |
 
 ### 수정 범위 판단
 
@@ -286,8 +296,15 @@ test -f <AppName>/PrivacyInfo.xcprivacy
 | 조건 | 액션 |
 |------|------|
 | 같은 에러 3회 반복 | 해당 파일만 삭제 후 재작성 |
-| 에러 10개 이상이 3회 연속 | Phase 4 전체 재생성 (`/autobot:resume 3`) |
+| 에러 10개 이상이 3회 연속 | Phase 4 스냅샷 복원 후 재시도, 또는 Phase 4 전체 재생성 (`/autobot:resume 4`) |
 | Models/의 타입과 사용 코드가 구조적 불일치 | Phase 1(architect) 재검토 권고 |
+
+**Phase 4 스냅샷 복원 (Phase 5에서만):**
+quality-engineer의 수정이 코드를 악화시킨 경우, Phase 4 완료 시점의 깨끗한 상태로 되돌린다:
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore-phase --phase 4 --app-name "<AppName>"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event snapshot_restore --detail "Restoring phase-4 snapshot"
+```
 
 ## Additional Resources
 

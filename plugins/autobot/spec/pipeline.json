@@ -1,0 +1,328 @@
+{
+  "schemaVersion": 1,
+  "statuses": [
+    "pending",
+    "in_progress",
+    "completed",
+    "fallback",
+    "failed",
+    "skipped"
+  ],
+  "terminalStatuses": [
+    "completed",
+    "fallback",
+    "skipped"
+  ],
+  "stateSchema": {
+    "required": [
+      "buildId",
+      "appName",
+      "displayName",
+      "phases"
+    ],
+    "recommended": [
+      "projectPath",
+      "environment",
+      "contracts",
+      "backend_required"
+    ],
+    "phaseRequired": [
+      "status"
+    ]
+  },
+  "transitions": {
+    "default": {
+      "pending": [
+        "in_progress"
+      ],
+      "in_progress": [
+        "completed",
+        "fallback",
+        "failed"
+      ],
+      "completed": [],
+      "fallback": [],
+      "failed": [
+        "in_progress"
+      ],
+      "skipped": []
+    },
+    "overrides": {
+      "0": {
+        "pending": [
+          "in_progress",
+          "completed"
+        ]
+      }
+    }
+  },
+  "policies": {
+    "resume": {
+      "allowExplicitRestartFromTerminal": true
+    },
+    "dependency": {
+      "resumeAllowedPreviousStatuses": [
+        "completed",
+        "fallback"
+      ]
+    },
+    "circuitBreaker": {
+      "maxConsecutivePhaseFailures": 3
+    }
+  },
+  "phases": {
+    "0": {
+      "name": "Pre-flight & Setup",
+      "maxRetry": 1,
+      "dependencies": [],
+      "gate": "0->1",
+      "allowFallback": false,
+      "docs": {
+        "displayName": "Pre-flight & 환경 준비",
+        "readmeAgent": "(self)",
+        "skillAgent": "(self)",
+        "outputs": [
+          "`build-state.json`",
+          "환경 검증"
+        ],
+        "parallel": false,
+        "gateLabel": "→ 환경/이름 검증"
+      }
+    },
+    "1": {
+      "name": "Architecture + Contracts",
+      "maxRetry": 2,
+      "dependencies": [
+        "0"
+      ],
+      "gate": "1->2",
+      "allowFallback": false,
+      "docs": {
+        "displayName": "아키텍처 + 계약",
+        "readmeAgent": "architect",
+        "skillAgent": "architect",
+        "outputs": [
+          "`architecture.md`",
+          "`Models/*.swift`",
+          "`ServiceProtocols.swift`"
+        ],
+        "parallel": false,
+        "gateLabel": "→ 산출물 존재/구조 검증"
+      }
+    },
+    "2": {
+      "name": "UX Design",
+      "maxRetry": 1,
+      "dependencies": [
+        "1"
+      ],
+      "gate": "2->3",
+      "allowFallback": true,
+      "docs": {
+        "displayName": "UX Design (필수)",
+        "readmeAgent": "ux-designer (Stitch)",
+        "skillAgent": "ux-designer",
+        "outputs": [
+          "`.autobot/designs/*.png`",
+          "`.autobot/design-spec.md`"
+        ],
+        "parallel": false,
+        "gateLabel": "→ Stitch 성공 필수, 미설치 시 fallback"
+      }
+    },
+    "3": {
+      "name": "Project Scaffold",
+      "maxRetry": 1,
+      "dependencies": [
+        "2"
+      ],
+      "gate": "3->4",
+      "allowFallback": false,
+      "docs": {
+        "displayName": "Xcode 프로젝트",
+        "readmeAgent": "(self)",
+        "skillAgent": "(self)",
+        "outputs": [
+          "`.xcodeproj`",
+          "`.gitignore`",
+          "`PrivacyInfo.xcprivacy`",
+          "`.entitlements`"
+        ],
+        "parallel": false,
+        "gateLabel": "→ .xcodeproj 존재 검증"
+      }
+    },
+    "4": {
+      "name": "Parallel Coding",
+      "maxRetry": 2,
+      "dependencies": [
+        "3"
+      ],
+      "gate": "4->5",
+      "allowFallback": false,
+      "docs": {
+        "displayName": "병렬 코드 생성",
+        "readmeAgent": "ui-builder + data-engineer (+ backend-engineer)",
+        "skillAgent": "ui-builder + data-engineer + (backend-engineer)",
+        "outputs": [
+          "`Views/`",
+          "`ViewModels/`",
+          "`Services/`",
+          "`App/`",
+          "`backend/`"
+        ],
+        "parallel": true,
+        "gateLabel": "→ 파일 존재 + Models/ 무결성"
+      }
+    },
+    "5": {
+      "name": "Integration & Build",
+      "maxRetry": 2,
+      "dependencies": [
+        "4"
+      ],
+      "gate": "5->6",
+      "allowFallback": false,
+      "docs": {
+        "displayName": "통합 + 빌드 검증",
+        "readmeAgent": "quality-engineer",
+        "skillAgent": "quality-engineer (`autobot-integration-build` 스킬)",
+        "outputs": [
+          "빌드 성공",
+          "테스트",
+          "Integration Wiring"
+        ],
+        "parallel": false,
+        "gateLabel": "→ xcodebuild 성공"
+      }
+    },
+    "6": {
+      "name": "TestFlight Deploy",
+      "maxRetry": 1,
+      "dependencies": [
+        "5"
+      ],
+      "gate": "6->7",
+      "allowFallback": false,
+      "docs": {
+        "displayName": "TestFlight 배포",
+        "readmeAgent": "deployer",
+        "skillAgent": "deployer",
+        "outputs": [
+          "앱 등록",
+          "아카이브",
+          "업로드",
+          "테스터 초대"
+        ],
+        "parallel": false,
+        "gateLabel": "→ 배포 결과 기록 (soft)"
+      }
+    },
+    "7": {
+      "name": "Retrospective",
+      "maxRetry": 0,
+      "dependencies": [],
+      "gate": null,
+      "allowFallback": false,
+      "alwaysRun": true,
+      "docs": {
+        "displayName": "회고",
+        "readmeAgent": "(self)",
+        "skillAgent": "(self)",
+        "outputs": [
+          "`build-report.md`",
+          "`learnings.json` 갱신"
+        ],
+        "parallel": false,
+        "gateLabel": "—"
+      }
+    }
+  },
+  "gates": {
+    "0->1": {
+      "fromPhase": "0",
+      "toPhase": "1",
+      "soft": false,
+      "summary": "Environment, naming, and initial build state are ready.",
+      "docsSummary": "환경, 앱 이름, 초기 build state 준비가 끝났는지 검증",
+      "checks": [
+        "environment_ready",
+        "project_name_resolved",
+        "build_state_initialized"
+      ]
+    },
+    "1->2": {
+      "fromPhase": "1",
+      "toPhase": "2",
+      "soft": false,
+      "summary": "Architecture artifacts and type contracts are complete.",
+      "docsSummary": "architecture.md 구조, Models/*.swift, ServiceProtocols.swift, 계약 snapshot이 준비됐는지 검증",
+      "checks": [
+        "architecture_document_exists",
+        "models_exist",
+        "service_protocols_exist",
+        "contracts_snapshot_saved",
+        "backend_required_consistent"
+      ]
+    },
+    "2->3": {
+      "fromPhase": "2",
+      "toPhase": "3",
+      "soft": false,
+      "summary": "UX design artifacts exist, or the phase is explicitly marked as fallback.",
+      "docsSummary": "Stitch 성공 시 design-spec/designs 산출물이 있고, 미설치 시 fallback 상태가 기록됐는지 검증",
+      "checks": [
+        "design_spec_exists_or_fallback",
+        "design_assets_exist_or_fallback"
+      ]
+    },
+    "3->4": {
+      "fromPhase": "3",
+      "toPhase": "4",
+      "soft": false,
+      "summary": "The scaffolded Xcode project and required configuration files exist.",
+      "docsSummary": ".xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증",
+      "checks": [
+        "xcodeproj_exists",
+        "privacy_manifest_exists",
+        "entitlements_exists",
+        "gitignore_exists"
+      ]
+    },
+    "4->5": {
+      "fromPhase": "4",
+      "toPhase": "5",
+      "soft": false,
+      "summary": "Parallel coding outputs exist and Models integrity is preserved.",
+      "docsSummary": "Views/Services 산출물 존재와 Models 체크섬 무결성을 검증",
+      "checks": [
+        "views_exist",
+        "services_exist",
+        "models_checksum_matches",
+        "backend_artifacts_exist_if_required"
+      ]
+    },
+    "5->6": {
+      "fromPhase": "5",
+      "toPhase": "6",
+      "soft": false,
+      "summary": "The app builds successfully and runtime wiring uses real repositories.",
+      "docsSummary": "빌드 성공, 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증",
+      "checks": [
+        "build_succeeded",
+        "app_uses_real_repositories",
+        "service_stubs_preserved"
+      ]
+    },
+    "6->7": {
+      "fromPhase": "6",
+      "toPhase": "7",
+      "soft": true,
+      "summary": "Deployment result is recorded, but retrospective proceeds even on failure.",
+      "docsSummary": "배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행",
+      "checks": [
+        "deployment_attempt_recorded"
+      ]
+    }
+  }
+}

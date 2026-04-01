@@ -26,11 +26,11 @@ EOF
 
 # 앱 등록 (Apple Developer Portal + App Store Connect)
 fastlane produce create \
-  --app_identifier "com.saroby.appname" \
+  --app_identifier "com.axi.appname" \
   --app_name "앱 이름" \
   --language "ko" \
   --app_version "1.0.0" \
-  --sku "com.saroby.appname" \
+  --sku "com.axi.appname" \
   --team_id "$DEVELOPMENT_TEAM" \
   --api_key_path fastlane_api_key.json
 ```

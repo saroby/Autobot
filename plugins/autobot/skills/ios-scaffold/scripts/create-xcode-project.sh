@@ -50,7 +50,7 @@ if [ -z "$APP_NAME" ] || ! echo "$APP_NAME" | grep -qE '^[A-Z][a-zA-Z0-9]+$'; th
 fi
 
 if [ -z "$BUNDLE_ID" ]; then
-  BUNDLE_ID="com.saroby.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')"
+  BUNDLE_ID="com.axi.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')"
 fi
 
 # --project-dir가 지정되면 기존 디렉토리를 사용 (Phase 0에서 이미 생성됨)
@@ -66,6 +66,8 @@ TESTS_DIR="${PROJECT_DIR}/${APP_NAME}Tests"
 echo "Creating Xcode project: ${APP_NAME}"
 echo "Bundle ID: ${BUNDLE_ID}"
 echo "Deployment Target: iOS ${DEPLOYMENT_TARGET}"
+
+mkdir -p "${PROJECT_DIR}"
 
 # ── .gitignore (Xcode / Swift) ──
 cat > "${PROJECT_DIR}/.gitignore" << 'GITIGNORE_EOF'

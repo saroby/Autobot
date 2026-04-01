@@ -1,6 +1,6 @@
 #!/bin/bash
-# Load Autobot environment (.env) and past build learnings into session context
-# SessionStart hook — outputs systemMessage JSON with env vars and learnings
+# Emit a minimal Autobot session summary.
+# SessionStart hook — keep prompt footprint small and defer detailed reads to build/resume time.
 set -euo pipefail
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
@@ -22,63 +22,68 @@ elif [ -f "${HOME}/.config/autobot/.env" ]; then
   ENV_FILE="${HOME}/.config/autobot/.env"
 fi
 
-# .env 값을 파싱하여 systemMessage에 포함 (실제 환경변수 주입 대신)
-ENV_SUMMARY=""
-if [ -n "$ENV_FILE" ]; then
-  # 키 이름만 추출 (값은 보안상 마스킹)
-  ENV_KEYS=$(grep -v '^\s*#' "$ENV_FILE" | grep -v '^\s*$' | cut -d= -f1 | tr '\n' ', ' | sed 's/,$//')
-  ENV_SUMMARY="env_file=${ENV_FILE}, configured_keys=[${ENV_KEYS}]"
+env_has_key() {
+  local key="$1"
 
-  # 실제 값은 build/deploy 시 에이전트가 직접 .env에서 source하도록 경로만 전달
-  ENV_PATH_INFO="env_path=${ENV_FILE}"
-else
-  ENV_SUMMARY="env_file=none"
-  ENV_PATH_INFO="env_path=none"
+  if [ -n "${!key:-}" ]; then
+    return 0
+  fi
+
+  if [ -n "$ENV_FILE" ] && grep -Eq "^[[:space:]]*${key}=" "$ENV_FILE"; then
+    return 0
+  fi
+
+  return 1
+}
+
+HAS_ENV="false"
+if [ -n "$ENV_FILE" ]; then
+  HAS_ENV="true"
+fi
+
+ASC_CONFIGURED="false"
+if env_has_key "ASC_API_KEY_ID" && env_has_key "ASC_API_ISSUER_ID" && env_has_key "ASC_API_KEY_PATH"; then
+  ASC_CONFIGURED="true"
+elif env_has_key "APPLE_ID" && env_has_key "APP_SPECIFIC_PASSWORD"; then
+  ASC_CONFIGURED="true"
 fi
 
 # ── Step 2: 과거 학습 데이터 로드 ──
 LEARNINGS_FILE="${PROJECT_DIR}/.autobot/learnings.json"
-LEARNINGS_SUMMARY=""
-
+HAS_LEARNINGS="false"
+ACTIVE_LEARNINGS="false"
+ACTIVE_LEARNINGS_SUMMARY="unavailable"
 if [ -f "$LEARNINGS_FILE" ]; then
-  LEARNINGS_SUMMARY=$(python3 -c "
-import json, sys
-d=json.load(open(sys.argv[1]))
-total=d.get('totalBuilds', 0)
-rate=d.get('successRate', 0)
-errors=d.get('patterns',{}).get('common_build_errors',[])
-top_errors='; '.join([f\"{e['pattern']} -> {e['fix']}\" for e in errors[:3]])
-print(f'total_builds={total}, success_rate={rate*100:.0f}%, top_errors=[{top_errors}]')
-" "$LEARNINGS_FILE" 2>/dev/null || echo "parse_error")
-else
-  LEARNINGS_SUMMARY="no_history"
+  HAS_LEARNINGS="true"
+fi
+
+RENDER_SCRIPT="${PLUGIN_ROOT}/scripts/render-active-learnings.py"
+if [ "$HAS_LEARNINGS" = "true" ] && [ -f "$RENDER_SCRIPT" ]; then
+  ACTIVE_OUTPUT=$(python3 "$RENDER_SCRIPT" --project-dir "$PROJECT_DIR" 2>/dev/null || echo "available=invalid")
+  case "$ACTIVE_OUTPUT" in
+    available=true*)
+      ACTIVE_LEARNINGS="true"
+      ACTIVE_LEARNINGS_SUMMARY="${ACTIVE_OUTPUT#available=true }"
+      ;;
+    available=invalid*)
+      ACTIVE_LEARNINGS="true"
+      ACTIVE_LEARNINGS_SUMMARY="invalid_learnings_json"
+      ;;
+  esac
+elif [ "$HAS_LEARNINGS" = "false" ] && [ -f "${PROJECT_DIR}/.autobot/active-learnings.md" ]; then
+  rm -f "${PROJECT_DIR}/.autobot/active-learnings.md"
 fi
 
 # ── Step 3: build-state 확인 (resume 가능 여부) ──
-BUILD_STATE=""
 STATE_FILE="${PROJECT_DIR}/.autobot/build-state.json"
+HAS_BUILD_STATE="false"
 if [ -f "$STATE_FILE" ]; then
-  BUILD_STATE=$(python3 -c "
-import json, sys
-d=json.load(open(sys.argv[1]))
-app=d.get('appName','?')
-phases=d.get('phases',{})
-failed=[k for k,v in phases.items() if v.get('status')=='failed']
-last_ok=max([int(k) for k,v in phases.items() if v.get('status')=='completed'], default=-1)
-if failed:
-    print(f'resumable=true, app={app}, failed_phase={failed[0]}, last_completed={last_ok}')
-elif last_ok < 6:
-    print(f'resumable=true, app={app}, next_phase={last_ok+1}, last_completed={last_ok}')
-else:
-    print(f'resumable=false, app={app}, all_completed=true')
-" "$STATE_FILE" 2>/dev/null || echo "parse_error")
-else
-  BUILD_STATE="no_state"
+  HAS_BUILD_STATE="true"
 fi
 
 # ── Output systemMessage ──
 cat << EOF
 {
-  "systemMessage": "[Autobot Session] ${ENV_SUMMARY}, ${ENV_PATH_INFO}, learnings=[${LEARNINGS_SUMMARY}], build_state=[${BUILD_STATE}]. Deploy agents should 'source <env_path>' to load ASC credentials when env_path is set."
+  "systemMessage": "[Autobot] has_env=${HAS_ENV}, asc_configured=${ASC_CONFIGURED}, has_learnings=${HAS_LEARNINGS}, active_learnings=${ACTIVE_LEARNINGS}, learnings_summary=${ACTIVE_LEARNINGS_SUMMARY}, has_build_state=${HAS_BUILD_STATE}. Phase learning files use explicit names: architecture.md, parallel_coding.md, quality.md, deploy.md. Read the mapped phase file first when present, then .autobot/active-learnings.md for shared context."
 }
 EOF

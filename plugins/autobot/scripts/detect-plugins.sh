@@ -1,7 +1,33 @@
 #!/bin/bash
-# Detect available plugins and tools for Autobot to leverage
-# SessionStart hook — outputs systemMessage JSON with environment info
+# Detect available plugins and tools for Autobot to leverage.
+# Intended for explicit, on-demand environment checks rather than SessionStart.
 set -euo pipefail
+
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+STITCH_AVAILABLE="${AUTOBOT_STITCH_TOOL_AVAILABLE:-}"
+if [[ -n "$STITCH_AVAILABLE" ]]; then
+  STITCH_SOURCE="tool-env"
+else
+  STITCH_SOURCE=""
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project-dir)
+      PROJECT_DIR="$2"
+      shift 2
+      ;;
+    --stitch-tool-available)
+      STITCH_AVAILABLE="$2"
+      STITCH_SOURCE="tool-arg"
+      shift 2
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
 
 # ── Detect CLI tools ──
 XCODEGEN_AVAILABLE="false"
@@ -14,11 +40,33 @@ if command -v fastlane &>/dev/null; then
   FASTLANE_AVAILABLE="true"
 fi
 
+# ── Locate .env file for credential detection ──
+ENV_FILE=""
+if [ -f "${PROJECT_DIR}/.env" ]; then
+  ENV_FILE="${PROJECT_DIR}/.env"
+elif [ -f "${HOME}/.config/autobot/.env" ]; then
+  ENV_FILE="${HOME}/.config/autobot/.env"
+fi
+
+env_has_key() {
+  local key="$1"
+
+  if [ -n "${!key:-}" ]; then
+    return 0
+  fi
+
+  if [ -n "$ENV_FILE" ] && grep -Eq "^[[:space:]]*${key}=" "$ENV_FILE"; then
+    return 0
+  fi
+
+  return 1
+}
+
 # ── Check for ASC credentials ──
 ASC_CONFIGURED="false"
-if [ -n "${ASC_API_KEY_ID:-}" ] && [ -n "${ASC_API_ISSUER_ID:-}" ] && [ -n "${ASC_API_KEY_PATH:-}" ]; then
+if env_has_key "ASC_API_KEY_ID" && env_has_key "ASC_API_ISSUER_ID" && env_has_key "ASC_API_KEY_PATH"; then
   ASC_CONFIGURED="true"
-elif [ -n "${APPLE_ID:-}" ] && [ -n "${APP_SPECIFIC_PASSWORD:-}" ]; then
+elif env_has_key "APPLE_ID" && env_has_key "APP_SPECIFIC_PASSWORD"; then
   ASC_CONFIGURED="true"
 fi
 
@@ -60,15 +108,22 @@ SERENA_AVAILABLE=$(detect_plugin "serena")
 CONTEXT7_AVAILABLE=$(detect_plugin "context7")
 
 # ── Detect Google Stitch MCP ──
-STITCH_AVAILABLE="false"
-if command -v stitch-mcp &>/dev/null; then
-  STITCH_AVAILABLE="true"
-elif npx @_davideast/stitch-mcp doctor &>/dev/null 2>&1; then
-  STITCH_AVAILABLE="true"
+# Primary signal should come from the caller/tooling layer because shell scripts
+# cannot directly inspect the live MCP tool registry.
+if [[ -z "$STITCH_AVAILABLE" ]]; then
+  STITCH_SOURCE="cli"
+  if command -v stitch-mcp &>/dev/null; then
+    STITCH_AVAILABLE="true"
+  elif npx @_davideast/stitch-mcp doctor &>/dev/null 2>&1; then
+    STITCH_AVAILABLE="true"
+    STITCH_SOURCE="doctor-fallback"
+  else
+    STITCH_AVAILABLE="false"
+  fi
 fi
 
 cat << EOF
 {
-  "systemMessage": "[Autobot Environment] axiom=${AXIOM_AVAILABLE}, serena=${SERENA_AVAILABLE}, context7=${CONTEXT7_AVAILABLE}, stitch=${STITCH_AVAILABLE}, xcodegen=${XCODEGEN_AVAILABLE}, fastlane=${FASTLANE_AVAILABLE}, asc_configured=${ASC_CONFIGURED}. Note: plugin detection is best-effort; 'unknown' means runtime check needed."
+  "systemMessage": "[Autobot Environment] axiom=${AXIOM_AVAILABLE}, serena=${SERENA_AVAILABLE}, context7=${CONTEXT7_AVAILABLE}, stitch=${STITCH_AVAILABLE}, stitch_source=${STITCH_SOURCE}, xcodegen=${XCODEGEN_AVAILABLE}, fastlane=${FASTLANE_AVAILABLE}, asc_configured=${ASC_CONFIGURED}. Note: plugin detection is best-effort; 'unknown' means runtime check needed."
 }
 EOF

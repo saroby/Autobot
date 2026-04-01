@@ -2,7 +2,7 @@
 """Generate a minimal but valid .xcodeproj/project.pbxproj for an iOS app.
 
 Usage:
-    python3 generate-pbxproj.py --name AppName --bundle-id com.saroby.appname \
+    python3 generate-pbxproj.py --name AppName --bundle-id com.axi.appname \
         --deployment-target 26.0 --sources-dir AppName
 
 Produces: AppName.xcodeproj/project.pbxproj

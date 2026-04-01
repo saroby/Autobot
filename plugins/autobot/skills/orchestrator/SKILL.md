@@ -7,6 +7,26 @@ description: Use when orchestrating a full iOS app build from an idea, coordinat
 
 Master coordination skill for building iOS 26+ apps from ideas. Manages the complete pipeline from idea analysis through TestFlight deployment with validation gates, error recovery, and state persistence.
 
+## SSOT Rules
+
+`plugins/autobot/spec/pipeline.json`이 Autobot 파이프라인의 단일 실행 규격이다.
+
+- Phase 번호, 이름, 상태 전이, retry, gate 정의는 실행 스펙을 기준으로 한다
+- build/resume의 상태 전이, Gate 실행/기록, Phase lifecycle 로그는 `scripts/pipeline.sh` 경로만 사용한다
+- 이 문서와 `build.md`, `resume.md`는 실행 스펙의 설명/운영 가이드다
+- README는 개요와 사용법만 다룬다
+- 문서 간 충돌이 있으면 실행 스펙이 우선한다
+
+## Safety Policy
+
+Autobot은 위험도를 기준으로 동작한다:
+
+- `autonomous`: 로컬 파일 생성/수정, 코드 생성, 빌드, 테스트, archive, resume
+- `warn`: Stitch 미설치, ASC 미설정, fastlane 미설치처럼 진행은 가능하지만 결과가 달라지는 상황
+- `require_confirmation`: 원격 저장소 생성/푸시, 되돌리기 어려운 외부 시스템 변경
+
+기본 build/resume 파이프라인은 `autonomous`와 `warn`만 사용한다. 원격 저장소 생성/푸시는 기본 범위에서 제외한다.
+
 ## Core Pipeline
 
 ```
@@ -34,16 +54,18 @@ Master coordination skill for building iOS 26+ apps from ideas. Manages the comp
 
 ### Phase 요약
 
+<!-- AUTOBOT_PHASE_SUMMARY:START -->
 | Phase | Name | Agent | Parallel | Gate | Max Retry |
 |-------|------|-------|----------|------|-----------|
-| 0 | Pre-flight & Setup | (self) | No | → 환경/이름 검증 | 1 |
-| 1 | Architecture + Contracts | architect | No | → 산출물 존재/구조 검증 | 2 |
+| 0 | Pre-flight & 환경 준비 | (self) | No | → 환경/이름 검증 | 1 |
+| 1 | 아키텍처 + 계약 | architect | No | → 산출물 존재/구조 검증 | 2 |
 | 2 | UX Design (필수) | ux-designer | No | → Stitch 성공 필수, 미설치 시 fallback | 1 |
-| 3 | Project Scaffold | (self) | No | → .xcodeproj 존재 검증 | 1 |
-| 4 | Parallel Coding | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 | 2 |
-| 5 | Integration & Build | quality-engineer (`autobot-integration-build` 스킬) | No | → xcodebuild 성공 | 2 |
-| 6 | TestFlight Deploy | deployer | No | → soft (실패해도 진행) | 1 |
-| 7 | Retrospective | (self) | No | — | — |
+| 3 | Xcode 프로젝트 | (self) | No | → .xcodeproj 존재 검증 | 1 |
+| 4 | 병렬 코드 생성 | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 | 2 |
+| 5 | 통합 + 빌드 검증 | quality-engineer (`autobot-integration-build` 스킬) | No | → xcodebuild 성공 | 2 |
+| 6 | TestFlight 배포 | deployer | No | → 배포 결과 기록 (soft) | 1 |
+| 7 | 회고 | (self) | No | — | — |
+<!-- AUTOBOT_PHASE_SUMMARY:END -->
 
 ## Phase Validation Gates
 
@@ -57,13 +79,26 @@ Gate 통과 실패 시:
 
 ### `<AppName>/Models/` 무결성 보호
 
-Phase 1 완료 시 `<AppName>/Models/` 디렉토리의 체크섬을 `build-state.json`에 저장.
-Gate 4→5에서 체크섬을 재계산하여 비교. 불일치 시 `git checkout -- <AppName>/Models/`로 자동 복원.
+Phase 1 완료 시 `<AppName>/Models/` 디렉토리의 체크섬을 `build-state.json`에 저장하고, `.autobot/contracts/phase-1-models/`에 타입 계약 snapshot을 보관한다.
+Gate 4→5에서 체크섬을 재계산하여 비교한다. 불일치 시 git이 아니라 저장된 snapshot으로 자동 복원한다.
 
 ```bash
-# 체크섬 계산
-find <AppName>/Models/ -name "*.swift" -exec md5 {} \; | sort | md5
+# 체크섬/스냅샷 관리
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" save --app-name "<AppName>"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" verify --app-name "<AppName>"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore --app-name "<AppName>"
 ```
+
+## Phase Learning Map
+
+Phase별 학습 파일은 숫자 이름이 아니라 명시적 key를 사용한다:
+
+- Phase 1 → `.autobot/phase-learnings/architecture.md`
+- Phase 4 → `.autobot/phase-learnings/parallel_coding.md`
+- Phase 5 → `.autobot/phase-learnings/quality.md`
+- Phase 6 → `.autobot/phase-learnings/deploy.md`
+
+Phase 0, 2, 3, 7은 `.autobot/active-learnings.md`를 사용한다.
 
 ## Pre-flight Check (Phase 0)
 
@@ -73,7 +108,6 @@ Phase 0에서 빌드 시작 전에 환경을 검증:
 ✓ Xcode Command Line Tools 설치됨 (xcode-select -p)
 ✓ iOS Simulator 런타임 존재 (xcrun simctl list runtimes | grep iOS)
 ✓ python3 사용 가능 (pbxproj fallback용)
-✓ git 사용 가능
 ✓ 디스크 여유 공간 > 1GB
 ✓ (선택) xcodegen 설치 여부 → 있으면 사용, 없으면 fallback
 ✓ (선택) fastlane 설치 여부 → 없으면 Phase 6에서 자동 설치 시도
@@ -157,6 +191,22 @@ if build-state.json.backend_required == true:
 
 핵심 원칙: 각 에이전트는 지정된 디렉토리에만 쓰고, `<AppName>/Models/`는 architect만 생성한다 (다른 에이전트 수정 금지).
 
+### Agent Output Contract
+
+각 에이전트는 아래 네 가지를 항상 만족해야 한다:
+
+- 입력 파일을 직접 읽고 추론한 결과만 사용한다
+- 지정된 출력 디렉토리에만 쓴다
+- 금지된 디렉토리에 쓰지 않는다
+- 완료 시 Gate가 검증할 수 있는 파일 산출물을 남긴다
+
+에이전트가 실패를 보고할 때는 최소한 다음을 포함한다:
+
+- 읽은 입력 파일
+- 생성 또는 수정한 파일
+- 남은 blocker
+- 재시도 시 필요한 추가 맥락
+
 ## Backend Mode Quick Reference
 
 `backend_required == true`일 때 영향받는 모든 Phase를 한 곳에서 참조:
@@ -174,6 +224,113 @@ if build-state.json.backend_required == true:
 
 > backend_required 판정은 Phase 1(architect)에서 수행한다. 판정 로직은 `references/planning-patterns.md`의 "Architecture Decision Tree" 참조.
 
+## Build Infrastructure
+
+Autobot은 빌드 과정의 신뢰성과 관찰 가능성을 높이기 위한 인프라 스크립트를 제공한다.
+
+### Event Log (`build-log.jsonl`)
+
+빌드 과정의 모든 중요 이벤트를 `.autobot/build-log.jsonl`에 append-only로 기록한다. Retrospective(Phase 7)와 디버깅의 1차 데이터 소스.
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
+  --phase 1 --event agent_dispatch --agent architect --detail "opus model"
+```
+
+이벤트 유형:
+
+| event | 발생 시점 | detail 예시 |
+|-------|----------|------------|
+| `start` | Phase 시작 | Phase 이름 |
+| `env_check` | Phase 0 환경 감지 | `"xcodegen=true, stitch=true"` |
+| `agent_dispatch` | 에이전트 디스패치 | 에이전트 이름, 모델 |
+| `agent_complete` | 에이전트 완료 | 생성된 파일 수 |
+| `agent_violation` | 에이전트 소유권 위반 | 위반 파일 경로 |
+| `gate_pass` | Gate 통과 | Gate 이름 |
+| `gate_fail` | Gate 실패 | 실패 항목 |
+| `build_attempt` | xcodebuild 시도 | `{"attempt":1,"errors":8}` |
+| `build_fix` | 빌드 에러 수정 | 수정 카테고리, 파일 |
+| `snapshot_save` | 스냅샷 저장 | Phase 번호, 경로 |
+| `snapshot_restore` | 스냅샷 복원 | Phase 번호, 사유 |
+| `lock_acquired` | 빌드 잠금 획득 | PID |
+| `complete` | Phase 완료 | — |
+
+### Pipeline Engine (`pipeline.sh`)
+
+build/resume는 raw 상태 변경 API를 직접 조합하지 않고 `pipeline.sh`를 통해 검증, 상태 기록, lifecycle 로그를 함께 수행한다.
+
+```bash
+# JSON 스키마 검증
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
+
+# Phase 시작
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase 4 --detail "Parallel coding"
+
+# Phase 완료 / fallback / 실패
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 4
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 2 --status fallback --detail "Stitch unavailable"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" fail-phase --phase 5 --error "xcodebuild failed" --increment-retry
+
+# Gate 실행 + 결과 기록
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" run-gate --gate "4->5"
+```
+
+`validate-state.sh`는 낮은 수준의 호환용 검증/쓰기 래퍼로 남겨두고, build/resume의 주 경로에서는 직접 사용하지 않는다.
+
+상태 전이 규칙:
+
+```
+pending     → in_progress
+in_progress → completed | fallback | failed
+failed      → in_progress (retry, retryCount < maxRetry)
+completed   → (terminal)
+fallback    → (terminal)
+skipped     → (terminal)
+```
+
+### Agent Sandbox (`agent-sandbox.sh`)
+
+에이전트 실행 전후의 파일시스템 diff를 계산하여 파일 소유권 위반을 감지한다.
+
+```bash
+# 에이전트 실행 전
+bash "$CLAUDE_PLUGIN_ROOT/scripts/agent-sandbox.sh" before \
+  --agent ui-builder --app-name "<AppName>"
+
+# (에이전트 실행)
+
+# 에이전트 실행 후 — 소유권 위반 자동 감지
+bash "$CLAUDE_PLUGIN_ROOT/scripts/agent-sandbox.sh" after \
+  --agent ui-builder --app-name "<AppName>"
+```
+
+### Phase-level Snapshot (`snapshot-contracts.sh` 확장)
+
+Models/ 스냅샷에 더해, Phase 4 완료 시점의 전체 산출물을 스냅샷으로 보관한다. Phase 5 반복 실패 시 Phase 4의 깨끗한 상태로 복원 가능.
+
+```bash
+# Gate 4→5 통과 시
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" save-phase \
+  --phase 4 --app-name "<AppName>"
+
+# Phase 5 실패 → Phase 4 복원
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore-phase \
+  --phase 4 --app-name "<AppName>"
+```
+
+지원하는 Phase: 1 (Models), 2 (Designs), 3 (Config), 4 (Views/Services/App/Backend)
+
+### Build Lock (동시 실행 방지)
+
+같은 디렉토리에서 두 빌드가 동시에 실행되는 것을 방지한다. Phase 0에서 잠금을 획득하고, Phase 7 또는 빌드 종료 시 해제한다.
+
+```bash
+LOCK_FILE=".autobot/build.lock"
+# Phase 0 시작 시 — 잠금 획득 (build.md 참조)
+# Phase 7 완료 또는 빌드 종료 시 — 잠금 해제
+rm -f "$LOCK_FILE"
+```
+
 ## Error Recovery
 
 ### 재시도 전략
@@ -187,17 +344,14 @@ if build-state.json.backend_required == true:
 
 ### 롤백 전략
 
-Phase 실패 시 git을 사용한 롤백:
+복구 기준점은 git이 아니라 build artifact snapshot이다.
 
 ```bash
-# Phase 4 실패 → Phase 3 직후 상태로 복원
-git stash  # 현재 변경 보존
-git log --oneline  # Phase 3 완료 커밋 확인
-# quality-engineer가 수동 복구 시도
-
-# Models/ 오염 시 → 타입 계약만 복원
-git checkout -- Models/
+# Models/ 오염 시 → 타입 계약 snapshot으로 복원
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore --app-name "<AppName>"
 ```
+
+git은 선택적 보조 도구로만 사용한다. 설계상 복구 가능성은 VCS 상태에 의존하지 않는다.
 
 ### Circuit Breaker
 
@@ -216,11 +370,15 @@ git checkout -- Models/
   "buildId": "build-20260316-socialfitness",
   "appName": "SocialFitness",
   "displayName": "소셜 피트니스",
-  "bundleId": "com.saroby.socialfitness",
+  "bundleId": "com.axi.socialfitness",
   "projectPath": "/Users/saroby/SocialFitness",
   "idea": "소셜 피트니스 트래킹 앱",
   "startedAt": "2026-03-16T12:00:00Z",
   "modelsChecksum": "a1b2c3d4e5f6...",
+  "contracts": {
+    "modelsSnapshotPath": ".autobot/contracts/phase-1-models",
+    "modelsChecksumFile": ".autobot/contracts/models.sha256"
+  },
   "environment": {
     "xcodegen": true,
     "fastlane": false,
@@ -266,9 +424,19 @@ git checkout -- Models/
 
 ```
 pending → in_progress → completed
+                      → fallback
                       → failed → (retry) → in_progress
                                 → skipped (circuit breaker)
 ```
+
+상태 의미:
+
+- `pending`: 아직 시작하지 않음
+- `in_progress`: 현재 실행 중
+- `completed`: Gate 통과까지 완료
+- `fallback`: 대체 경로로 성공적으로 진행
+- `failed`: 재시도 전 또는 재시도 한도 초과로 중단
+- `skipped`: 정책상 실행하지 않음 또는 circuit breaker로 중단
 
 ## Context Window Management
 

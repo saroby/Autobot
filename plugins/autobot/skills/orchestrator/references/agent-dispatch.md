@@ -3,7 +3,7 @@
 ## Path Convention
 
 > **모든 소스 파일은 `[sources]` 디렉토리에 작성한다.** `[sources]` = `[project]/[AppName]` (Xcode 소스 그룹).
-> `.autobot/`, `.git/`, `backend/` 등은 `[project]` 루트에 위치.
+> `.autobot/`, `backend/` 등은 `[project]` 루트에 위치.
 >
 > 예: AppName이 `FocusTimer`이고 프로젝트가 `/Users/saroby/FocusTimer`이면:
 > - `[project]` = `/Users/saroby/FocusTimer`
@@ -26,6 +26,41 @@ Phase 4의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지
 | backend-engineer | `[project]/backend/` | `[sources]/Models/APIContracts.swift` | `[sources]/`, root `.gitignore` |
 | quality-engineer | `[project]/*Tests/`, fixes in any file, integration wiring | All source files | — |
 | deployer | `[project]/build/`, config files | Built app | — |
+
+## Agent Sandbox (파일 소유권 강제)
+
+에이전트 실행 전후에 `agent-sandbox.sh`를 호출하여 파일 소유권 규칙을 **프로그래밍적으로 강제**한다.
+
+```bash
+# 에이전트 디스패치 직전
+bash "$CLAUDE_PLUGIN_ROOT/scripts/agent-sandbox.sh" before --agent ui-builder --app-name "<AppName>"
+
+# Agent(subagent_type="ui-builder", prompt="...")
+
+# 에이전트 완료 직후
+bash "$CLAUDE_PLUGIN_ROOT/scripts/agent-sandbox.sh" after --agent ui-builder --app-name "<AppName>"
+# → "OK: ui-builder — 12 created, 0 deleted, 0 violations"
+# → 또는 "VIOLATION: ui-builder wrote to Models/ → ..." (exit 1)
+```
+
+위반 감지 시:
+1. 위반 파일을 삭제
+2. 이벤트 로그에 기록: `build-log.sh --phase 4 --event agent_violation --agent <name>`
+3. 해당 에이전트만 재실행
+
+## Success Contract
+
+각 에이전트는 완료 시 아래 중 하나를 남겨야 한다:
+
+- Gate가 검증 가능한 파일 산출물
+- 재시도에 필요한 blocker 보고
+
+최소 보고 항목:
+
+- `inputs_read`: 읽은 파일
+- `outputs_written`: 생성 또는 수정한 파일
+- `policy_violations`: 금지 디렉토리 침범 여부
+- `next_action`: 성공 또는 재시도 지침
 
 ### Agent Prompt Templates
 

@@ -26,16 +26,40 @@ description: Use after an Autobot build completes (success or failure), when che
 
 ### 1. Collect Build Metrics
 
-`build-state.json`과 세션 컨텍스트에서 수집:
+**1차 데이터 소스**: `.autobot/build-log.jsonl` (구조화된 이벤트 로그)
+**2차 데이터 소스**: `build-state.json`, `.autobot/deploy-status.json`
+**3차 보조**: 세션 컨텍스트 (로그에 없는 정보만)
+
+```bash
+# 이벤트 로그에서 빌드 시도 횟수 추출
+grep '"build_attempt"' .autobot/build-log.jsonl | wc -l
+
+# 에이전트 소유권 위반 횟수 추출
+grep '"agent_violation"' .autobot/build-log.jsonl | wc -l
+
+# Phase별 소요 시간 계산 (start ~ complete 이벤트 간 간격)
+python3 -c "
+import json
+events = [json.loads(l) for l in open('.autobot/build-log.jsonl')]
+starts = {e['phase']: e['ts'] for e in events if e['event'] == 'start'}
+ends = {e['phase']: e['ts'] for e in events if e['event'] == 'complete'}
+for p in sorted(starts):
+    if p in ends:
+        print(f'Phase {p}: {starts[p]} → {ends[p]}')
+" 2>/dev/null || echo "build-log.jsonl not available"
+```
 
 | 항목 | 소스 | 예시 |
 |------|------|------|
-| Phase별 소요 시간 | `phases[N].completedAt - phases[N-1].completedAt` | 180초 |
-| 재시도 횟수 | `phases[N].retryCount` | 2 |
-| 에러 유형 | 세션 컨텍스트 (컴파일 에러, 타임아웃 등) | "Cannot find type" |
-| 에이전트 성공/실패 | 세션 컨텍스트 | ui-builder 성공, data-engineer 1회 실패 |
+| Phase별 소요 시간 | `build-log.jsonl` (start/complete 이벤트 간격) | 180초 |
+| 빌드 시도 횟수 | `build-log.jsonl` (build_attempt 이벤트 수) | 3 |
+| 에러 유형/카테고리 | `build-log.jsonl` (build_fix 이벤트의 category) | "import", "type" |
+| 에이전트 소유권 위반 | `build-log.jsonl` (agent_violation 이벤트) | 0 |
+| 스냅샷 복원 횟수 | `build-log.jsonl` (snapshot_restore 이벤트 수) | 1 |
+| 재시도 횟수 | `build-state.json` (`phases[N].retryCount`) | 2 |
+| 에이전트 성공/실패 | `build-log.jsonl` (agent_complete/agent_dispatch 매칭) | ui-builder 성공 |
 | 배포 결과 | `.autobot/deploy-status.json` | upload_success: true |
-| 모델/토큰 사용량 | 세션 컨텍스트 (가능한 경우) | opus: 45k tokens, sonnet: 120k tokens |
+| 모델/토큰 사용량 | 세션 컨텍스트 (가능한 경우) | opus: 45k tokens |
 
 ### 2. Analyze Patterns
 
@@ -84,6 +108,8 @@ Phase 0에서 `.autobot/learnings.json`을 읽고:
 2. 유사한 앱 유형에 검증된 아키텍처 패턴 사용
 3. 실패 이력이 있는 배포 방법 건너뜀
 4. 과거 성능 데이터 기반으로 에이전트 전략 조정
+
+`learnings.json` 업데이트 후 다음 세션에서 바로 사용할 수 있도록 `.autobot/active-learnings.md`와 `.autobot/phase-learnings/*.md` 압축본도 재생성한다. 이 파일들은 SessionStart 훅과 build/resume Phase 0의 1차 입력이다.
 
 ## Additional Resources
 

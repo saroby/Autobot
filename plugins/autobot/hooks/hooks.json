@@ -8,11 +8,6 @@
             "type": "command",
             "command": "bash $CLAUDE_PLUGIN_ROOT/scripts/load-learnings.sh",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "bash $CLAUDE_PLUGIN_ROOT/scripts/detect-plugins.sh",
-            "timeout": 5
           }
         ]
       }

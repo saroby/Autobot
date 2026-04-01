@@ -86,7 +86,9 @@ KEYEOF
 
     # Register app (idempotent — skips if already exists)
     echo "Registering app: $BUNDLE_ID ($DISPLAY_NAME)"
-    fastlane produce create \
+    set +e
+    PRODUCE_OUTPUT=$(
+      fastlane produce create \
       --app_identifier "$BUNDLE_ID" \
       --app_name "$DISPLAY_NAME" \
       --language "ko" \
@@ -94,10 +96,25 @@ KEYEOF
       --sku "$BUNDLE_ID" \
       ${TEAM_ID:+--team_id "$TEAM_ID"} \
       --api_key_path "$API_KEY_JSON" \
-      2>&1 || echo "App may already exist on ASC, continuing..."
+      2>&1
+    )
+    PRODUCE_EXIT=$?
+    set -e
+
+    if [ $PRODUCE_EXIT -eq 0 ]; then
+      echo "$PRODUCE_OUTPUT"
+      echo "App registration step complete."
+    elif echo "$PRODUCE_OUTPUT" | grep -Eiq "already.*exist|already.*being used"; then
+      echo "$PRODUCE_OUTPUT"
+      echo "App already registered on ASC, continuing..."
+    else
+      echo "$PRODUCE_OUTPUT"
+      echo "ERROR: App registration failed."
+      rm -f "$API_KEY_JSON"
+      exit 1
+    fi
 
     rm -f "$API_KEY_JSON"
-    echo "App registration step complete."
   fi
 else
   echo "Skipping app registration: ASC credentials or bundle ID not available."
@@ -128,19 +145,21 @@ PLIST_EOF
 
 echo "=== Step 1: Archive ==="
 
-ARCHIVE_CMD="xcodebuild archive \
-  -project \"$XCODEPROJ\" \
-  -scheme \"$SCHEME\" \
-  -archivePath \"$ARCHIVE_PATH\" \
-  -destination 'generic/platform=iOS' \
-  -allowProvisioningUpdates \
-  CODE_SIGN_STYLE=Automatic"
+ARCHIVE_CMD=(
+  xcodebuild archive
+  -project "$XCODEPROJ"
+  -scheme "$SCHEME"
+  -archivePath "$ARCHIVE_PATH"
+  -destination "generic/platform=iOS"
+  -allowProvisioningUpdates
+  CODE_SIGN_STYLE=Automatic
+)
 
 if [ -n "$TEAM_ID" ]; then
-  ARCHIVE_CMD="$ARCHIVE_CMD DEVELOPMENT_TEAM=$TEAM_ID"
+  ARCHIVE_CMD+=("DEVELOPMENT_TEAM=$TEAM_ID")
 fi
 
-eval $ARCHIVE_CMD 2>&1
+"${ARCHIVE_CMD[@]}" 2>&1
 
 if [ ! -d "$ARCHIVE_PATH" ]; then
   echo "Error: Archive failed"
@@ -172,8 +191,10 @@ else
   echo "(Ensure your Apple ID is signed in at Xcode → Settings → Accounts)"
 fi
 
+set +e
 "${EXPORT_CMD[@]}" 2>&1
 EXPORT_EXIT=$?
+set -e
 
 if [ $EXPORT_EXIT -ne 0 ]; then
   # Export+upload failed — check if IPA was at least created

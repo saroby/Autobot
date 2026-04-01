@@ -3,7 +3,11 @@
 build/
 *.xcarchive
 *.ipa
+__pycache__/
 .autobot/learnings.json
 .autobot/deploy-status.json
 .autobot/build-log.md
+.autobot/build-log.jsonl
+.autobot/build.lock
+.autobot/sandbox/
 Samples/

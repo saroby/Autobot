@@ -41,14 +41,14 @@ xcodegen이 없으면 `generate-pbxproj.py`가 유효한 `.xcodeproj/project.pbx
 # Autobot 빌드에서 사용 (Phase 0에서 이미 프로젝트 디렉토리를 생성한 경우):
 bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
   --name "AppName" \
-  --bundle-id "com.saroby.appname" \
+  --bundle-id "com.axi.appname" \
   --project-dir "." \
   --deployment-target "26.0"
 
 # backend_required == true일 때 --backend 플래그 추가:
 bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
   --name "AppName" \
-  --bundle-id "com.saroby.appname" \
+  --bundle-id "com.axi.appname" \
   --project-dir "." \
   --deployment-target "26.0" \
   --backend
@@ -56,7 +56,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
 # 독립 실행 (새 프로젝트 디렉토리를 자동 생성):
 bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
   --name "AppName" \
-  --bundle-id "com.saroby.appname" \
+  --bundle-id "com.axi.appname" \
   --deployment-target "26.0"
 ```
 

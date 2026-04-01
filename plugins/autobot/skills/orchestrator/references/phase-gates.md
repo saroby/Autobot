@@ -1,5 +1,7 @@
 # Phase Validation Gates
 
+> Gate의 이름, 순서, soft 여부, phase 연결은 `plugins/autobot/spec/pipeline.json`이 SSOT다. 이 문서는 각 gate의 검증 check를 설명한다.
+
 매 Phase 완료 후, 다음 Phase에 진입하기 전에 **산출물 검증(Validation Gate)**을 통과해야 한다.
 Gate를 통과하지 못하면 Phase를 `failed`로 마킹하고 재시도하거나 사용자에게 안내한다.
 
@@ -12,7 +14,6 @@ Gate를 통과하지 못하면 Phase를 `failed`로 마킹하고 재시도하거
 ```
 CHECK:
   ✓ 프로젝트 디렉토리 존재
-  ✓ git init 완료 (.git/ 존재)
   ✓ .autobot/ 디렉토리 존재
   ✓ .autobot/build-state.json 존재 & 유효한 JSON
   ✓ appName이 /^[A-Z][a-zA-Z0-9]*$/ 패턴 충족
@@ -29,6 +30,8 @@ CHECK:
   ✓ .autobot/architecture.md 존재 & 비어있지 않음
   ✓ <AppName>/Models/*.swift 파일이 1개 이상 존재
   ✓ <AppName>/Models/ServiceProtocols.swift 존재
+  ✓ .autobot/contracts/phase-1-models/ snapshot 저장 완료
+  ✓ .autobot/contracts/models.sha256 존재
   ✓ 모든 <AppName>/Models/*.swift에 'import SwiftData' 또는 'import Foundation' 포함
   ✓ architecture.md에 Screen 관련 섹션 존재 (grep -qi "screen")
   ✓ architecture.md에 Design Direction 섹션 존재 (grep -qi "design.*direction\|color.*palette")
@@ -84,15 +87,21 @@ FAIL → scaffold 재실행
 ### Gate 4→5: 병렬 코드 생성 완료
 
 ```
+PRE-CHECK (에이전트 행동 검증):
+  ✓ agent-sandbox.sh after --agent ui-builder → 0 violations
+  ✓ agent-sandbox.sh after --agent data-engineer → 0 violations
+  ✓ (backend_required) agent-sandbox.sh after --agent backend-engineer → 0 violations
+FAIL → 위반 파일 삭제 + 해당 에이전트만 재실행
+
 CHECK:
   ✓ <AppName>/Views/ 디렉토리에 .swift 파일 1개 이상
   ✓ <AppName>/ViewModels/ 디렉토리에 .swift 파일 1개 이상
   ✓ <AppName>/Services/ 디렉토리에 .swift 파일 1개 이상
   ✓ <AppName>/App/<AppName>App.swift에 '.modelContainer' 문자열 포함
   ✓ <AppName>/Models/*.swift 파일이 Phase 1과 동일 (수정되지 않음 — checksum 비교)
-  ✓ 에이전트 간 파일 소유권 위반 없음 (각자 지정 디렉토리에만 쓰기)
+  ✓ 에이전트 간 파일 소유권 위반 없음 (agent-sandbox로 검증됨)
 FAIL:
-  - <AppName>/Models/ 변경됨 → git checkout으로 <AppName>/Models/ 복원 후 Phase 4 재실행
+  - <AppName>/Models/ 변경됨 → `.autobot/contracts/phase-1-models/` snapshot으로 복원 후 Phase 4 재실행
   - 파일 누락 → 해당 에이전트만 재실행
   ✓ (backend_required) backend/ 디렉토리 존재
   ✓ (backend_required) backend/Dockerfile 존재
@@ -100,6 +109,10 @@ FAIL:
   ✓ (backend_required) backend/app/main.py 존재
 FAIL:
   - backend/ 누락 → backend-engineer만 재실행
+
+POST-GATE (통과 후):
+  → snapshot-contracts.sh save-phase --phase 4 (Phase 5 실패 시 복원용)
+  → build-log.sh --phase 4 --event snapshot_save
 ```
 
 ### Gate 5→6: 빌드 성공
@@ -158,6 +171,22 @@ Gate N→N+1 검증
 ## Gate에서 사용하는 검증 명령
 
 ```bash
+# 상태 전이 검증 (Phase 시작 전)
+bash "$CLAUDE_PLUGIN_ROOT/scripts/validate-state.sh" transition --phase <N> --to in_progress
+
+# build-state.json 스키마 검증
+bash "$CLAUDE_PLUGIN_ROOT/scripts/validate-state.sh" schema
+
+# 에이전트 소유권 위반 감지
+bash "$CLAUDE_PLUGIN_ROOT/scripts/agent-sandbox.sh" after --agent <name> --app-name "<AppName>"
+
+# Phase-level 스냅샷 저장/복원
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" save-phase --phase 4 --app-name "<AppName>"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore-phase --phase 4 --app-name "<AppName>"
+
+# 이벤트 로그 기록
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase <N> --event <name> [--detail <text>] [--agent <name>]
+
 # 파일 존재 확인
 test -f "<path>"
 
@@ -200,8 +229,9 @@ print(f'Design Direction: {len(hexes)} colors validated')
 grep -qi "integration\|service.*layer\|service.*protocol" .autobot/architecture.md
 grep -qi "privacy\|file.timestamp\|C617" .autobot/architecture.md
 
-# <AppName>/Models/ 무결성 (Phase 1 완료 시 체크섬 저장)
-find <AppName>/Models/ -name "*.swift" -exec md5 {} \; | sort | md5
+# <AppName>/Models/ 무결성 (Phase 1 완료 시 체크섬 저장 + snapshot)
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" save --app-name "<AppName>"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" verify --app-name "<AppName>"
 
 # xcodebuild 결과 확인
 xcodebuild build ... 2>&1 | tail -1 | grep -q "BUILD SUCCEEDED"
@@ -238,4 +268,4 @@ Phase 1 완료 시 `<AppName>/Models/` 디렉토리의 체크섬을 `build-state
 }
 ```
 
-Phase 4 완료 후 Gate 4→5에서 체크섬을 재계산하여 비교. 불일치 시 `git checkout -- <AppName>/Models/`로 복원.
+Phase 4 완료 후 Gate 4→5에서 체크섬을 재계산하여 비교한다. 불일치 시 `.autobot/contracts/phase-1-models/` snapshot으로 복원한다.

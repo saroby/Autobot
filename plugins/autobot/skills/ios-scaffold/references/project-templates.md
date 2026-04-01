@@ -5,7 +5,7 @@
 ```yaml
 name: ${APP_NAME}
 options:
-  bundleIdPrefix: com.saroby
+  bundleIdPrefix: com.axi
   deploymentTarget:
     iOS: "26.0"
   xcodeVersion: "26.3"
@@ -29,7 +29,7 @@ targets:
         type: folder              # ← Folder Reference (PBXFileSystemSynchronizedRootGroup)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.saroby.${APP_NAME_LOWER}
+        PRODUCT_BUNDLE_IDENTIFIER: com.axi.${APP_NAME_LOWER}
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
@@ -49,7 +49,7 @@ targets:
       - target: ${APP_NAME}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.saroby.${APP_NAME_LOWER}.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.axi.${APP_NAME_LOWER}.tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/${APP_NAME}.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/${APP_NAME}"
         BUNDLE_LOADER: "$(TEST_HOST)"
 ```
