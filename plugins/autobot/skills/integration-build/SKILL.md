@@ -179,15 +179,32 @@ xcodebuild -project *.xcodeproj -scheme <scheme> \
 
 ### 반복 전략
 
-각 빌드 시도마다 이벤트 로그에 기록한다:
+각 빌드 시도마다 이벤트 로그에 기록한다. detail의 `succeeded` 필드는 필수 (true/false):
+
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_attempt \
-  --detail "{\"attempt\":${N},\"errors\":${ERROR_COUNT}}"
+  --detail "{\"attempt\":${N},\"errors\":${ERROR_COUNT},\"succeeded\":false}"
 
 # 수정 후
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_fix \
   --detail "{\"category\":\"import\",\"files\":[\"Views/HomeView.swift\"]}"
 ```
+
+빌드가 성공하는 순간 다음 두 가지를 **모두** 기록한다 (Gate 5→6의 truth source는 metadata, build-log는 audit only):
+
+```bash
+# 감사 로그
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_attempt \
+  --detail "{\"attempt\":${N},\"errors\":0,\"succeeded\":true}"
+
+# Gate가 읽는 truth source — 빌드 성공이 확정된 직후 기록 필수
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-phase-status --phase 5 --to in_progress \
+  --metadata build_succeeded=true
+```
+
+> `metadata.build_succeeded=true`가 기록되지 않으면 Gate 5→6는 항상 실패한다.
+> `pipeline.sh advance-phase --phase 5 --metadata build_succeeded=true`를 사용하면
+> Gate 실행 + 통과 시 `completed` 마킹까지 한 번에 처리된다.
 
 | 반복 횟수 | 전략 |
 |----------|------|

@@ -102,6 +102,18 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 → 종료
 ```
 
+### Circuit breaker가 트립된 빌드 재개
+
+`build-state.json.phases`에 `skipReason`을 가진 phase가 다수 존재하고, retrospective(7)가 `in_progress`라면 circuit breaker가 트립한 상태다. 자동 동작:
+
+- trip을 일으킨 phase는 `failed` 상태로 보존 (포렌식)
+- 그 외 미완료 phase는 `skipped` + `skipReason: "circuit breaker tripped on phase N"`
+- retrospective는 `in_progress` (즉시 회고 진입 가능)
+
+이 상태에서 `/autobot:resume`은 **retrospective만 실행**한다. trip 원인을 분석한 뒤, 사용자가 의도적으로 다시 시도하려면:
+- `rm -rf .autobot/build-state.json` 후 `/autobot:make` (전체 초기화), 또는
+- `/autobot:resume <N>`로 특정 phase부터 강제 재시작 (`--allow-terminal-restart` 의미). 단, `skipped` phase에서 시작하려면 dependency 충족 여부를 운영자가 책임진다.
+
 ### 사용자가 Phase 번호를 생략한 경우
 
 `build-state.json`의 `phases` 배열을 순회하여 재개 지점을 자동 결정:
@@ -213,18 +225,29 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase <N> --detail 
 ## Step 5: 상태 저장
 
 각 Phase 완료/실패 시 build 커맨드와 동일하게 `.autobot/build-state.json`을 갱신한다.
-직접 JSON을 덮어쓰지 말고 runtime 엔진을 통해 기록한다:
+직접 JSON을 덮어쓰지 말고 runtime 엔진을 통해 기록한다.
+
+`advance-phase`가 outgoing gate 실행 + 통과 시 `completed`/`fallback` 마킹 + 실패 시 `failed` 마킹을 한 번에 처리한다:
 
 ```bash
-# 성공
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase <N>
+# 성공 (Gate 자동 검증)
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase <N>
 
-# fallback
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase <N> --status fallback --detail "<reason>"
+# fallback (예: Phase 2 Stitch unavailable)
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase <N> \
+  --status fallback --detail "<reason>"
 
-# 실패
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" fail-phase --phase <N> --error "<error>" --increment-retry
+# Phase 5는 빌드 성공 metadata가 필수
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 5 \
+  --metadata build_succeeded=true
+
+# 명시적 실패 (gate 도달 전 단계에서 에이전트가 실패한 경우)
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" fail-phase --phase <N> \
+  --error "<error>" --increment-retry
 ```
+
+> 레거시 `complete-phase`는 호환을 위해 남아있지만, 새 흐름은 `advance-phase`만 사용한다.
+> `complete-phase`를 직접 호출하면 gate 검증을 우회하므로 권장하지 않는다.
 
 ### Phase 완료 시
 

@@ -70,7 +70,7 @@ claude --plugin-dir /path/to/Autobot/plugins/autobot
 - **Gate 1→2**: architecture.md 구조, Models/*.swift, ServiceProtocols.swift, 계약 snapshot이 준비됐는지 검증
 - **Gate 2→3**: Stitch 성공 시 design-spec/designs 산출물이 있고, 미설치 시 fallback 상태가 기록됐는지 검증
 - **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증
-- **Gate 4→5**: Views/Services 산출물 존재와 Models 체크섬 무결성을 검증
+- **Gate 4→5**: Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건
 - **Gate 5→6**: 빌드 성공, 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증
 - **Gate 6→7**: 배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행 (soft gate)
 <!-- AUTOBOT_GATE_SUMMARY:END -->
@@ -164,15 +164,26 @@ plugins/autobot/
 │   └── pipeline.json                   # 실행 가능한 Phase/Transition/Retry/Gate 규격
 ├── hooks/hooks.json                    # SessionStart 훅
 └── scripts/
-    ├── pipeline.sh                     # runtime.py 기반 Phase lifecycle + Gate 실행 진입점
-    ├── runtime.py                      # pipeline.json 해석 런타임
+    ├── pipeline.sh                     # 모든 mutating 명령의 단일 진입점 (advance-phase/run-gate/set-flag/append-log 등)
+    ├── runtime.py                      # CLI entrypoint + 외부 import 호환 facade (66L)
+    ├── spec_loader.py                  # pipeline.json 로드 + 구조 검증
+    ├── state_store.py                  # build-state.json I/O + 스키마 검증된 mutation
+    ├── event_log.py                    # build-log.jsonl 이벤트 검증 + append
+    ├── transitions.py                  # 상태 전이 + retry + circuit breaker
+    ├── gate_persistence.py             # gate 실행 결과의 state 기록 + 자동 복구 helpers
+    ├── cli.py                          # argparse + 모든 command handler
+    ├── gate_runner.py                  # gate 체크 평가 (declarative descriptor + procedural hooks)
+    ├── sandbox_runner.py               # spec.fileOwnership 기반 파일 소유권 enforcement
+    ├── snapshot_runner.py              # spec.fileOwnership 기반 phase별 snapshot save/restore
     ├── detect-plugins.sh               # 플러그인/도구 감지
     ├── load-learnings.sh               # SessionStart 요약 (학습 데이터 + 빌드 상태)
     ├── render-active-learnings.py      # active/phase learnings 렌더링
-    ├── snapshot-contracts.sh           # Models/ + Phase-level snapshot 저장/검증/복원
-    ├── build-log.sh                    # 구조화된 이벤트 로그 append
-    ├── validate-state.sh              # build-state.json 스키마 + 상태 전이 검증
-    └── agent-sandbox.sh               # 에이전트 파일 소유권 위반 감지
+    ├── snapshot-contracts.sh           # Models/ snapshot 진입점 (Phase-level은 snapshot_runner.py로 위임)
+    ├── build-log.sh                    # 검증된 이벤트 로그 append (runtime.py append-log 위임)
+    ├── validate-state.sh               # 진단 전용: schema/transition/list-checks/verify-docs/render-docs (read-only)
+    ├── agent-sandbox.sh                # sandbox_runner.py 위임 wrapper
+    ├── render_pipeline_docs.py         # spec → README/SKILL 자동 렌더링 블록
+    └── verify_spec_docs.py             # spec ↔ 문서 일관성 검증
 ```
 
 ## 빌드 인프라
@@ -181,12 +192,18 @@ plugins/autobot/
 
 | 스크립트 | 용도 |
 |---------|------|
-| `pipeline.sh` | 상태 전이, Gate 실행/기록, Phase lifecycle 로그의 단일 진입점 |
-| `build-log.sh` | 구조화된 이벤트 로그 (`.autobot/build-log.jsonl`) — Phase 7과 디버깅의 1차 데이터 소스 |
-| `validate-state.sh` | `build-state.json` 스키마 + 상태 전이 검증 — 잘못된 Phase 전이 방지 |
-| `agent-sandbox.sh` | 에이전트 실행 전후 파일 diff — 파일 소유권 위반 자동 감지 |
+| `pipeline.sh` | mutating 명령의 단일 진입점. `advance-phase`(gate 실행 + 통과 시 완료 마킹), `run-gate`, `set-flag`, `record-environment`, `start-phase`, `fail-phase`, `append-log` |
+| `build-log.sh` | `.autobot/build-log.jsonl`에 검증된 이벤트 append. event 이름과 필수 필드는 `spec/pipeline.json`의 `logEvents`가 SSOT |
+| `validate-state.sh` | 진단 전용 read-only: 스키마 검증, transition 검증, gate 체크 목록, 문서 일관성 검증 |
+| `agent-sandbox.sh` | `spec.fileOwnership`을 읽어 에이전트 파일 소유권 enforcement. 위반은 `phases.<id>.sandbox.violations`에 자동 기록 → Gate 4→5의 `sandbox_clean` 체크가 평가 |
 | `snapshot-contracts.sh` | Models/ 무결성 + Phase-level 스냅샷 — Phase 5 실패 시 Phase 4 복원 |
 | `build.lock` | 동시 빌드 실행 방지 — PID 기반 잠금 |
+
+### 단일 truth source 원칙
+
+- **상태**(`build-state.json`): runtime.py의 atomic write만 허용. gate 결정은 오직 state에서만 입력을 읽는다.
+- **로그**(`build-log.jsonl`): append-only audit. gate가 절대 참조하지 않음. 이벤트 스키마는 `spec/pipeline.json`의 `logEvents`가 강제.
+- **파일 소유권**(`spec.fileOwnership`): agent-sandbox.sh의 단일 권위 위치. agent 시스템 프롬프트는 spec을 따른다.
 
 ## 자기 개선
 

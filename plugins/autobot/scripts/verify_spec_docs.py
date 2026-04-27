@@ -27,9 +27,43 @@ RENDER_SCRIPT = SCRIPT_DIR / "render_pipeline_docs.py"
 DOCS_TO_CHECK = [
     PLUGIN_DIR / "skills" / "orchestrator" / "SKILL.md",
     PLUGIN_DIR / "skills" / "orchestrator" / "references" / "phase-gates.md",
-    PLUGIN_DIR / "commands" / "build.md",
+    PLUGIN_DIR / "commands" / "make.md",
     PLUGIN_DIR / "commands" / "resume.md",
 ]
+
+
+_DECLARATIVE_TYPES = {
+    "file_exists", "dir_exists", "dir_has_swift", "file_grep",
+    "command_success", "state_field_eq", "all",
+}
+
+
+def _iter_procedural_check_names(gate_spec: dict):
+    """Yield the procedural impl names referenced by a gate.checks list.
+
+    Accepts the v1 string form and the v2 descriptor form. Recurses into 'all'
+    groups so nested procedural checks still surface.
+    """
+    for entry in gate_spec.get("checks", []):
+        yield from _names_in_check(entry)
+
+
+def _names_in_check(check):
+    if isinstance(check, str):
+        yield check
+        return
+    if not isinstance(check, dict):
+        return
+    dtype = check.get("type")
+    if dtype == "procedural":
+        name = check.get("name")
+        if name:
+            yield name
+        return
+    if dtype == "all":
+        for child in check.get("checks", []):
+            yield from _names_in_check(child)
+    # declarative leaves (file_exists, dir_has_swift, ...) require no Python impl
 
 
 def load_spec() -> dict:
@@ -55,18 +89,17 @@ def check_gate_sections(spec: dict) -> list[str]:
 
 
 def check_implementations(spec: dict) -> list[str]:
-    """Every check name in pipeline.json should have an implementation in gate_runner.py."""
+    """Every procedural check referenced in pipeline.json should have a Python impl."""
     runner = SCRIPT_DIR / "gate_runner.py"
     if not runner.is_file():
         return [f"MISSING: {runner}"]
 
     content = runner.read_text(encoding="utf-8")
     errors = []
-    for gate_spec in spec.get("gates", {}).values():
-        for check_name in gate_spec.get("checks", []):
-            # Look for the check name in GATE_CHECKS registry
-            if f'"{check_name}"' not in content:
-                errors.append(f"Check '{check_name}' not found in gate_runner.py GATE_CHECKS")
+    for gate_id, gate_spec in spec.get("gates", {}).items():
+        for name in _iter_procedural_check_names(gate_spec):
+            if f'"{name}"' not in content:
+                errors.append(f"Gate {gate_id}: procedural check '{name}' has no impl in gate_runner.py")
     return errors
 
 
@@ -144,6 +177,53 @@ def check_rendered_blocks_current() -> list[str]:
     return [f"Rendered pipeline doc blocks are outdated: {detail}"]
 
 
+_FACADE_SOURCE_MODULES = (
+    "spec_loader",
+    "state_store",
+    "event_log",
+    "transitions",
+    "gate_persistence",
+)
+
+
+def check_facade_exports() -> list[str]:
+    """runtime.py is a thin facade over the focused modules.
+
+    Source of truth: each source module's ``__all__``. This check asserts that
+    every name in those ``__all__`` lists is reachable via ``runtime.X`` and
+    refers to the *same* object (not a shadow or stale rebinding). Adding a
+    new public symbol in a source module automatically extends the contract.
+    """
+    sys.path.insert(0, str(SCRIPT_DIR))
+    try:
+        import importlib
+
+        runtime = importlib.import_module("runtime")
+    except Exception as exc:  # pragma: no cover — defensive
+        return [f"Cannot import runtime facade: {exc}"]
+
+    errors: list[str] = []
+    for source_module_name in _FACADE_SOURCE_MODULES:
+        try:
+            source_module = importlib.import_module(source_module_name)
+        except Exception as exc:
+            errors.append(f"Cannot import source module '{source_module_name}': {exc}")
+            continue
+        all_names = getattr(source_module, "__all__", None)
+        if all_names is None:
+            errors.append(f"{source_module_name} missing __all__ — facade contract is unverified")
+            continue
+        for name in all_names:
+            if not hasattr(runtime, name):
+                errors.append(f"runtime.{name} missing — facade did not re-export {source_module_name}.{name}")
+                continue
+            if getattr(runtime, name) is not getattr(source_module, name):
+                errors.append(
+                    f"runtime.{name} is not {source_module_name}.{name} — facade shadowed the symbol"
+                )
+    return errors
+
+
 def main() -> int:
     spec = load_spec()
     all_errors: list[str] = []
@@ -175,6 +255,11 @@ def main() -> int:
     errs = check_rendered_blocks_current()
     all_errors.extend(errs)
     print(f"  Rendered doc blocks current: {'PASS' if not errs else f'{len(errs)} issues'}")
+
+    # 6. runtime.py facade re-exports
+    errs = check_facade_exports()
+    all_errors.extend(errs)
+    print(f"  runtime.py facade re-exports: {'PASS' if not errs else f'{len(errs)} issues'}")
 
     if all_errors:
         print(f"\nERRORS ({len(all_errors)}):")

@@ -21,6 +21,10 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 SPEC_PATH = SCRIPT_DIR.parent / "spec" / "pipeline.json"
 
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from spec_loader import resolve_app_template  # noqa: E402
+
 
 # ── JSON / Spec helpers ──
 
@@ -179,8 +183,20 @@ def check_architecture_document_exists(proj: Path, app: str, state: dict) -> lis
     return results
 
 
+def _agent_writes_dirs(spec: dict, agent: str, app: str) -> list[str]:
+    """Return the directories (paths ending '/') that the agent owns per spec."""
+    cfg = spec.get("fileOwnership", {}).get("agents", {}).get(agent, {})
+    return [resolve_app_template(p, app) for p in cfg.get("writes", []) if p.endswith("/")]
+
+
 def check_models_exist(proj: Path, app: str, state: dict) -> list[dict]:
-    models_dir = proj / app / "Models"
+    # Models/ path is derived from the architect's writes in spec.fileOwnership,
+    # so changing the spec moves this check automatically.
+    spec = load_spec()
+    architect_dirs = _agent_writes_dirs(spec, "architect", app)
+    models_dir_rel = next((d for d in architect_dirs if d.endswith("/Models/")), f"{app}/Models/")
+    models_dir = proj / models_dir_rel.rstrip("/")
+
     results = [_dir_has_swift(models_dir, "models_swift_files")]
     if models_dir.is_dir():
         for f in sorted(models_dir.glob("*.swift")):
@@ -274,16 +290,30 @@ def check_gitignore_exists(proj: Path, app: str, state: dict) -> list[dict]:
 
 
 def check_views_exist(proj: Path, app: str, state: dict) -> list[dict]:
-    src = proj / app
-    return [
-        _dir_has_swift(src / "Views", "views_files"),
-        _dir_has_swift(src / "ViewModels", "viewmodels_files"),
-        _file_grep(src / "App" / f"{app}App.swift", r"\.modelContainer", "app_model_container"),
-    ]
+    """Verify ui-builder produced the directories spec marks as its writes.
+
+    Iterates over fileOwnership.agents.ui-builder.writes that end with '/' so
+    the check follows whatever the spec declares (Views/, ViewModels/, App/
+    today; trivially extensible).
+    """
+    spec = load_spec()
+    dirs = _agent_writes_dirs(spec, "ui-builder", app)
+    swift_dirs = [d for d in dirs if d.split("/")[-2] in {"Views", "ViewModels"}]
+    results: list[dict] = []
+    for rel in swift_dirs:
+        label = rel.split("/")[-2].lower() + "_files"
+        results.append(_dir_has_swift(proj / rel.rstrip("/"), label))
+    # App entrypoint is part of ui-builder's writes too.
+    results.append(_file_grep(proj / app / "App" / f"{app}App.swift",
+                              r"\.modelContainer", "app_model_container"))
+    return results
 
 
 def check_services_exist(proj: Path, app: str, state: dict) -> list[dict]:
-    return [_dir_has_swift(proj / app / "Services", "services_files")]
+    spec = load_spec()
+    dirs = _agent_writes_dirs(spec, "data-engineer", app)
+    services_dir_rel = next((d for d in dirs if d.endswith("/Services/")), f"{app}/Services/")
+    return [_dir_has_swift(proj / services_dir_rel.rstrip("/"), "services_files")]
 
 
 def check_models_checksum_matches(proj: Path, app: str, state: dict) -> list[dict]:
@@ -320,30 +350,25 @@ def check_backend_artifacts_exist_if_required(proj: Path, app: str, state: dict)
 
 
 def check_build_succeeded(proj: Path, app: str, state: dict) -> list[dict]:
-    # Check phase 5 metadata for build result
+    """Truth source: phases.5.metadata.build_succeeded only.
+
+    The Phase 5 build flow (quality-engineer / autobot-integration-build skill)
+    is required to record this via:
+      pipeline.sh advance-phase --phase 5 --metadata build_succeeded=true
+    or the equivalent set-phase-status call. build-log.jsonl is audit-only and
+    must not influence gate decisions.
+    """
     p5 = state.get("phases", {}).get("5", {})
     meta = p5.get("metadata", {})
     recorded = meta.get("build_succeeded")
     if recorded is True:
-        return [_ok("build_result", True, "Phase 5 metadata: build_succeeded=true")]
-    # Fallback: scan build-log.jsonl for last build_attempt
-    log_file = proj / ".autobot" / "build-log.jsonl"
-    if log_file.is_file():
-        last_event: dict | None = None
-        for line in log_file.read_text(encoding="utf-8").strip().splitlines():
-            try:
-                ev = json.loads(line)
-                if ev.get("event") == "build_attempt":
-                    last_event = ev
-            except json.JSONDecodeError:
-                continue
-        if last_event:
-            detail = last_event.get("detail", "")
-            ok = (isinstance(detail, dict) and detail.get("succeeded")) or (
-                isinstance(detail, str) and "succeed" in detail.lower()
-            )
-            return [_ok("build_log_result", bool(ok), f"Last build_attempt: {detail}")]
-    return [_ok("build_result", False, "No build success evidence found — record metadata.build_succeeded=true in Phase 5")]
+        return [_ok("build_result", True, "phases.5.metadata.build_succeeded=true")]
+    if recorded is False:
+        return [_ok("build_result", False, "phases.5.metadata.build_succeeded=false")]
+    return [_ok(
+        "build_result", False,
+        "phases.5.metadata.build_succeeded missing — Phase 5 must record build outcome via metadata",
+    )]
 
 
 def check_app_uses_real_repositories(proj: Path, app: str, state: dict) -> list[dict]:
@@ -372,6 +397,39 @@ def check_deployment_attempt_recorded(proj: Path, app: str, state: dict) -> list
             results.append(_ok("deploy_has_result", has_result, "has archive_path or upload_success" if has_result else "missing result fields"))
         except (json.JSONDecodeError, OSError):
             results.append(_ok("deploy_has_result", False, "deploy-status.json parse error"))
+    return results
+
+
+# ── Sandbox enforcement (Gate 4→5) ──
+
+
+def check_sandbox_clean(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify Phase 4 finished with zero sandbox violations across all agents."""
+    phase_state = state.get("phases", {}).get("4", {})
+    sandbox = phase_state.get("sandbox", {})
+    violations = sandbox.get("violations", [])
+    agents_seen = sandbox.get("agentsVerified", [])
+
+    results: list[dict] = []
+    if not agents_seen:
+        results.append(_ok(
+            "sandbox_recorded", False,
+            "No sandbox.agentsVerified — agent-sandbox.sh after must run for each Phase 4 agent",
+        ))
+        return results
+
+    results.append(_ok(
+        "sandbox_recorded", True,
+        f"agents verified: {', '.join(sorted(agents_seen))}",
+    ))
+    if violations:
+        sample = violations[0] if isinstance(violations[0], str) else json.dumps(violations[0], ensure_ascii=False)
+        results.append(_ok(
+            "sandbox_violations", False,
+            f"{len(violations)} violation(s); first: {sample}",
+        ))
+    else:
+        results.append(_ok("sandbox_violations", True, "0 violations"))
     return results
 
 
@@ -408,7 +466,148 @@ GATE_CHECKS: dict[str, Any] = {
     "service_stubs_preserved": check_service_stubs_preserved,
     # Gate 6→7
     "deployment_attempt_recorded": check_deployment_attempt_recorded,
+    # Gate 4→5 (added with fileOwnership SSOT)
+    "sandbox_clean": check_sandbox_clean,
 }
+
+
+# ── Declarative descriptor evaluation ──
+
+
+def _get_state_path(state: dict, dotted: str) -> tuple[bool, Any]:
+    """Walk a dotted path through state. Returns (found, value)."""
+    cursor: Any = state
+    for part in dotted.split("."):
+        if isinstance(cursor, dict) and part in cursor:
+            cursor = cursor[part]
+        else:
+            return False, None
+    return True, cursor
+
+
+def _evaluate_when(when: dict | None, state: dict) -> tuple[bool, str]:
+    """Returns (should_run, skip_reason). Empty/None when always runs."""
+    if not when:
+        return True, ""
+
+    if "backend_required" in when:
+        expected = bool(when["backend_required"])
+        actual = bool(state.get("backend_required", False))
+        if actual != expected:
+            return False, f"backend_required={actual}"
+
+    if "phase_status_in" in when:
+        cfg = when["phase_status_in"]
+        phase_id = str(cfg.get("phase"))
+        allowed = set(cfg.get("values", []))
+        actual = state.get("phases", {}).get(phase_id, {}).get("status", "pending")
+        if actual not in allowed:
+            return False, f"phase {phase_id} status={actual} not in {sorted(allowed)}"
+
+    if "phase_status_not_in" in when:
+        cfg = when["phase_status_not_in"]
+        phase_id = str(cfg.get("phase"))
+        denied = set(cfg.get("values", []))
+        actual = state.get("phases", {}).get(phase_id, {}).get("status", "pending")
+        if actual in denied:
+            return False, f"phase {phase_id} status={actual} is in skip set {sorted(denied)}"
+
+    return True, ""
+
+
+def _evaluate_descriptor(
+    desc: dict, project_dir: Path, app: str, state: dict,
+) -> list[dict]:
+    """Convert a declarative descriptor into a list of sub-check results.
+
+    Recognized types: file_exists, dir_exists, dir_has_swift, file_grep,
+    command_success, state_field_eq, all (group), procedural (registry hook).
+    """
+    label = desc.get("label", desc.get("type", "unnamed"))
+    when = desc.get("when")
+    should_run, skip_reason = _evaluate_when(when, state)
+    if not should_run:
+        return [_ok(label, True, f"skipped ({skip_reason})", skipped=True)]
+
+    dtype = desc.get("type")
+
+    if dtype == "file_exists":
+        path = project_dir / resolve_app_template(desc["path"], app)
+        return [_file_exists(path, label)]
+
+    if dtype == "dir_exists":
+        path = project_dir / resolve_app_template(desc["path"], app)
+        return [_dir_exists(path, label)]
+
+    if dtype == "dir_has_swift":
+        path = project_dir / resolve_app_template(desc["dir"], app)
+        return [_dir_has_swift(path, label, min_count=int(desc.get("min_count", 1)))]
+
+    if dtype == "file_grep":
+        path = project_dir / resolve_app_template(desc["path"], app)
+        return [_file_grep(path, desc["pattern"], label, expect=bool(desc.get("expect", True)))]
+
+    if dtype == "command_success":
+        cmd_template = desc.get("cmd") or []
+        cmd = [resolve_app_template(part, app) for part in cmd_template]
+        ok, out = _run_cmd(cmd, timeout=int(desc.get("timeout", 10)))
+        return [_ok(label, ok, out if out else ("ok" if ok else "command failed"))]
+
+    if dtype == "state_field_eq":
+        field = desc["field"]
+        expected = desc["equals"]
+        found, value = _get_state_path(state, field)
+        if not found:
+            msg = desc.get("missing_message", f"{field} not found")
+            return [_ok(label, False, msg)]
+        if value == expected:
+            return [_ok(label, True, f"{field}={value}")]
+        return [_ok(label, False, f"{field}={value} expected={expected}")]
+
+    if dtype == "state_field_contains":
+        field = desc["field"]
+        required_values = desc.get("contains", [])
+        found, value = _get_state_path(state, field)
+        if not found or not isinstance(value, list):
+            return [_ok(label, False, desc.get("missing_message",
+                f"{field} not found or not a list"))]
+        missing = [v for v in required_values if v not in value]
+        if missing:
+            return [_ok(label, False, f"{field} missing entries: {missing}")]
+        return [_ok(label, True, f"{field} contains all of {required_values}")]
+
+    if dtype == "all":
+        children = desc.get("checks", [])
+        results: list[dict] = []
+        for child in children:
+            results.extend(_evaluate_descriptor(child, project_dir, app, state))
+        return results
+
+    if dtype == "procedural":
+        name = desc.get("name", label)
+        fn = GATE_CHECKS.get(name)
+        if fn is None:
+            return [_ok(label, False, f"No procedural impl for '{name}'")]
+        return fn(project_dir, app, state)
+
+    return [_ok(label, False, f"Unknown descriptor type: {dtype}")]
+
+
+def _normalize_check(check: Any) -> dict:
+    """Accept legacy string form or descriptor object."""
+    if isinstance(check, str):
+        return {"type": "procedural", "name": check, "label": check}
+    if isinstance(check, dict):
+        return check
+    raise ValueError(f"unsupported check entry: {check!r}")
+
+
+def _check_label(check: Any) -> str:
+    if isinstance(check, str):
+        return check
+    if isinstance(check, dict):
+        return check.get("label") or check.get("name") or check.get("type", "unnamed")
+    return str(check)
 
 
 # ── Gate execution engine ──
@@ -422,25 +621,20 @@ def run_gate(
         return {"gate": gate_id, "passed": False, "error": f"Unknown gate: {gate_id}", "checks": []}
 
     gate_spec = gates[gate_id]
-    check_names = gate_spec.get("checks", [])
+    raw_checks = gate_spec.get("checks", [])
     soft = gate_spec.get("soft", False)
 
     all_results: list[dict] = []
     all_passed = True
 
-    for name in check_names:
-        fn = GATE_CHECKS.get(name)
-        if fn is None:
-            all_results.append({"check": name, "passed": False, "sub_checks": [],
-                                "message": f"No implementation for '{name}'"})
-            all_passed = False
-            continue
-
-        sub_checks = fn(project_dir, app_name, state)
+    for raw in raw_checks:
+        descriptor = _normalize_check(raw)
+        label = descriptor.get("label") or descriptor.get("name") or descriptor.get("type", "unnamed")
+        sub_checks = _evaluate_descriptor(descriptor, project_dir, app_name, state)
         group_passed = all(r["passed"] or r.get("skipped", False) for r in sub_checks)
         if not group_passed:
             all_passed = False
-        all_results.append({"check": name, "passed": group_passed, "sub_checks": sub_checks})
+        all_results.append({"check": label, "passed": group_passed, "sub_checks": sub_checks})
 
     return {"gate": gate_id, "passed": all_passed, "soft": soft, "checks": all_results}
 
@@ -498,33 +692,52 @@ def cmd_run_gate(args: argparse.Namespace) -> int:
     return 0 if result["passed"] else (0 if result.get("soft") else 1)
 
 
+_DECLARATIVE_TYPES = {
+    "file_exists", "dir_exists", "dir_has_swift", "file_grep",
+    "command_success", "state_field_eq", "all",
+}
+
+
+def _check_status(check: Any) -> str:
+    desc = _normalize_check(check)
+    dtype = desc.get("type")
+    if dtype in _DECLARATIVE_TYPES:
+        return "✓"
+    if dtype == "procedural":
+        return "✓" if desc.get("name") in GATE_CHECKS else "✗ (no impl)"
+    return f"? ({dtype})"
+
+
 def cmd_list_checks(args: argparse.Namespace) -> int:
     spec = load_spec()
 
-    if args.gate:
-        gates = spec.get("gates", {})
-        if args.gate not in gates:
-            raise SystemExit(f"Unknown gate: {args.gate}")
-        checks = gates[args.gate].get("checks", [])
-        for name in checks:
-            impl = "✓" if name in GATE_CHECKS else "✗ (no impl)"
-            print(f"  {impl} {name}")
-    else:
-        for gate_id, gate_spec in sorted(spec.get("gates", {}).items()):
-            soft = " [soft]" if gate_spec.get("soft") else ""
+    target_gates = (
+        {args.gate: spec["gates"][args.gate]}
+        if args.gate
+        else dict(sorted(spec.get("gates", {}).items()))
+    )
+    if args.gate and args.gate not in spec.get("gates", {}):
+        raise SystemExit(f"Unknown gate: {args.gate}")
+
+    for gate_id, gate_spec in target_gates.items():
+        soft = " [soft]" if gate_spec.get("soft") else ""
+        if not args.gate:
             print(f"Gate {gate_id}{soft}:")
-            for name in gate_spec.get("checks", []):
-                impl = "✓" if name in GATE_CHECKS else "✗"
-                print(f"  {impl} {name}")
+        for check in gate_spec.get("checks", []):
+            status = _check_status(check)
+            label = _check_label(check)
+            print(f"  {status} {label}")
+        if not args.gate:
             print()
 
-    missing = set()
+    missing = []
     for gate_spec in spec.get("gates", {}).values():
-        for name in gate_spec.get("checks", []):
-            if name not in GATE_CHECKS:
-                missing.add(name)
+        for check in gate_spec.get("checks", []):
+            desc = _normalize_check(check)
+            if desc.get("type") == "procedural" and desc.get("name") not in GATE_CHECKS:
+                missing.append(desc["name"])
     if missing:
-        print(f"WARNING: {len(missing)} unimplemented checks: {sorted(missing)}")
+        print(f"WARNING: {len(missing)} unimplemented procedural checks: {sorted(set(missing))}")
         return 1
     return 0
 

@@ -14,6 +14,13 @@ If `.autobot/phase-learnings/parallel_coding.md` exists, read it first.
 Then use `.autobot/active-learnings.md` only for shared fallback context.
 Apply relevant `## Prevention Rules`, `## Proven Patterns`, and any ui-builder-specific `## Pending Improvements`.
 
+After loading and applying learnings, record the fact:
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
+  --phase 4 --event learning_applied --agent ui-builder \
+  --detail '{"sources":["phase-learnings/parallel_coding.md","active-learnings.md"]}'
+```
+
 **CRITICAL RULES:**
 1. The `<AppName>/Models/` directory contains the authoritative type definitions (the "type contract"). You MUST use the exact class names, property names, initializer signatures, and enum cases as defined there. Do NOT guess or improvise type names — READ the files first.
 2. **All source files MUST be written inside the `<AppName>/` subdirectory** (Xcode 소스 그룹). 프로젝트 루트에 직접 쓰면 Xcode 빌드에 포함되지 않는다.

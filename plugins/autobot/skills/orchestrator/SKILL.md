@@ -61,7 +61,7 @@ Autobot은 위험도를 기준으로 동작한다:
 | 1 | 아키텍처 + 계약 | architect | No | → 산출물 존재/구조 검증 | 2 |
 | 2 | UX Design (필수) | ux-designer | No | → Stitch 성공 필수, 미설치 시 fallback | 1 |
 | 3 | Xcode 프로젝트 | (self) | No | → .xcodeproj 존재 검증 | 1 |
-| 4 | 병렬 코드 생성 | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 | 2 |
+| 4 | 병렬 코드 생성 | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 + sandbox 위반 0건 | 2 |
 | 5 | 통합 + 빌드 검증 | quality-engineer (`autobot-integration-build` 스킬) | No | → xcodebuild 성공 | 2 |
 | 6 | TestFlight 배포 | deployer | No | → 배포 결과 기록 (soft) | 1 |
 | 7 | 회고 | (self) | No | — | — |
@@ -266,16 +266,26 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 # Phase 시작
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase 4 --detail "Parallel coding"
 
-# Phase 완료 / fallback / 실패
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 4
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 2 --status fallback --detail "Stitch unavailable"
+# Phase의 outgoing gate 실행 + 통과 시 완료 마킹 (단일 atomic 호출)
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 4
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 2 --status fallback --detail "Stitch unavailable"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 5 --metadata build_succeeded=true
+
+# 명시적 실패 (gate 도달 전 단계에서 에이전트가 실패)
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" fail-phase --phase 5 --error "xcodebuild failed" --increment-retry
 
-# Gate 실행 + 결과 기록
+# Gate만 별도 실행 + 결과 기록 (phase 마킹은 안 함)
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" run-gate --gate "4->5"
+
+# 상태 플래그 토글 (architect 사후 review 등)
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag --key backend_required --value true \
+  --reason "external AI API detected by review"
 ```
 
-`validate-state.sh`는 낮은 수준의 호환용 검증/쓰기 래퍼로 남겨두고, build/resume의 주 경로에서는 직접 사용하지 않는다.
+> 레거시 `complete-phase`는 호환을 위해 남아있지만 gate 검증을 우회하므로 새 흐름에서는 사용하지 않는다.
+> `advance-phase`가 outgoing gate 실행 → 통과 시 `completed`/`fallback` 마킹 → 실패 시 `failed` 마킹을 한 번에 처리한다.
+
+`validate-state.sh`는 진단 전용(read-only) — 스키마 검증, transition validate, gate 체크 목록, 문서 일관성 — 만 노출한다. 상태를 바꾸는 명령은 모두 `pipeline.sh`로 일원화된다.
 
 상태 전이 규칙:
 
@@ -291,6 +301,7 @@ skipped     → (terminal)
 ### Agent Sandbox (`agent-sandbox.sh`)
 
 에이전트 실행 전후의 파일시스템 diff를 계산하여 파일 소유권 위반을 감지한다.
+소유권 규칙은 `spec/pipeline.json`의 `fileOwnership` 섹션이 SSOT이며, sandbox는 그 spec을 읽어 평가한다.
 
 ```bash
 # 에이전트 실행 전
@@ -299,10 +310,12 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/agent-sandbox.sh" before \
 
 # (에이전트 실행)
 
-# 에이전트 실행 후 — 소유권 위반 자동 감지
+# 에이전트 실행 후 — 소유권 위반 자동 감지 + state 기록
 bash "$CLAUDE_PLUGIN_ROOT/scripts/agent-sandbox.sh" after \
-  --agent ui-builder --app-name "<AppName>"
+  --agent ui-builder --app-name "<AppName>" --phase 4
 ```
+
+위반은 `phases.<id>.sandbox.violations`에 자동 기록되며, Gate 4→5의 `sandbox_clean` 체크가 평가한다. 즉 위반을 manual log로 기록하지 않아도 gate가 잡아낸다.
 
 ### Phase-level Snapshot (`snapshot-contracts.sh` 확장)
 

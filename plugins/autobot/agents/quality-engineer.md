@@ -14,6 +14,13 @@ If `.autobot/phase-learnings/quality.md` exists, read it first.
 Then use `.autobot/active-learnings.md` only for shared fallback context.
 Treat phase-specific `## Relevant Prevention Rules` plus `## Relevant Failure Memory` as first-priority checks for this build.
 
+After loading and applying learnings, record the fact:
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
+  --phase 5 --event learning_applied --agent quality-engineer \
+  --detail '{"sources":["phase-learnings/quality.md","active-learnings.md"]}'
+```
+
 **FIRST: Read the integration-build skill** for the complete workflow, error diagnosis decision tree, and build-fix loop strategy:
 ```
 Read $CLAUDE_PLUGIN_ROOT/skills/integration-build/SKILL.md

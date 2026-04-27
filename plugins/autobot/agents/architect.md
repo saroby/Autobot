@@ -22,6 +22,14 @@ Apply:
 - `## Prevention Rules` that affect Models, imports, backend decisions, or architecture contracts
 - `## Pending Improvements` when they clearly target architect behavior
 
+After loading and applying any learning file, record the fact:
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
+  --phase 1 --event learning_applied --agent architect \
+  --detail '{"sources":["phase-learnings/architecture.md","active-learnings.md"]}'
+```
+Skip sources that did not exist; the event is required when at least one was applied.
+
 **Design Principles:**
 
 FIRST: Read `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for the authoritative iOS target version, design language, and API patterns.

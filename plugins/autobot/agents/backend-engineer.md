@@ -17,6 +17,13 @@ Read `.autobot/architecture.md` and `<AppName>/Models/APIContracts.swift`, then 
 - All API endpoints MUST match the API Contract section in architecture.md exactly.
 - All request/response schemas MUST match the types in `Models/APIContracts.swift`.
 
+If `.autobot/phase-learnings/parallel_coding.md` exists, read it first; then `.autobot/active-learnings.md` for shared rules. After applying, record the fact:
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
+  --phase 4 --event learning_applied --agent backend-engineer \
+  --detail '{"sources":["phase-learnings/parallel_coding.md","active-learnings.md"]}'
+```
+
 **Process:**
 
 1. **Read Architecture**: Load `.autobot/architecture.md` — focus on:

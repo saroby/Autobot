@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "statuses": [
     "pending",
     "in_progress",
@@ -32,27 +32,16 @@
   },
   "transitions": {
     "default": {
-      "pending": [
-        "in_progress"
-      ],
-      "in_progress": [
-        "completed",
-        "fallback",
-        "failed"
-      ],
+      "pending": ["in_progress"],
+      "in_progress": ["completed", "fallback", "failed"],
       "completed": [],
       "fallback": [],
-      "failed": [
-        "in_progress"
-      ],
+      "failed": ["in_progress"],
       "skipped": []
     },
     "overrides": {
       "0": {
-        "pending": [
-          "in_progress",
-          "completed"
-        ]
+        "pending": ["in_progress", "completed"]
       }
     }
   },
@@ -61,13 +50,172 @@
       "allowExplicitRestartFromTerminal": true
     },
     "dependency": {
-      "resumeAllowedPreviousStatuses": [
-        "completed",
-        "fallback"
-      ]
+      "resumeAllowedPreviousStatuses": ["completed", "fallback"]
     },
     "circuitBreaker": {
-      "maxConsecutivePhaseFailures": 3
+      "maxConsecutivePhaseFailures": 3,
+      "scope": "global",
+      "onTrip": "skipToRetrospective"
+    },
+    "allowedFlags": ["backend_required"]
+  },
+  "logEvents": {
+    "start":             { "required": ["phase"], "optional": ["agent", "detail"] },
+    "complete":          { "required": ["phase"], "optional": ["detail"] },
+    "fallback":          { "required": ["phase"], "optional": ["detail"] },
+    "skip":              { "required": ["phase"], "optional": ["detail"] },
+    "fail":              { "required": ["phase", "detail"], "optional": [] },
+    "gate_pass":         { "required": ["phase", "detail"], "optional": [] },
+    "gate_fail":         { "required": ["phase", "detail"], "optional": [] },
+    "agent_dispatch":    { "required": ["phase", "agent"], "optional": ["detail"] },
+    "agent_complete":    { "required": ["phase", "agent"], "optional": ["detail"] },
+    "agent_violation":   { "required": ["phase", "agent", "detail"], "optional": [] },
+    "sandbox_violation": {
+      "required": ["phase", "agent", "detail"],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": ["summary", "violations"],
+        "properties": {
+          "summary":    { "type": "string" },
+          "violations": { "type": "array" },
+          "touched":    { "type": "integer" }
+        }
+      }
+    },
+    "sandbox_clean":     { "required": ["phase", "agent"], "optional": ["detail"] },
+    "build_attempt": {
+      "required": ["phase", "detail"],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": ["attempt", "errors", "succeeded"],
+        "properties": {
+          "attempt":   { "type": "integer" },
+          "errors":    { "type": "integer" },
+          "succeeded": { "type": "boolean" }
+        }
+      }
+    },
+    "build_fix": {
+      "required": ["phase", "detail"],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": ["category"],
+        "properties": {
+          "category": { "type": "string" },
+          "files":    { "type": "array" }
+        }
+      }
+    },
+    "snapshot_save":     { "required": ["phase"], "optional": ["detail"] },
+    "snapshot_restore":  { "required": ["phase"], "optional": ["detail"] },
+    "lock_acquired":     { "required": [], "optional": ["detail"] },
+    "env_check":         { "required": ["phase"], "optional": ["detail"] },
+    "circuit_open": {
+      "required": ["phase", "detail"],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": ["scope", "failures", "threshold", "trippedOnPhase"],
+        "properties": {
+          "scope":          { "type": "string" },
+          "failures":       { "type": "integer" },
+          "threshold":      { "type": "integer" },
+          "trippedOnPhase": { "type": "string" }
+        }
+      }
+    },
+    "flag_changed": {
+      "required": [],
+      "optional": ["detail"],
+      "detailSchema": {
+        "type": "object",
+        "required": ["key", "from", "to"],
+        "properties": {
+          "key":    { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "learning_applied": {
+      "required": ["phase", "agent"],
+      "optional": ["detail"],
+      "detailSchema": {
+        "type": "object",
+        "required": ["sources"],
+        "properties": {
+          "sources": { "type": "array" }
+        }
+      }
+    }
+  },
+  "fileOwnership": {
+    "agents": {
+      "architect": {
+        "writes": [
+          "{appName}/Models/",
+          ".autobot/architecture.md"
+        ]
+      },
+      "ux-designer": {
+        "writes": [
+          ".autobot/designs/",
+          ".autobot/design-spec.md"
+        ]
+      },
+      "ui-builder": {
+        "writes": [
+          "{appName}/Views/",
+          "{appName}/ViewModels/",
+          "{appName}/App/",
+          "{appName}/Assets.xcassets/",
+          "{appName}/Utilities/Theme.swift"
+        ]
+      },
+      "data-engineer": {
+        "writes": [
+          "{appName}/Services/",
+          "{appName}/Utilities/"
+        ]
+      },
+      "backend-engineer": {
+        "writes": [
+          "backend/"
+        ]
+      },
+      "quality-engineer": {
+        "broadAccess": true,
+        "writes": [
+          "{appName}/",
+          "backend/",
+          "project.yml"
+        ]
+      },
+      "deployer": {
+        "writes": [
+          "build/",
+          ".autobot/deploy-status.json"
+        ]
+      }
+    },
+    "forbiddenAlways": ["{appName}/Models/"],
+    "forbiddenAlwaysExempt": ["architect"],
+    "forbiddenInfra": [
+      ".autobot/build-state.json",
+      ".autobot/architecture.md",
+      ".autobot/contracts/",
+      ".autobot/build-log.jsonl",
+      ".autobot/build.lock",
+      ".autobot/learnings.json",
+      ".autobot/active-learnings.md",
+      ".autobot/phase-learnings/"
+    ],
+    "forbiddenInfraExempt": ["architect"],
+    "forbiddenPerAgent": {
+      "data-engineer": ["{appName}/Utilities/Theme.swift"],
+      "ui-builder": ["{appName}/Services/"]
     }
   },
   "phases": {
@@ -92,11 +240,10 @@
     "1": {
       "name": "Architecture + Contracts",
       "maxRetry": 2,
-      "dependencies": [
-        "0"
-      ],
+      "dependencies": ["0"],
       "gate": "1->2",
       "allowFallback": false,
+      "agents": ["architect"],
       "docs": {
         "displayName": "아키텍처 + 계약",
         "readmeAgent": "architect",
@@ -113,11 +260,10 @@
     "2": {
       "name": "UX Design",
       "maxRetry": 1,
-      "dependencies": [
-        "1"
-      ],
+      "dependencies": ["1"],
       "gate": "2->3",
       "allowFallback": true,
+      "agents": ["ux-designer"],
       "docs": {
         "displayName": "UX Design (필수)",
         "readmeAgent": "ux-designer (Stitch)",
@@ -133,9 +279,7 @@
     "3": {
       "name": "Project Scaffold",
       "maxRetry": 1,
-      "dependencies": [
-        "2"
-      ],
+      "dependencies": ["2"],
       "gate": "3->4",
       "allowFallback": false,
       "docs": {
@@ -155,11 +299,10 @@
     "4": {
       "name": "Parallel Coding",
       "maxRetry": 2,
-      "dependencies": [
-        "3"
-      ],
+      "dependencies": ["3"],
       "gate": "4->5",
       "allowFallback": false,
+      "agents": ["ui-builder", "data-engineer", "backend-engineer"],
       "docs": {
         "displayName": "병렬 코드 생성",
         "readmeAgent": "ui-builder + data-engineer (+ backend-engineer)",
@@ -172,17 +315,16 @@
           "`backend/`"
         ],
         "parallel": true,
-        "gateLabel": "→ 파일 존재 + Models/ 무결성"
+        "gateLabel": "→ 파일 존재 + Models/ 무결성 + sandbox 위반 0건"
       }
     },
     "5": {
       "name": "Integration & Build",
       "maxRetry": 2,
-      "dependencies": [
-        "4"
-      ],
+      "dependencies": ["4"],
       "gate": "5->6",
       "allowFallback": false,
+      "agents": ["quality-engineer"],
       "docs": {
         "displayName": "통합 + 빌드 검증",
         "readmeAgent": "quality-engineer",
@@ -199,11 +341,10 @@
     "6": {
       "name": "TestFlight Deploy",
       "maxRetry": 1,
-      "dependencies": [
-        "5"
-      ],
+      "dependencies": ["5"],
       "gate": "6->7",
       "allowFallback": false,
+      "agents": ["deployer"],
       "docs": {
         "displayName": "TestFlight 배포",
         "readmeAgent": "deployer",
@@ -246,10 +387,10 @@
       "summary": "Environment, naming, and initial build state are ready.",
       "docsSummary": "환경, 앱 이름, 초기 build state 준비가 끝났는지 검증",
       "checks": [
-        "environment_ready",
-        "project_name_resolved",
-        "build_state_initialized",
-        "environment_recorded"
+        { "type": "procedural", "name": "environment_ready",       "label": "environment_ready" },
+        { "type": "procedural", "name": "project_name_resolved",   "label": "project_name_resolved" },
+        { "type": "procedural", "name": "build_state_initialized", "label": "build_state_initialized" },
+        { "type": "procedural", "name": "environment_recorded",    "label": "environment_recorded" }
       ]
     },
     "1->2": {
@@ -259,11 +400,26 @@
       "summary": "Architecture artifacts and type contracts are complete.",
       "docsSummary": "architecture.md 구조, Models/*.swift, ServiceProtocols.swift, 계약 snapshot이 준비됐는지 검증",
       "checks": [
-        "architecture_document_exists",
-        "models_exist",
-        "service_protocols_exist",
-        "contracts_snapshot_saved",
-        "backend_required_consistent"
+        { "type": "procedural", "name": "architecture_document_exists", "label": "architecture_document_exists" },
+        { "type": "procedural", "name": "models_exist",                 "label": "models_exist" },
+        { "type": "file_exists", "path": "{appName}/Models/ServiceProtocols.swift", "label": "service_protocols_exist" },
+        {
+          "type": "all",
+          "label": "contracts_snapshot_saved",
+          "checks": [
+            { "type": "dir_exists",  "path": ".autobot/contracts/phase-1-models", "label": "snapshot_dir" },
+            { "type": "dir_has_swift", "dir": ".autobot/contracts/phase-1-models", "label": "snapshot_files" },
+            { "type": "file_exists", "path": ".autobot/contracts/models.sha256",   "label": "checksum_file" }
+          ]
+        },
+        { "type": "procedural", "name": "backend_required_consistent", "label": "backend_required_consistent" },
+        {
+          "type": "state_field_contains",
+          "label": "architect_consumed_learnings",
+          "field": "phases.1.learningsConsumed",
+          "contains": ["architect"],
+          "missing_message": "architect did not record a learning_applied event for phase 1"
+        }
       ]
     },
     "2->3": {
@@ -273,8 +429,13 @@
       "summary": "UX design artifacts exist, or the phase is explicitly marked as fallback.",
       "docsSummary": "Stitch 성공 시 design-spec/designs 산출물이 있고, 미설치 시 fallback 상태가 기록됐는지 검증",
       "checks": [
-        "design_spec_exists_or_fallback",
-        "design_assets_exist_or_fallback"
+        {
+          "type": "file_exists",
+          "path": ".autobot/design-spec.md",
+          "label": "design_spec_exists_or_fallback",
+          "when": { "phase_status_not_in": { "phase": "2", "values": ["fallback"] } }
+        },
+        { "type": "procedural", "name": "design_assets_exist_or_fallback", "label": "design_assets_exist_or_fallback" }
       ]
     },
     "3->4": {
@@ -284,23 +445,31 @@
       "summary": "The scaffolded Xcode project and required configuration files exist.",
       "docsSummary": ".xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증",
       "checks": [
-        "xcodeproj_exists",
-        "privacy_manifest_exists",
-        "entitlements_exists",
-        "gitignore_exists"
+        { "type": "procedural", "name": "xcodeproj_exists", "label": "xcodeproj_exists" },
+        { "type": "file_exists", "path": "{appName}/PrivacyInfo.xcprivacy",       "label": "privacy_manifest_exists" },
+        { "type": "file_exists", "path": "{appName}/{appName}.entitlements",      "label": "entitlements_exists" },
+        { "type": "procedural", "name": "gitignore_exists", "label": "gitignore_exists" }
       ]
     },
     "4->5": {
       "fromPhase": "4",
       "toPhase": "5",
       "soft": false,
-      "summary": "Parallel coding outputs exist and Models integrity is preserved.",
-      "docsSummary": "Views/Services 산출물 존재와 Models 체크섬 무결성을 검증",
+      "summary": "Parallel coding outputs exist, Models integrity is preserved, sandbox stays clean.",
+      "docsSummary": "Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건",
       "checks": [
-        "views_exist",
-        "services_exist",
-        "models_checksum_matches",
-        "backend_artifacts_exist_if_required"
+        { "type": "procedural", "name": "views_exist",    "label": "views_exist" },
+        { "type": "procedural", "name": "services_exist", "label": "services_exist" },
+        { "type": "procedural", "name": "models_checksum_matches", "label": "models_checksum_matches" },
+        { "type": "procedural", "name": "backend_artifacts_exist_if_required", "label": "backend_artifacts_exist_if_required" },
+        { "type": "procedural", "name": "sandbox_clean",  "label": "sandbox_clean" },
+        {
+          "type": "state_field_contains",
+          "label": "phase4_agents_consumed_learnings",
+          "field": "phases.4.learningsConsumed",
+          "contains": ["ui-builder", "data-engineer"],
+          "missing_message": "phase 4 agents did not record learning_applied events"
+        }
       ]
     },
     "5->6": {
@@ -310,9 +479,22 @@
       "summary": "The app builds successfully and runtime wiring uses real repositories.",
       "docsSummary": "빌드 성공, 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증",
       "checks": [
-        "build_succeeded",
-        "app_uses_real_repositories",
-        "service_stubs_preserved"
+        {
+          "type": "state_field_eq",
+          "label": "build_succeeded",
+          "field": "phases.5.metadata.build_succeeded",
+          "equals": true,
+          "missing_message": "phases.5.metadata.build_succeeded missing — Phase 5 must record build outcome via metadata"
+        },
+        { "type": "procedural", "name": "app_uses_real_repositories", "label": "app_uses_real_repositories" },
+        { "type": "file_exists", "path": "{appName}/App/ServiceStubs.swift", "label": "service_stubs_preserved" },
+        {
+          "type": "state_field_contains",
+          "label": "quality_engineer_consumed_learnings",
+          "field": "phases.5.learningsConsumed",
+          "contains": ["quality-engineer"],
+          "missing_message": "quality-engineer did not record a learning_applied event for phase 5"
+        }
       ]
     },
     "6->7": {
@@ -322,7 +504,7 @@
       "summary": "Deployment result is recorded, but retrospective proceeds even on failure.",
       "docsSummary": "배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행",
       "checks": [
-        "deployment_attempt_recorded"
+        { "type": "procedural", "name": "deployment_attempt_recorded", "label": "deployment_attempt_recorded" }
       ]
     }
   }

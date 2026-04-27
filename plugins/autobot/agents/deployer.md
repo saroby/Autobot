@@ -14,6 +14,13 @@ If `.autobot/phase-learnings/deploy.md` exists, read it first.
 Then use `.autobot/active-learnings.md` only for shared fallback context.
 Apply relevant `## Deployment Tips`, `## Prevention Rules`, and deploy-related `## Pending Improvements`.
 
+After loading and applying learnings, record the fact:
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
+  --phase 6 --event learning_applied --agent deployer \
+  --detail '{"sources":["phase-learnings/deploy.md","active-learnings.md"]}'
+```
+
 **FIRST:** Read `$CLAUDE_PLUGIN_ROOT/skills/testflight-deploy/SKILL.md` for the detailed deployment pipeline and `references/signing-guide.md` for credential setup.
 
 **Process:**
