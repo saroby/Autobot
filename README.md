@@ -12,10 +12,6 @@
 ### 1. 설치
 
 ```bash
-# 마켓플레이스에서
-/plugin → Add Marketplace → saroby/Autobot
-
-# 또는 로컬
 claude --plugin-dir /path/to/Autobot/plugins/autobot
 ```
 
