@@ -15,29 +15,13 @@
 claude --plugin-dir /path/to/Autobot/plugins/autobot
 ```
 
-### 2. (선택) 환경 설정
-
-TestFlight 자동 배포를 원하면 `.env` 파일을 설정합니다:
-
-```bash
-cat > .env << 'EOF'
-ASC_API_KEY_ID=XXXXXXXXXX
-ASC_API_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-ASC_API_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8
-DEVELOPMENT_TEAM=A1B2C3D4E5
-TESTER_EMAIL=your@email.com
-EOF
-```
-
-> 미설정 시 빌드까지는 정상 진행되고, 배포 단계에서 IPA 파일 경로와 수동 업로드 방법을 안내합니다.
-
-### 3. 빌드
+### 2. 빌드
 
 ```bash
 /autobot:make 소셜 피트니스 트래킹 앱
 ```
 
-### 4. 중단 시 재개
+### 3. 중단 시 재개
 
 ```bash
 /autobot:resume        # 마지막 실패 지점부터 자동 재개
@@ -130,22 +114,6 @@ architect → Models/ServiceProtocols.swift (인터페이스 정의)
 | `xcodegen` | `brew install xcodegen` | 더 안정적인 프로젝트 생성 |
 | `fastlane` | `brew install fastlane` (또는 자동 설치) | App Store Connect 앱 자동 등록 |
 
-## 환경변수 설정
-
-TestFlight 자동 배포용. 미설정 시 빌드까지는 정상 동작.
-
-| 변수 | 필수 | 설명 |
-|------|------|------|
-| `ASC_API_KEY_ID` | 배포 시 | App Store Connect API Key ID |
-| `ASC_API_ISSUER_ID` | 배포 시 | App Store Connect Issuer ID |
-| `ASC_API_KEY_PATH` | 배포 시 | .p8 키 파일 경로 |
-| `DEVELOPMENT_TEAM` | 선택 | 개발 팀 ID (자동 감지 가능) |
-| `TESTER_EMAIL` | 선택 | TestFlight '내부' 그룹 초대 이메일 |
-
-설정 방법:
-- **프로젝트별**: 작업 디렉토리에 `.env` 파일 (우선)
-- **글로벌**: `~/.config/autobot/.env`
-
 ## 플러그인 연동
 
 설치되어 있으면 자동으로 활용합니다 (없어도 정상 동작):
@@ -199,7 +167,7 @@ plugins/autobot/
     ├── pipeline.sh                     # runtime.py 기반 Phase lifecycle + Gate 실행 진입점
     ├── runtime.py                      # pipeline.json 해석 런타임
     ├── detect-plugins.sh               # 플러그인/도구 감지
-    ├── load-learnings.sh               # .env 로드 + 학습 데이터 + 빌드 상태
+    ├── load-learnings.sh               # SessionStart 요약 (학습 데이터 + 빌드 상태)
     ├── render-active-learnings.py      # active/phase learnings 렌더링
     ├── snapshot-contracts.sh           # Models/ + Phase-level snapshot 저장/검증/복원
     ├── build-log.sh                    # 구조화된 이벤트 로그 append
