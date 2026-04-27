@@ -241,7 +241,30 @@ architect 에이전트를 Agent 도구로 디스패치. TaskCreate로 진행 추
 2. `<AppName>/Models/*.swift` — 컴파일 가능한 @Model 파일 (타입 계약)
 3. `<AppName>/Models/ServiceProtocols.swift` — 통합 계약
 
-**→ Gate 1→2**: architecture.md + `<AppName>/Models/` 존재 + 체크섬 저장 + contract snapshot 저장. 실패 시 architect 재실행 (최대 2회).
+### Codex Architecture Review (필수, downstream 동시성/SwiftData 트랩 사전 차단)
+
+architect 산출물을 받은 직후 **Gate 1→2 실행 전에** codex로 컴파일 영향 이슈를 사전 검토한다. Phase 5에서 발견되는 Swift 6 strict concurrency / SwiftData / AVFoundation lifecycle 문제 중 architect 결정에서 비롯된 것을 미리 잡는 단계다.
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/codex-architecture-review.sh" \
+    --app-name "<AppName>" --project-dir . --attempt 1
+```
+
+스크립트 동작:
+- codex CLI 미설치 시 → `verdict=skipped, skipReason=codex_cli_unavailable`로 자동 기록 후 exit 0 (게이트 통과)
+- codex가 사용 가능하고 응답이 PASS → exit 0
+- 응답이 FAIL → exit 3, 그리고 `phases.1.metadata.codexReview.hardViolations`에 위반 목록 저장
+
+오케스트레이터는 exit 3을 받으면:
+
+1. `.autobot/build-state.json`에서 `phases.1.metadata.codexReview.hardViolations`를 읽어 architect 재디스패치 프롬프트 앞에 명시적으로 주입
+2. architect 재실행 (이때 retry는 **circuit breaker에 카운트하지 않음** — `policies.codexArchitectureReview.excludeFromCircuitBreaker=true`)
+3. 재실행 후 `codex-architecture-review.sh --attempt 2` 다시 호출
+4. 두 번째도 FAIL → 경고 로그만 남기고 진행 (게이트는 verdict=skipped로 처리하지 않음, 사람 결정 영역)
+
+`policies.codexArchitectureReview.maxAttempts` (기본 2)이 상한을 정의한다.
+
+**→ Gate 1→2**: architecture.md + `<AppName>/Models/` 존재 + 체크섬 저장 + contract snapshot 저장 + **codex review verdict ∈ {PASS, skipped}**. 실패 시 architect 재실행 (최대 2회).
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 1

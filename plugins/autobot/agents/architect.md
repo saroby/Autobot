@@ -418,3 +418,25 @@ swiftc -typecheck -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
 - Prefer simplicity over complexity
 - Prefer Apple frameworks over third-party dependencies
 - Target the deployment minimum specified in `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md`
+
+## Re-run after Codex Architecture Review FAIL
+
+Phase 1에서 codex가 **컴파일 영향이 있는 hard violation**을 보고하면 architect를 재실행한다. 이때 오케스트레이터는 다음 정보를 architect 입력에 함께 전달한다:
+
+- `phases.1.metadata.codexReview.hardViolations`: 카테고리/파일/이슈/제안된 수정 리스트
+- `phases.1.metadata.codexReview.attempt`: 현재 시도 번호 (≥2 = 재실행)
+
+재실행 시 architect는 다음 우선순위로 동작한다:
+
+1. **Hard violations 먼저 해결**한다. 다른 모든 디자인 변경/리팩터보다 우선.
+   - "Swift 6 strict concurrency" 카테고리: 프로토콜 시그니처에서 `@MainActor`/Sendable/AsyncStream 모양을 재설계해 `nonisolated(unsafe)` 우회가 필요 없게 만든다.
+   - "SwiftData @Model graph": @Relationship cascade/nullify 일관성, Codable 충돌, 비-persistable 타입을 수정한다.
+   - "AVFoundation/MediaPlayer lifecycle": AVAudioSession 단일 owner 명시, MainActor 호출 경로 보장.
+   - "Permissions ↔ Features": 누락된 Info.plist 키/entitlement를 architecture.md `## Permissions`에 추가한다.
+   - "iOS 26 API availability": 사용 중인 deprecated API를 현대 대체 API로 교체한다.
+2. **Soft warnings는 무시**한다. 빌드를 막지 않는다.
+3. 수정한 결과로 동일한 산출물(`architecture.md`, `Models/*.swift`, `ServiceProtocols.swift`)을 **완전히 재작성**한다. partial-edit 금지 — 단일 진실 소스를 유지하기 위해 항상 전체 재작성.
+4. 재실행 후 `learning_applied` 이벤트를 다시 기록한다 (이미 phase 1에 한 번 기록됐어도 idempotent 동작).
+5. architect는 codex 결과를 직접 읽지 않는다 — 오케스트레이터가 위반 목록을 프롬프트로 변환해서 전달한다.
+
+> 재실행 횟수는 `policies.codexArchitectureReview.maxAttempts`(기본 2)로 제한된다. 두 번째 시도도 FAIL이면 오케스트레이터는 경고만 남기고 계속 진행한다 (사람 판단 영역).

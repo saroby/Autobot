@@ -57,6 +57,15 @@
       "scope": "global",
       "onTrip": "skipToRetrospective"
     },
+    "codexArchitectureReview": {
+      "enabled": true,
+      "maxAttempts": 2,
+      "excludeFromCircuitBreaker": true,
+      "skipReasons": [
+        "codex_cli_unavailable",
+        "review_explicitly_disabled"
+      ]
+    },
     "allowedFlags": ["backend_required"]
   },
   "logEvents": {
@@ -147,6 +156,21 @@
         "required": ["sources"],
         "properties": {
           "sources": { "type": "array" }
+        }
+      }
+    },
+    "codex_review": {
+      "required": ["phase", "detail"],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": ["verdict", "attempt"],
+        "properties": {
+          "verdict": { "type": "string" },
+          "attempt": { "type": "integer" },
+          "hardViolationsCount": { "type": "integer" },
+          "softWarningsCount": { "type": "integer" },
+          "skipReason": { "type": "string" }
         }
       }
     }
@@ -413,6 +437,7 @@
           ]
         },
         { "type": "procedural", "name": "backend_required_consistent", "label": "backend_required_consistent" },
+        { "type": "procedural", "name": "codex_review_acceptable",     "label": "codex_review_acceptable" },
         {
           "type": "state_field_contains",
           "label": "architect_consumed_learnings",

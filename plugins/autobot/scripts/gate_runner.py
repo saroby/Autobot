@@ -231,6 +231,53 @@ def check_backend_required_consistent(proj: Path, app: str, state: dict) -> list
     return results
 
 
+def check_codex_review_acceptable(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify a codex architecture review has been performed (or explicitly skipped).
+
+    Reads phases.1.metadata.codexReview written by scripts/codex-architecture-review.sh.
+    Acceptable verdicts:
+      - "PASS"     → review passed
+      - "skipped"  → codex CLI unavailable, or review explicitly disabled
+      - missing    → if policy.codexArchitectureReview.enabled == false (backward compat)
+    Rejected:
+      - "FAIL"     → architect must re-run with hardViolations addressed
+    """
+    spec = load_spec()
+    review_policy = spec.get("policies", {}).get("codexArchitectureReview", {})
+    enabled = bool(review_policy.get("enabled", False))
+
+    review = (
+        state.get("phases", {})
+             .get("1", {})
+             .get("metadata", {})
+             .get("codexReview")
+    )
+
+    if review is None:
+        if not enabled:
+            return [_ok("codex_review_disabled", True,
+                        "codexArchitectureReview.enabled=false (backward compat skip)",
+                        skipped=True)]
+        return [_ok("codex_review_missing", False,
+                    "codex review not run; invoke scripts/codex-architecture-review.sh after architect dispatch")]
+
+    verdict = str(review.get("verdict", ""))
+    attempt = review.get("attempt")
+    skip_reason = review.get("skipReason")
+
+    if verdict == "PASS":
+        return [_ok("codex_review_pass", True,
+                    f"verdict=PASS (attempt {attempt})")]
+    if verdict == "skipped":
+        return [_ok("codex_review_skipped", True,
+                    f"skipped: {skip_reason or 'no reason recorded'}",
+                    skipped=True)]
+    hard_count = len(review.get("hardViolations", []) or [])
+    return [_ok("codex_review_failed", False,
+                f"verdict={verdict or 'unknown'} (attempt {attempt}, "
+                f"{hard_count} hard violations) — fix and re-run")]
+
+
 # ── Gate 2→3 checks ──
 
 
@@ -447,6 +494,7 @@ GATE_CHECKS: dict[str, Any] = {
     "service_protocols_exist": check_service_protocols_exist,
     "contracts_snapshot_saved": check_contracts_snapshot_saved,
     "backend_required_consistent": check_backend_required_consistent,
+    "codex_review_acceptable": check_codex_review_acceptable,
     # Gate 2→3
     "design_spec_exists_or_fallback": check_design_spec_exists_or_fallback,
     "design_assets_exist_or_fallback": check_design_assets_exist_or_fallback,
