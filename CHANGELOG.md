@@ -2,6 +2,16 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [0.2.1] — 2026-04-28
+
+### Added
+- **Phase 1 codex architecture review 게이트**. architect 산출물을 Gate 1→2 전에 codex가 컴파일 영향 이슈로 사전 검증. Phase 5 빌드에서 발견되는 Swift 6 strict concurrency / SwiftData / AVFoundation lifecycle 문제 중 architect 결정에서 비롯된 것을 architect 재실행 단계에서 차단. PASS / FAIL / skipped 세 verdict 모두 처리 — codex 미설치 시 skipped로 진행 보장, FAIL 시 hardViolations를 state에 적재 후 architect 재디스패치(max 2회), `excludeFromCircuitBreaker`로 orchestrator-side 재시도가 breaker를 트립하지 않음.
+- 신규 스크립트 `scripts/codex-architecture-review.sh` (334 LoC).
+
+### Removed
+- `marketplace.json` — 마켓플레이스 등록 경로 폐기.
+- README의 `.env` 언급 및 `.env.example` 자동 복사 기능.
+
 ## [0.2.0] — 2026-04-27
 
 플러그인 골격 정합성 — 단일 기준(SSOT) 강화 + atomic semantics + 회귀 보호.
