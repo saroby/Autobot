@@ -22,7 +22,7 @@ allowed-tools:
 
 사용자의 앱 아이디어를 받아 엔터프라이즈급 iOS 26+ 앱을 완성하여 TestFlight에 배포한다.
 
-**`plugins/autobot/spec/pipeline.json`이 Phase, 상태 전이, Retry, Gate의 단일 기준(SSOT)이다.**
+**`spec/pipeline.json`이 Phase, 상태 전이, Retry, Gate의 단일 기준(SSOT)이다.**
 이 문서는 실행 요약만 제공하며, 충돌 시 실행 스펙이 우선한다.
 상태 전이, Gate 실행/기록, Phase lifecycle 로그는 **반드시 `scripts/pipeline.sh`를 통해서만** 기록한다.
 

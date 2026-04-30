@@ -9,7 +9,7 @@ Master coordination skill for building iOS 26+ apps from ideas. Manages the comp
 
 ## SSOT Rules
 
-`plugins/autobot/spec/pipeline.json`이 Autobot 파이프라인의 단일 실행 규격이다.
+`spec/pipeline.json`이 Autobot 파이프라인의 단일 실행 규격이다.
 
 - Phase 번호, 이름, 상태 전이, retry, gate 정의는 실행 스펙을 기준으로 한다
 - build/resume의 상태 전이, Gate 실행/기록, Phase lifecycle 로그는 `scripts/pipeline.sh` 경로만 사용한다

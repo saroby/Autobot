@@ -21,7 +21,7 @@ allowed-tools:
 # Autobot Resume — 중단된 빌드 재개
 
 중단되거나 실패한 빌드를 `.autobot/build-state.json` 상태 파일을 읽어 이어서 실행한다.
-Phase 정의와 상태 의미는 `plugins/autobot/spec/pipeline.json`이 SSOT이며, 이 문서는 재개 절차만 요약한다.
+Phase 정의와 상태 의미는 `spec/pipeline.json`이 SSOT이며, 이 문서는 재개 절차만 요약한다.
 
 ## CRITICAL RULES
 

@@ -3,7 +3,7 @@
 # SessionStart hook — keep prompt footprint small and defer detailed reads to build/resume time.
 set -euo pipefail
 
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+PROJECT_DIR="${CLAUDE_PLUGIN_ROOT:-.}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 
 # ── Step 1: .env 파일 탐색 ──

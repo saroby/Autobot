@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render markdown blocks derived from plugins/autobot/spec/pipeline.json."""
+"""Render markdown blocks derived from spec/pipeline.json."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
-REPO_ROOT = PLUGIN_DIR.parent.parent
 SPEC_PATH = PLUGIN_DIR / "spec" / "pipeline.json"
 
 
@@ -85,7 +84,7 @@ def replace_block(content: str, block_name: str, replacement: str) -> str:
 
 def render_targets(spec: dict) -> dict[Path, dict[str, str]]:
     return {
-        REPO_ROOT / "README.md": {
+        PLUGIN_DIR / "README.md": {
             "AUTOBOT_PHASE_TABLE": render_readme_phase_table(spec),
             "AUTOBOT_GATE_SUMMARY": render_readme_gate_summary(spec),
         },

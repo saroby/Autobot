@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pipeline spec loading + structural validation.
 
-The spec at plugins/autobot/spec/pipeline.json is the single source of truth
+The spec at spec/pipeline.json is the single source of truth
 for phases, gates, transitions, retry policies, and event/ownership schemas.
 Every other runtime module reads through load_spec() so that schema upgrades
 land in one place.

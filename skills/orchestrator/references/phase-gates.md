@@ -1,6 +1,6 @@
 # Phase Validation Gates
 
-> Gate의 이름, 순서, soft 여부, phase 연결은 `plugins/autobot/spec/pipeline.json`이 SSOT다. 이 문서는 각 gate의 검증 check를 설명한다.
+> Gate의 이름, 순서, soft 여부, phase 연결은 `spec/pipeline.json`이 SSOT다. 이 문서는 각 gate의 검증 check를 설명한다.
 
 매 Phase 완료 후, 다음 Phase에 진입하기 전에 **산출물 검증(Validation Gate)**을 통과해야 한다.
 Gate를 통과하지 못하면 Phase를 `failed`로 마킹하고 재시도하거나 사용자에게 안내한다.

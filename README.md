@@ -4,15 +4,18 @@
 
 5개의 전문 에이전트가 병렬로 협업하여, 아키텍처 설계부터 TestFlight 업로드까지 자동으로 수행합니다.
 
-> 파이프라인 실행 규격의 단일 기준(SSOT)은 `plugins/autobot/spec/pipeline.json`입니다. `orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
-> 상태 전이, Gate 실행/기록, Phase lifecycle 로그의 유일한 엔진은 `plugins/autobot/scripts/pipeline.sh` + `runtime.py`입니다.
+> 파이프라인 실행 규격의 단일 기준(SSOT)은 `spec/pipeline.json`입니다. `skills/orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
+> 상태 전이, Gate 실행/기록, Phase lifecycle 로그의 유일한 엔진은 `scripts/pipeline.sh` + `runtime.py`입니다.
 
 ## 빠른 시작
 
 ### 1. 설치
 
+저장소 자체가 Claude Code 플러그인입니다. 클론한 뒤 `--plugin-dir`로 등록하세요.
+
 ```bash
-claude --plugin-dir /path/to/Autobot/plugins/autobot
+git clone <repo-url> Autobot
+claude --plugin-dir /path/to/Autobot
 ```
 
 ### 2. 빌드
@@ -127,7 +130,7 @@ architect → Models/ServiceProtocols.swift (인터페이스 정의)
 ## 구성 요소
 
 ```
-plugins/autobot/
+Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_ROOT)
 ├── .claude-plugin/plugin.json          # 플러그인 매니페스트
 ├── commands/
 │   ├── make.md                         # /autobot:make — 전체 빌드 파이프라인
@@ -143,7 +146,7 @@ plugins/autobot/
 │   │   ├── SKILL.md                    #   스펙 기반 오케스트레이션 설명
 │   │   └── references/
 │   │       ├── phase-gates.md          #   Gate check 구현 메모
-│   │       ├── architecture-template.md#   architecture.md 정형 템플릿
+│   │       ├── architecture-template.md# architecture.md 정형 템플릿
 │   │       ├── planning-patterns.md    #   아이디어 분석 패턴
 │   │       ├── agent-dispatch.md       #   병렬 에이전트 전략
 │   │       └── troubleshooting.md      #   증상별 진단 + 해결법
@@ -151,8 +154,8 @@ plugins/autobot/
 │   │   ├── SKILL.md
 │   │   ├── references/project-templates.md
 │   │   └── scripts/
-│   │       ├── create-xcode-project.sh #   프로젝트 생성 (xcodegen 우선, fallback)
-│   │       └── generate-pbxproj.py     #   xcodegen 없이 .xcodeproj 생성
+│   │       ├── create-xcode-project.sh # 프로젝트 생성 (xcodegen 우선, fallback)
+│   │       └── generate-pbxproj.py     # xcodegen 없이 .xcodeproj 생성
 │   ├── testflight-deploy/              # TestFlight 배포
 │   │   ├── SKILL.md
 │   │   ├── references/signing-guide.md
@@ -160,9 +163,9 @@ plugins/autobot/
 │   └── retrospective/                  # 자기 개선 학습
 │       ├── SKILL.md
 │       └── references/learning-schema.md
+├── hooks/hooks.json                    # SessionStart 훅
 ├── spec/
 │   └── pipeline.json                   # 실행 가능한 Phase/Transition/Retry/Gate 규격
-├── hooks/hooks.json                    # SessionStart 훅
 └── scripts/
     ├── pipeline.sh                     # 모든 mutating 명령의 단일 진입점 (advance-phase/run-gate/set-flag/append-log 등)
     ├── runtime.py                      # CLI entrypoint + 외부 import 호환 facade (66L)

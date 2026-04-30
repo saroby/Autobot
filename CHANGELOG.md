@@ -17,7 +17,7 @@
 플러그인 골격 정합성 — 단일 기준(SSOT) 강화 + atomic semantics + 회귀 보호.
 
 ### Added
-- **자동 회귀 테스트 슈트** (`plugins/autobot/tests/`, stdlib unittest, 19개 케이스). `tests/run_tests.sh`로 실행.
+- **자동 회귀 테스트 슈트** (`tests/`, stdlib unittest, 19개 케이스). `tests/run_tests.sh`로 실행.
 - **advance-phase** 명령. `scripts/pipeline.sh advance-phase --phase N` — 해당 phase의 outgoing gate 실행 + 통과 시에만 phase 완료 마킹. 실패 시 자동 retryCount 증가. 호출자가 `--increment-retry`를 빠뜨리는 회귀 차단.
 - **set-flag** 명령. `pipeline.sh set-flag --key backend_required --value true`. 화이트리스트는 `spec.policies.allowedFlags`.
 - **Circuit breaker auto-recovery**. global retryCount 합이 `policies.circuitBreaker.maxConsecutivePhaseFailures`에 도달하면 retro phase가 자동으로 `in_progress`, 미완료 phase는 `skipped`(`skipReason` 기록).

@@ -71,7 +71,7 @@ ls -R <AppName>/Views/ <AppName>/Services/ <AppName>/ViewModels/ 2>/dev/null
 - **에러**: `Cannot use optional chaining on non-optional value of type '[GeminiPart]'`
 - **원인**: architect 에이전트가 Codable 모델 생성 시 optional/non-optional 구분을 실수
 - **영향**: Gate 1→2 통과 후 Phase 5에서 수동 수정 필요 (+2분)
-- **수정 대상**: `plugins/autobot/agents/architect.md`
+- **수정 대상**: `agents/architect.md`
 - **수정 제안**: architect 프롬프트에 "Models/ 생성 후 `swiftc -typecheck`로 컴파일 검증" 지침 추가
 ```
 

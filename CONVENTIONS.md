@@ -1,7 +1,7 @@
 # Autobot Internal Conventions
 
 Rules that the runtime and shell scripts follow consistently. New code added
-to `plugins/autobot/scripts/` must obey these so that callers (humans, CI,
+to `scripts/` must obey these so that callers (humans, CI,
 shell wrappers) can rely on a stable surface.
 
 ## Output prefix policy
