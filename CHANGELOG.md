@@ -2,6 +2,17 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [0.3.0] — 2026-04-30
+
+### Changed
+- **플러그인 레이아웃 평탄화** — 저장소 루트 자체가 Claude Code 플러그인 디렉토리가 되도록 재배치. `plugins/autobot/` 중첩 트리를 해체하고 `agents/`, `commands/`, `hooks/`, `skills/`, `spec/`, `scripts/`, `tests/`, `references/`, `.claude-plugin/plugin.json`이 모두 루트 직속에 위치한다.
+- 설치 명령이 `claude --plugin-dir /path/to/Autobot/plugins/autobot` → `claude --plugin-dir /path/to/Autobot`으로 단축됨.
+- 문서 내 `plugins/autobot/...` 경로 참조와 README 디렉토리 트리를 새 레이아웃 기준으로 정리.
+- `verify_spec_docs.py` / `render_pipeline_docs.py`의 `PLUGIN_DIR` 상수가 곧바로 저장소 루트를 가리키도록 단순화.
+
+### Notes
+- `$CLAUDE_PLUGIN_ROOT`(플러그인 위치)와 `$CLAUDE_PROJECT_DIR`(빌드 대상 앱 디렉토리)은 의미가 다르다. `scripts/*.sh`의 `CLAUDE_PROJECT_DIR` 참조는 빌드 중 사용자 앱 디렉토리를 가리키므로 그대로 유지된다.
+
 ## [0.2.1] — 2026-04-28
 
 ### Added
