@@ -336,14 +336,15 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 2
 ### Fallback 경로 (environment.stitch == false 또는 Stitch 실패)
 
 Stitch MCP가 설치되지 않았거나 재시도 후에도 실패한 경우:
-- Phase 2를 fallback 상태로 마킹 (Gate 2→3은 fallback 마커를 인지하여 통과 처리):
+- architecture.md의 `## Design Direction`을 `.autobot/design-spec.md` 필수 섹션으로 변환한다. 스크린샷 경로는 `N/A`로 둬도 되지만, Visual Concept / Color Tokens / Typography / Spacing & Radius / Screen-by-Screen Layout / Interaction Feel / Empty, Loading, Error States 섹션은 반드시 쓴다.
+- Phase 2를 fallback 상태로 마킹한다. Gate 2→3은 fallback이어도 design-spec 계약을 검증한다:
   ```bash
   bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 2 \
     --status fallback --detail "Stitch unavailable or failed"
   ```
-- ui-builder는 architecture.md만으로 UI를 구현 (디자인 일관성 저하 가능)
+- ui-builder는 design-spec.md를 1순위 시각 계약으로 사용한다.
 
-**→ Gate 2→3**: Stitch 성공 시 `design-spec.md` + `designs/*.png` 존재 필수. Stitch 미설치 시 `fallback` 상태로 통과.
+**→ Gate 2→3**: `design-spec.md`와 룩앤필 필수 섹션은 항상 필수. Stitch primary 경로에서는 `designs/*.png`도 필수이고, fallback 경로에서는 screenshots만 면제.
 
 ## Phase 3: Xcode 프로젝트 생성
 

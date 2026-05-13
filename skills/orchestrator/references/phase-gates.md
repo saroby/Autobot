@@ -48,6 +48,11 @@ CHECK:
   ✓ 모든 <AppName>/Models/*.swift에 'import SwiftData' 또는 'import Foundation' 포함
   ✓ architecture.md에 Screen 관련 섹션 존재 (grep -qi "screen")
   ✓ architecture.md에 Design Direction 섹션 존재 (grep -qi "design.*direction\|color.*palette")
+  ✓ Design Direction 하위 룩앤필 계약 존재:
+    - App Personality
+    - Color Palette
+    - Typography Style
+    - Component Patterns
   ✓ architecture.md에 Layout Personality 섹션 존재 (grep -qi "layout.*personality\|layout.*pattern")
   ✓ architecture.md에 Integration/Service 관련 섹션 존재 (grep -qi "integration\|service.*layer\|service.*protocol")
   ✓ architecture.md에 Privacy/FileTimestamp 관련 내용 존재 (grep -qi "privacy\|file.timestamp\|C617")
@@ -67,16 +72,27 @@ CONDITION: build-state.json.environment.stitch == true
   → Phase 2 실행됨 (primary 경로):
     CHECK:
       ✓ .autobot/design-spec.md 존재
+      ✓ design-spec.md 필수 섹션 존재:
+        - Visual Concept
+        - Color Tokens
+        - Typography
+        - Spacing & Radius
+        - Screen-by-Screen Layout
+        - Interaction Feel
+        - Empty, Loading, Error States
       ✓ .autobot/designs/ 디렉토리에 .png 파일 1개 이상 존재
     FAIL → 1회 재시도
     FAIL (재시도 후) → fallback 모드로 전환:
+      - architecture.md의 Design Direction으로 최소 design-spec.md 생성
       - phases["2"].status = "fallback"
-      - ⚠️ 경고 출력: "Stitch 디자인 생성 실패. architecture.md 기반 fallback 모드로 진행합니다."
+      - ⚠️ 경고 출력: "Stitch 디자인 생성 실패. 최소 design-spec 계약으로 진행합니다."
       - Phase 3로 진행
 
 CONDITION: build-state.json.environment.stitch == false
+  → architecture.md의 Design Direction으로 최소 design-spec.md 생성
   → Phase 2 fallback (status: "fallback")
-  → ⚠️ 경고 출력: "Stitch MCP 미설치. fallback 모드로 진행합니다."
+  → CHECK: .autobot/design-spec.md + 필수 룩앤필 섹션 존재
+  → ⚠️ 경고 출력: "Stitch MCP 미설치. 최소 design-spec 계약으로 진행합니다."
   → Phase 3로 진행
 ```
 
@@ -212,6 +228,10 @@ grep -qi "<pattern>" "<file>"
 # architecture.md 섹션 검증 (Gate 1→2 — 유연한 키워드 매칭)
 grep -qi "screen" .autobot/architecture.md
 grep -qi "design.*direction\|color.*palette\|palette.*role" .autobot/architecture.md
+grep -qi "^### .*App Personality" .autobot/architecture.md
+grep -qi "^### .*Color Palette" .autobot/architecture.md
+grep -qi "^### .*Typography" .autobot/architecture.md
+grep -qi "^### .*Component Patterns" .autobot/architecture.md
 grep -qi "layout.*personality\|layout.*pattern" .autobot/architecture.md
 
 # Design Direction hex 형식 검증 + WCAG 대비율 경고 (Gate 1→2)

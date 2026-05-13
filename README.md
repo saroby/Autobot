@@ -70,8 +70,8 @@ claude --plugin-dir /path/to/Autobot
 
 <!-- AUTOBOT_GATE_SUMMARY:START -->
 - **Gate 0→1**: 환경, 앱 이름, 초기 build state 준비가 끝났는지 검증
-- **Gate 1→2**: architecture.md 구조, Models/*.swift, ServiceProtocols.swift, 계약 snapshot이 준비됐는지 검증
-- **Gate 2→3**: Stitch 성공 시 design-spec/designs 산출물이 있고, 미설치 시 fallback 상태가 기록됐는지 검증
+- **Gate 1→2**: architecture.md 구조, Design Direction, Models/*.swift, ServiceProtocols.swift, 계약 snapshot이 준비됐는지 검증
+- **Gate 2→3**: Stitch 성공 여부와 무관하게 design-spec 룩앤필 계약이 있고, primary 경로에서는 designs 산출물이 있는지 검증
 - **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증
 - **Gate 4→5**: Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건
 - **Gate 5→6**: 빌드 성공, 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증

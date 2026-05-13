@@ -17,6 +17,7 @@ Read the architecture document to understand app screens and navigation, then us
    - Screen inventory (names, purposes, key UI elements)
    - Navigation structure (tabs, stacks, modals)
    - Feature list with priorities
+   - `## Design Direction` — the look-and-feel contract that must be preserved even when Stitch is unavailable
 
 2. **Create Stitch Project**: `mcp__stitch__create_project`로 앱 프로젝트를 생성한다.
    - MCP 도구를 사용할 수 없으면 CLI fallback: `npx @_davideast/stitch-mcp tool create_project -d '{...}'`
@@ -44,7 +45,7 @@ Read the architecture document to understand app screens and navigation, then us
    Key Elements: [from architecture.md]
    Device: iPhone, portrait, safe area aware
    ```
-   Design Direction이 없으면 기존 fallback (iOS system colors, generic modern style)을 사용한다.
+   Design Direction이 없으면 실패로 보고 architect 재실행을 요청한다. generic visual style만으로 Phase 2를 완료하지 않는다.
 
    c. `mcp__stitch__list_screens`로 생성된 화면 ID 목록 확인
 
@@ -66,7 +67,8 @@ Read the architecture document to understand app screens and navigation, then us
    - `border-radius: 12px` → `.clipShape(RoundedRectangle(cornerRadius: 12))`
    - `padding: 16px` → `.padding()`
 
-5. **Write Design Spec**: Create `.autobot/design-spec.md`:
+5. **Write Design Spec**: Create `.autobot/design-spec.md`.
+   The following headings are mandatory for Gate 2→3. If Stitch is unavailable or most screens fail, still write a minimal fallback spec by transcribing architecture.md `## Design Direction` into these sections and marking screenshot fields as `N/A`.
 
 ```markdown
 # UX Design Specification
@@ -75,6 +77,33 @@ Read the architecture document to understand app screens and navigation, then us
 - **Generated**: <timestamp>
 - **App**: <Display Name> (<Identifier>)
 - **Screens**: <count>
+
+## Visual Concept
+[App personality, visual mood, target emotion, and visual anti-goals from architecture.md Design Direction.]
+
+## Color Tokens
+| Role | Source | SwiftUI Mapping | Usage |
+|------|--------|-----------------|-------|
+| Primary | <hex or N/A> | Theme.primary | Brand identity, CTAs |
+| Secondary | <hex or N/A> | Theme.secondary | Supporting UI |
+| Accent | <hex or N/A> | Theme.accent | Badges, emphasis |
+| Surface | <hex or N/A> | Theme.surface | Cards, elevated surfaces |
+
+## Typography
+| Element | Source | SwiftUI Mapping |
+|---------|--------|-----------------|
+| Display | <Stitch or architecture> | Theme.display() |
+| Headline | <Stitch or architecture> | Theme.headline() |
+| Body | <Stitch or architecture> | Theme.body() |
+
+## Spacing & Radius
+| Context | Source | SwiftUI Mapping |
+|---------|--------|-----------------|
+| Card padding | <value or N/A> | Theme.cardPadding |
+| Corner radius | <value or N/A> | Theme.cornerRadius |
+| Section spacing | <value or N/A> | Theme.sectionSpacing |
+
+## Screen-by-Screen Layout
 
 ## Screen Designs
 
@@ -108,14 +137,25 @@ Read the architecture document to understand app screens and navigation, then us
 ### HomeView
 - **Layout**: [description from Stitch design]
 - **Key Components**: [identified UI components]
-- **Interactions**: [tap targets, gestures, transitions]
-- **Notes for ui-builder**: [specific SwiftUI implementation guidance]
+   - **Interactions**: [tap targets, gestures, transitions]
+   - **Notes for ui-builder**: [specific SwiftUI implementation guidance]
+
+## Interaction Feel
+[Motion, transitions, gesture tone, feedback intensity.]
+
+## Empty, Loading, Error States
+| State | Visual Treatment | Copy Tone | Action |
+|-------|------------------|-----------|--------|
+| Empty | [icon/card/message] | [tone] | [CTA] |
+| Loading | [skeleton/progress] | [tone] | N/A |
+| Error | [inline/banner] | [tone] | [retry/recover] |
 ```
 
 **Constraints:**
 - Do NOT modify `.autobot/architecture.md` — it is read-only input
 - Do NOT create or modify any Swift source files
 - Save all outputs to `.autobot/designs/` and `.autobot/design-spec.md`
+- `.autobot/design-spec.md` is mandatory even in fallback mode
 - If Stitch is not authenticated, exit with setup instructions: `npx @_davideast/stitch-mcp init`
 - If a screen generation fails, retry once with `generate_screen_from_text`, then log the failure and continue
 - If more than half the screens fail, report Phase 2 as needing fallback

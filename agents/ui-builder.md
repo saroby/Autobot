@@ -35,7 +35,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
    - Screen-specific UI patterns and layout guidance
    - `.autobot/designs/*.png`의 화면별 목업 이미지를 시각 참조로 활용
    이 파일은 Phase 2 (Stitch MCP)에서 생성되며, 존재할 경우 architecture.md보다 시각적 결정에서 우선한다.
-   **Fallback**: `design-spec.md`가 존재하지 않으면 (Stitch 미설치 또는 실패) architecture.md만으로 UI를 결정한다. 이 경우 디자인 일관성이 낮아질 수 있다.
+   **Fallback**: Stitch 미설치/실패 시에도 최소 `design-spec.md`가 존재해야 한다. `.autobot/designs/*.png`가 없으면 screenshot reference만 생략하고, design-spec의 Visual Concept/Color Tokens/Typography/Spacing/Screen Layout/Interaction/States 계약은 그대로 따른다.
 4. **Read Model Files**: Read ALL `.swift` files in `<AppName>/Models/` to learn exact type names, properties, and initializers
 5. **Generate Theme (Design Direction이 있을 때)**:
    architecture.md의 `## Design Direction` 섹션을 읽고 아래를 생성한다:
@@ -104,7 +104,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
    - `EmptyStateView.swift` — SF Symbol + 메시지 + 액션 버튼 패턴
    - 기타 Component Patterns에 명시된 스타일
 
-   **Design Direction이 없으면** (Fallback): 이 단계를 건너뛰고 기존 semantic colors 방식으로 진행.
+   **Design Direction 또는 design-spec 토큰이 없으면**: Phase 2/1 계약 위반이다. generic semantic-color UI로 조용히 대체하지 말고 문제를 보고한다.
 
 6. **Create App Entry Point**: `<AppName>/App/[AppName]App.swift` with @main, WindowGroup, `.modelContainer(for:)` listing ALL @Model types from `<AppName>/Models/`. App에서 Service 프로토콜의 **stub 구현체**를 생성하여 ViewModel에 주입 (data-engineer가 나중에 실제 구현체로 교체):
    ```swift
@@ -116,7 +116,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
    - NavigationStack with navigationDestination (if stack-only)
 8. **Create Each Screen** (Layout Personality 반영): One Swift file per screen in `<AppName>/Views/Screens/`
    - **Primary (design-spec.md 존재 시)**: 해당 화면의 디자인 토큰, 레이아웃 노트, 목업 이미지(`.autobot/designs/<ScreenName>.png`)를 참조하여 Stitch 디자인을 충실히 구현
-   - **Fallback (design-spec.md 미존재 시)**: architecture.md의 Key UI Elements와 iOS HIG를 기반으로 자율적으로 UI 결정
+   - **Fallback (목업 이미지 미존재 시)**: design-spec.md의 최소 룩앤필 계약과 architecture.md의 Key UI Elements를 결합한다. 기능만 되는 기본 SwiftUI 화면으로 대체하지 않는다.
    - **Layout Personality 적용**: architecture.md의 `Layout Personality` 섹션을 읽고 화면별로 아래 패턴을 적용한다:
 
    **data-driven 패턴:**

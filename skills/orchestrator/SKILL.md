@@ -134,8 +134,9 @@ if environment.stitch == true:
     → ux-designer 에이전트 디스패치 (autobot-ux-design 스킬 실행)
     → 실패 시 1회 재시도 후, 재실패 시 fallback 전환
 else:
+    → architecture.md의 Design Direction을 .autobot/design-spec.md로 변환
     → phases["2"].status = "fallback"
-    → ⚠️ "Stitch MCP 미설치. UI는 architecture.md 기반으로 생성됩니다."
+    → ⚠️ "Stitch MCP 미설치. 최소 design-spec 계약으로 진행합니다."
     → Phase 3로 진행
 ```
 
@@ -469,7 +470,7 @@ pending → in_progress → completed
 | Axiom | Skill 도구 호출 시도 | iOS 전문 스킬 | 내장 iOS 지식 |
 | Serena | mcp__plugin_serena_serena__* 도구 존재 | 시맨틱 편집 | Edit 도구 |
 | context7 | mcp__context7__* 도구 존재 | 최신 API 문서 | 학습 데이터 |
-| Stitch | `npx @_davideast/stitch-mcp doctor` 성공 | Phase 2 UX 디자인 생성 (필수 경로) | architecture.md만으로 UI 구현 (fallback) |
+| Stitch | `npx @_davideast/stitch-mcp doctor` 성공 | Phase 2 UX 디자인 생성 (필수 경로) | architecture.md의 Design Direction을 최소 design-spec으로 변환 |
 
 ## Phase 7: Retrospective & Build Report
 

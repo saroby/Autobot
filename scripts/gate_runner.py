@@ -183,6 +183,29 @@ def check_architecture_document_exists(proj: Path, app: str, state: dict) -> lis
     return results
 
 
+def _markdown_heading_present(content: str, title_pattern: str) -> bool:
+    return bool(re.search(rf"(?im)^#+\s+{title_pattern}\s*$", content))
+
+
+def check_design_direction_complete(proj: Path, app: str, state: dict) -> list[dict]:
+    """Require the architect's look-and-feel contract, not just a mention."""
+    arch = proj / ".autobot" / "architecture.md"
+    if not arch.is_file():
+        return [_ok("design_direction_architecture_file", False, f"{arch}")]
+    content = arch.read_text(encoding="utf-8", errors="replace")
+    required = [
+        ("design_direction_heading", r"Design Direction"),
+        ("app_personality_heading", r"App Personality"),
+        ("color_palette_heading", r"Color Palette"),
+        ("typography_heading", r"Typography(?: Style)?"),
+        ("component_patterns_heading", r"Component Patterns"),
+    ]
+    return [
+        _ok(label, _markdown_heading_present(content, pattern), pattern)
+        for label, pattern in required
+    ]
+
+
 def _agent_writes_dirs(spec: dict, agent: str, app: str) -> list[str]:
     """Return the directories (paths ending '/') that the agent owns per spec."""
     cfg = spec.get("fileOwnership", {}).get("agents", {}).get(agent, {})
@@ -297,6 +320,26 @@ def check_design_assets_exist_or_fallback(proj: Path, app: str, state: dict) -> 
     designs = proj / ".autobot" / "designs"
     matches = sorted(designs.glob("*.png")) if designs.is_dir() else []
     return [_ok("design_png_files", len(matches) > 0, f"{len(matches)} .png in designs/")]
+
+
+def check_design_spec_sections_complete(proj: Path, app: str, state: dict) -> list[dict]:
+    spec_path = proj / ".autobot" / "design-spec.md"
+    if not spec_path.is_file():
+        return [_ok("design_spec_file", False, f"{spec_path}")]
+    content = spec_path.read_text(encoding="utf-8", errors="replace")
+    required = [
+        ("visual_concept_section", r"Visual Concept"),
+        ("color_tokens_section", r"Color Tokens|Design Tokens.*Colors|Colors"),
+        ("typography_section", r"Typography"),
+        ("spacing_radius_section", r"Spacing\s*(?:&|and|/)?\s*(?:Radius|Layout)"),
+        ("screen_layout_section", r"Screen[- ]by[- ]Screen Layout|Screen Designs|Screen Details"),
+        ("interaction_feel_section", r"Interaction Feel|Interactions"),
+        ("states_section", r"Empty(?:\s*[,/·&]\s*|\s+)Loading(?:\s*[,/·&]\s*|\s+)Error States|Empty States"),
+    ]
+    return [
+        _ok(label, _markdown_heading_present(content, pattern), pattern)
+        for label, pattern in required
+    ]
 
 
 # ── Gate 3→4 checks ──
@@ -535,6 +578,7 @@ GATE_CHECKS: dict[str, Any] = {
     "environment_recorded": check_environment_recorded,
     # Gate 1→2
     "architecture_document_exists": check_architecture_document_exists,
+    "design_direction_complete": check_design_direction_complete,
     "models_exist": check_models_exist,
     "service_protocols_exist": check_service_protocols_exist,
     "contracts_snapshot_saved": check_contracts_snapshot_saved,
@@ -542,6 +586,7 @@ GATE_CHECKS: dict[str, Any] = {
     "codex_review_acceptable": check_codex_review_acceptable,
     # Gate 2→3
     "design_spec_exists_or_fallback": check_design_spec_exists_or_fallback,
+    "design_spec_sections_complete": check_design_spec_sections_complete,
     "design_assets_exist_or_fallback": check_design_assets_exist_or_fallback,
     # Gate 3→4
     "xcodeproj_exists": check_xcodeproj_exists,

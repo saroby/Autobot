@@ -48,25 +48,26 @@ if build-state.json.environment.stitch == true:
     → design-spec.md + designs/ 생성
     → 실패 시 1회 재시도, 재실패 시 fallback 전환
 else:
+    → architecture.md의 Design Direction을 `.autobot/design-spec.md`로 변환
     → Phase 2를 fallback으로 마킹 (status: "fallback")
-    → ⚠️ 경고: "Stitch MCP 미설치. UI는 architecture.md 기반으로 생성됩니다."
-    → ui-builder는 architecture.md + fallback 디자인 원칙으로 UI 결정
+    → ⚠️ 경고: "Stitch MCP 미설치. 최소 design-spec 계약으로 진행합니다."
+    → ui-builder는 design-spec.md + architecture.md 기반으로 UI 결정
 ```
 
 ### Fallback 모드 디자인 원칙
 
-Stitch가 없을 때 ui-builder가 따라야 할 디자인 기준:
+Stitch가 없을 때도 `.autobot/design-spec.md`는 반드시 생성한다. 스크린샷은 없을 수 있지만, architecture.md의 `## Design Direction`을 아래 필수 섹션으로 옮겨 룩앤필 계약을 보존한다.
 
-| 항목 | Fallback 기준 |
-|------|--------------|
-| **색상** | iOS semantic colors만 사용 (`Color.primary`, `Color(.systemBackground)`, `Color.accentColor`) |
-| **타이포그래피** | Dynamic Type 기본 스타일만 사용 (`.largeTitle`, `.body`, `.caption`) |
-| **레이아웃** | Apple HIG 기본 여백 — `.padding()` (16pt), 스택 기본 spacing |
-| **컴포넌트** | 네이티브 SwiftUI 컴포넌트 우선 (`List`, `NavigationStack`, `TabView`, `.searchable()`) |
-| **글래스 효과** | `.glassEffect()`를 toolbar와 tab bar에만 적용 |
-| **다크모드** | semantic color 사용으로 자동 지원 확인 |
+필수 섹션:
+- `## Visual Concept`
+- `## Color Tokens`
+- `## Typography`
+- `## Spacing & Radius`
+- `## Screen-by-Screen Layout`
+- `## Interaction Feel`
+- `## Empty, Loading, Error States`
 
-fallback 모드에서는 커스텀 디자인 토큰 없이 iOS 시스템 기본값에 의존하므로, 시각적 일관성은 iOS 플랫폼 기본을 따르게 된다.
+fallback 모드에서는 `.autobot/designs/*.png`는 없어도 된다. 단, design-spec의 토큰/레이아웃/상태 섹션이 없으면 Gate 2→3이 실패한다.
 
 ## Workflow
 
@@ -157,10 +158,17 @@ HTML/CSS에서 추출할 디자인 토큰:
 
 ### Step 6: Design Spec 문서 작성
 
-`.autobot/design-spec.md`에 다음 내용 포함:
+`.autobot/design-spec.md`에 다음 내용을 포함한다. 표기 이름은 Gate 2→3이 검사하므로 임의로 바꾸지 않는다:
 
 | 항목 | 내용 |
 |------|------|
+| Visual Concept | 앱 성격, 타깃 감정, 피해야 할 generic UI |
+| Color Tokens | Primary/Secondary/Accent/Surface → SwiftUI Theme 매핑 |
+| Typography | Display/Headline/Body → SwiftUI Theme 매핑 |
+| Spacing & Radius | 카드/섹션/코너 radius 값 |
+| Screen-by-Screen Layout | 화면별 레이아웃과 주요 컴포넌트 |
+| Interaction Feel | 모션, 전환, 피드백 강도 |
+| Empty, Loading, Error States | 상태별 시각 처리와 액션 |
 | Stitch 프로젝트 ID | 참조 및 resume 시 재사용 |
 | 화면별 스크린샷 경로 | `.autobot/designs/<Screen>.png` |
 | 화면별 UI 패턴 노트 | ui-builder가 참조할 구현 가이드 |
@@ -276,10 +284,11 @@ Phase 2 fallback 시:
 ```json
 {
   "stitch": null,
+  "designSpec": ".autobot/design-spec.md",
   "phases": {
     "2": {
       "status": "fallback",
-      "reason": "stitch not available — UI will be generated from architecture.md only"
+      "reason": "stitch not available — minimal design-spec generated from architecture.md"
     }
   }
 }
