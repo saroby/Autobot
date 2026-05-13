@@ -6,7 +6,7 @@ set -euo pipefail
 # Parse arguments
 APP_NAME=""
 BUNDLE_ID=""
-TEAM_ID="AUTO"
+TEAM_ID="${DEVELOPMENT_TEAM:-AUTO}"
 DEPLOYMENT_TARGET="26.0"
 PROJECT_DIR_OVERRIDE=""
 BACKEND_REQUIRED="false"
@@ -270,11 +270,18 @@ fi
 
 # Check if xcodegen is available for project generation
 if command -v xcodegen &>/dev/null; then
+  # Derive bundleIdPrefix safely with a fallback if BUNDLE_ID doesn't end with the lowercase app name
+  APP_NAME_LOWER=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+  BUNDLE_PREFIX="${BUNDLE_ID%.${APP_NAME_LOWER}}"
+  if [ "$BUNDLE_PREFIX" = "$BUNDLE_ID" ] || [ -z "$BUNDLE_PREFIX" ]; then
+    BUNDLE_PREFIX="com.axi"
+  fi
+
   # Create project.yml for xcodegen (Folder Reference mode)
   cat > "${PROJECT_DIR}/project.yml" << YAML_EOF
 name: ${APP_NAME}
 options:
-  bundleIdPrefix: $(echo "$BUNDLE_ID" | sed "s/\\.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')$//")
+  bundleIdPrefix: ${BUNDLE_PREFIX}
   deploymentTarget:
     iOS: "${DEPLOYMENT_TARGET}"
   xcodeVersion: "26.3"

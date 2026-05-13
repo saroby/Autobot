@@ -184,6 +184,17 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
 
 Follow ALL patterns from `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` exactly. Do NOT use patterns listed in the Anti-Patterns table.
 
+**Tab Bar 콘텐츠 겹침 방지 (필수, 과거 재발 2회):**
+
+탭 화면을 만들 때마다 다음 4개 규칙을 적용한다. 자세한 코드 예시는 `references/ios-ux-style.md` 의 *Tab Bar 와 콘텐츠 겹침 방지* 섹션 참조.
+
+1. **자식 뷰 콘텐츠에 `.ignoresSafeArea(.*, edges: .bottom)` 금지.** 배경 컬러/그라디언트에만 허용한다. 배경과 콘텐츠를 `ZStack` 으로 분리한다.
+2. **Floating button / sticky CTA / 커스텀 bottom bar 는 반드시 `.safeAreaInset(edge: .bottom) { ... }` 으로 부착한다.** `overlay(alignment: .bottom)` + 고정 offset 으로 배치하지 않는다.
+3. **탭바 높이 보정을 위한 하드코딩 padding 금지** — `.padding(.bottom, 49)`, `.padding(.bottom, 83)` 같은 매직 숫자는 즉시 제거하고 safe area API (`.safeAreaInset`, `.contentMargins(.bottom, ...)`) 로 대체한다. iOS 26 Liquid Glass 탭바 높이는 가변이다.
+4. **스크롤 가능한 자식 뷰** (`List`, `ScrollView`, `LazyVStack` 등) 는 SwiftUI 가 자동으로 bottom inset 을 더하므로 추가 padding 불필요. 단 `.scrollContentBackground(.hidden)` 등 inset 을 끄는 modifier 와 결합 시 마지막 항목 가림 여부를 시각적으로 검증한다.
+
+코드 생성 후 자기 검사: `grep -nE "ignoresSafeArea.*bottom|padding\(\.bottom, *[0-9]" <AppName>/Views/` 결과가 비어있어야 한다 (배경용 `.ignoresSafeArea()` 는 edges 미지정이므로 정규식에 안 걸린다).
+
 **SwiftUI Patterns:**
 
 ViewModel은 `Models/ServiceProtocols.swift`에 정의된 **서비스 프로토콜**에 의존한다. 구현체(Repository)는 data-engineer가 생성하며, 실행 시 주입된다.

@@ -30,6 +30,25 @@ cd "$PROJECT_PATH"
 BUILD_DIR="build"
 ARCHIVE_PATH="${BUILD_DIR}/${SCHEME}.xcarchive"
 EXPORT_PATH="${BUILD_DIR}/export"
+STATUS_FILE=".autobot/deploy-status.json"
+
+write_status() {
+  # write_status <status> <archive_path> <ipa_path> <upload_success> [reason]
+  local status="$1" archive="$2" ipa="$3" upload="$4" reason="${5:-}"
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  mkdir -p .autobot
+  cat > "$STATUS_FILE" <<EOF
+{
+  "status": "${status}",
+  "archive_path": "${archive}",
+  "ipa_path": "${ipa}",
+  "upload_success": ${upload},
+  "reason": "${reason}",
+  "timestamp": "${ts}"
+}
+EOF
+}
 EXPORT_OPTIONS="${BUILD_DIR}/ExportOptions.plist"
 
 mkdir -p "$BUILD_DIR"
@@ -163,6 +182,7 @@ fi
 
 if [ ! -d "$ARCHIVE_PATH" ]; then
   echo "Error: Archive failed"
+  write_status "archive_failed" "" "" false "xcodebuild archive did not produce $ARCHIVE_PATH"
   exit 1
 fi
 echo "Archive created: $ARCHIVE_PATH"
@@ -205,11 +225,16 @@ if [ $EXPORT_EXIT -ne 0 ]; then
     echo "Upload manually via:"
     echo "  1. Apple Transporter app (Mac App Store, free)"
     echo "  2. Xcode → Window → Organizer → Distribute App"
+    write_status "upload_failed" "$ARCHIVE_PATH" "$IPA_FILE" false "xcodebuild -exportArchive upload step failed (exit $EXPORT_EXIT)"
   else
     echo "Error: Export failed."
+    write_status "export_failed" "$ARCHIVE_PATH" "" false "xcodebuild -exportArchive failed (exit $EXPORT_EXIT)"
   fi
   exit 1
 fi
+
+IPA_FILE=$(ls "$EXPORT_PATH"/*.ipa 2>/dev/null | head -1)
+write_status "uploaded" "$ARCHIVE_PATH" "${IPA_FILE:-}" true ""
 
 echo "=== Upload Complete ==="
 echo "Build exported and uploaded to App Store Connect."

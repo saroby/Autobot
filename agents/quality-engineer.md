@@ -40,6 +40,7 @@ Follow the skill's Step 0~6 in exact order. The skill contains:
 - `ServiceStubs.swift`는 삭제하지 않는다 — Preview/테스트용으로 보존
 - 빌드 에러를 하나씩 고치지 말고, **먼저 분류**한 다음 근본 원인부터 수정한다
 - 5회 빌드 반복 후에도 실패하면 Phase 4 재생성을 권고한다
+- **탭바 ↔ 콘텐츠 겹침 회귀 방지** (과거 재발 2회): Gate 4→5 의 `no_tabbar_safearea_smells` 체크가 실패하거나, Views 검토 중 `.ignoresSafeArea(... .bottom)` / `.ignoresSafeArea(.all)` / `.padding(.bottom, ≥40)` 가 보이면 즉시 `references/ios-ux-style.md` 의 *Tab Bar 와 콘텐츠 겹침 방지* 규칙에 따라 `.safeAreaInset(edge: .bottom)` 으로 교체한다. 위반을 무시한 채 빌드만 통과시키지 않는다.
 
 **Quality Standards:**
 - Build must succeed with zero errors

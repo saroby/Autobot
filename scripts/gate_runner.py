@@ -363,6 +363,51 @@ def check_services_exist(proj: Path, app: str, state: dict) -> list[dict]:
     return [_dir_has_swift(proj / services_dir_rel.rstrip("/"), "services_files")]
 
 
+def check_no_tabbar_safearea_smells(proj: Path, app: str, state: dict) -> list[dict]:
+    """Detect known tab-bar overlap regressions in SwiftUI Views.
+
+    Past incidents (recurred twice): floating UI / scroll content gets covered
+    by the system tab bar because a child view ignores the bottom safe area
+    or uses hardcoded bottom padding to compensate for the tab bar height.
+
+    Hits — flagged as violations:
+      - `ignoresSafeArea(... .bottom ...)`               # bottom edge ignored
+      - `ignoresSafeArea(.all)` / `ignoresSafeArea(.all, ...)`  # all edges
+      - `.padding(.bottom, N)` where N >= 40            # likely tab-bar fudge
+
+    The plain background pattern `.ignoresSafeArea()` (no args) is allowed.
+    """
+    views = proj / app / "Views"
+    if not views.is_dir():
+        return [_ok("tabbar_safearea_smell", True, "no Views/ dir", skipped=True)]
+
+    pattern_bottom = re.compile(r"ignoresSafeArea\b[^)]*\.bottom")
+    pattern_all = re.compile(r"ignoresSafeArea\(\s*\.all\b")
+    pattern_padding = re.compile(r"\.padding\(\.bottom,\s*(\d+)\b")
+
+    violations: list[str] = []
+    for swift in views.rglob("*.swift"):
+        try:
+            for lineno, line in enumerate(swift.read_text(encoding="utf-8").splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("//"):
+                    continue
+                if pattern_bottom.search(line) or pattern_all.search(line):
+                    violations.append(f"{swift.relative_to(proj)}:{lineno}: ignoresSafeArea bottom/all — use .safeAreaInset")
+                m = pattern_padding.search(line)
+                if m and int(m.group(1)) >= 40:
+                    violations.append(f"{swift.relative_to(proj)}:{lineno}: .padding(.bottom, {m.group(1)}) — likely tab-bar fudge, use .safeAreaInset")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+    if violations:
+        detail = "; ".join(violations[:5])
+        if len(violations) > 5:
+            detail += f"; (+{len(violations) - 5} more)"
+        return [_ok("tabbar_safearea_smell", False, detail)]
+    return [_ok("tabbar_safearea_smell", True, "no bottom-safearea anti-patterns found")]
+
+
 def check_models_checksum_matches(proj: Path, app: str, state: dict) -> list[dict]:
     script = SCRIPT_DIR / "snapshot-contracts.sh"
     try:
@@ -516,6 +561,7 @@ GATE_CHECKS: dict[str, Any] = {
     "deployment_attempt_recorded": check_deployment_attempt_recorded,
     # Gate 4→5 (added with fileOwnership SSOT)
     "sandbox_clean": check_sandbox_clean,
+    "no_tabbar_safearea_smells": check_no_tabbar_safearea_smells,
 }
 
 

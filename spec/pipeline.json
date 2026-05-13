@@ -488,6 +488,7 @@
         { "type": "procedural", "name": "models_checksum_matches", "label": "models_checksum_matches" },
         { "type": "procedural", "name": "backend_artifacts_exist_if_required", "label": "backend_artifacts_exist_if_required" },
         { "type": "procedural", "name": "sandbox_clean",  "label": "sandbox_clean" },
+        { "type": "procedural", "name": "no_tabbar_safearea_smells", "label": "no_tabbar_safearea_smells" },
         {
           "type": "state_field_contains",
           "label": "phase4_agents_consumed_learnings",

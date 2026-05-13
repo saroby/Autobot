@@ -273,7 +273,7 @@ def generate_pbxproj(
     w('')
 
     # ── XCBuildConfiguration ──
-    team_setting = f'\t\t\t\tDEVELOPMENT_TEAM = "{team_id}";' if team_id else '\t\t\t\tDEVELOPMENT_TEAM = "";'
+    team_setting = f'\t\t\t\tDEVELOPMENT_TEAM = "{team_id}";' if team_id else None
     entitlements_setting = f'\t\t\t\tCODE_SIGN_ENTITLEMENTS = "{app_name}/{app_name}.entitlements";'
 
     w('/* Begin XCBuildConfiguration section */')
@@ -326,18 +326,18 @@ def generate_pbxproj(
     w(f'{entitlements_setting}')
     w(f'\t\t\t\tCODE_SIGN_STYLE = Automatic;')
     w(f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;')
-    w(f'{team_setting}')
+    if team_setting:
+        w(team_setting)
     w(f'\t\t\t\tGENERATE_INFOPLIST_FILE = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;')
-    w(f'\t\t\t\tINFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";')
     w(f'\t\t\t\tINFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";')
     w(f'\t\t\t\tMARKETING_VERSION = 1.0.0;')
     w(f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "{bundle_id}";')
     w(f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";')
     w(f'\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;')
-    w(f'\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2";')
+    w(f'\t\t\t\tTARGETED_DEVICE_FAMILY = "1";')
     w('\t\t\t};')
     w('\t\t\tname = Debug;')
     w('\t\t};')
@@ -349,18 +349,18 @@ def generate_pbxproj(
     w(f'{entitlements_setting}')
     w(f'\t\t\t\tCODE_SIGN_STYLE = Automatic;')
     w(f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;')
-    w(f'{team_setting}')
+    if team_setting:
+        w(team_setting)
     w(f'\t\t\t\tGENERATE_INFOPLIST_FILE = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;')
-    w(f'\t\t\t\tINFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";')
     w(f'\t\t\t\tINFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";')
     w(f'\t\t\t\tMARKETING_VERSION = 1.0.0;')
     w(f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "{bundle_id}";')
     w(f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";')
     w(f'\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;')
-    w(f'\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2";')
+    w(f'\t\t\t\tTARGETED_DEVICE_FAMILY = "1";')
     w('\t\t\t};')
     w('\t\t\tname = Release;')
     w('\t\t};')
@@ -371,7 +371,8 @@ def generate_pbxproj(
     w(f'\t\t\t\tBUNDLE_LOADER = "$(TEST_HOST)";')
     w(f'\t\t\t\tCODE_SIGN_STYLE = Automatic;')
     w(f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;')
-    w(f'{team_setting}')
+    if team_setting:
+        w(team_setting)
     w(f'\t\t\t\tGENERATE_INFOPLIST_FILE = YES;')
     w(f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "{bundle_id}.tests";')
     w(f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";')
@@ -386,7 +387,8 @@ def generate_pbxproj(
     w(f'\t\t\t\tBUNDLE_LOADER = "$(TEST_HOST)";')
     w(f'\t\t\t\tCODE_SIGN_STYLE = Automatic;')
     w(f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;')
-    w(f'{team_setting}')
+    if team_setting:
+        w(team_setting)
     w(f'\t\t\t\tGENERATE_INFOPLIST_FILE = YES;')
     w(f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = "{bundle_id}.tests";')
     w(f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";')
