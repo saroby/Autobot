@@ -80,6 +80,12 @@ claude --plugin-dir /path/to/Autobot
 
 Gate 실패 시 자동 재시도(최대 2회), 반복 실패 시 Phase 7(회고)으로 건너뛰고 `/autobot:resume`으로 재시도 안내.
 
+### 안정성 설계
+
+- `spec/pipeline.json`이 Phase, Gate, retry, log event, file ownership의 단일 기준입니다. README와 orchestrator 문서의 표도 이 스펙에서 렌더링해 drift를 검출합니다.
+- `advance-phase`는 Gate 실행 결과와 Phase 상태 변경을 하나의 atomic mutation으로 기록합니다. transition이 거부되면 gate evidence와 build-log 모두 남기지 않습니다.
+- `learning_applied` 이벤트는 build-log와 Phase별 consumed 목록을 함께 갱신합니다. 회고 기반 자기 개선이 말뿐인 메모가 아니라 검증 가능한 상태로 남습니다.
+
 ### 병렬 에이전트 격리
 
 Phase 4의 ui-builder와 data-engineer는 **파일 소유권 계약**으로 충돌을 피합니다:
@@ -200,7 +206,7 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 | `validate-state.sh` | 진단 전용 read-only: 스키마 검증, transition 검증, gate 체크 목록, 문서 일관성 검증 |
 | `agent-sandbox.sh` | `spec.fileOwnership`을 읽어 에이전트 파일 소유권 enforcement. 위반은 `phases.<id>.sandbox.violations`에 자동 기록 → Gate 4→5의 `sandbox_clean` 체크가 평가 |
 | `snapshot-contracts.sh` | Models/ 무결성 + Phase-level 스냅샷 — Phase 5 실패 시 Phase 4 복원 |
-| `build.lock` | 동시 빌드 실행 방지 — PID 기반 잠금 |
+| `build.lock` | `/autobot:make`·`/autobot:resume` 동시 실행 방지 — PID 기반 잠금 |
 
 ### 단일 truth source 원칙
 

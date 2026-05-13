@@ -43,7 +43,7 @@ case "$MODE" in
     exec python3 "${SCRIPT_DIR}/verify_spec_docs.py" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
     ;;
   render-docs)
-    exec python3 "${SCRIPT_DIR}/render_pipeline_docs.py" --write
+    exec python3 "${SCRIPT_DIR}/render_pipeline_docs.py" --check
     ;;
   init-state|set-phase-status|record-environment|record-gate-result|run-gate)
     cat >&2 <<EOF
