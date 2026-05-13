@@ -121,7 +121,7 @@ Phase 0에서 **반드시** 아래 감지를 수행하고 결과를 `build-state
 - 없으면 → `environment.stitch = false`
 - `npx @_davideast/stitch-mcp doctor`는 보조 확인용. **도구 존재 확인이 1차 기준**이다.
 
-`environment.stitch == true`이면 Phase 2가 정상(primary) 경로로 실행된다. `false`이면 Phase 2를 `fallback`으로 마킹하고, 사용자에게 Stitch 미설치 경고를 출력한다.
+`environment.stitch == true`이면 Phase 2가 정상(primary) 경로로 실행된다. `false`이면 architecture.md의 Design Direction으로 최소 design-spec을 만든 뒤 Phase 2를 `fallback`으로 마킹하고, 사용자에게 Stitch 미설치 경고를 출력한다.
 
 감지 결과는 수동 편집하지 말고 runtime 엔진으로 기록한다:
 ```bash
@@ -136,7 +136,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" record-environment \
 **Stitch MCP 미설치 시 즉시 경고:**
 ```
 ⚠️ Stitch MCP가 설치되지 않아 UX 디자인 생성 없이 진행합니다.
-   UI는 architecture.md 기반으로 생성됩니다 (fallback 모드).
+   architecture.md의 Design Direction으로 최소 design-spec 계약을 생성합니다 (fallback 모드).
    디자인 일관성을 위해 Stitch 설치를 권장합니다: npx @_davideast/stitch-mcp init
 ```
 

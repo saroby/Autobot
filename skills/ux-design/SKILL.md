@@ -107,7 +107,7 @@ Key UI Elements:
 Layout Requirements:
 - iPhone portrait orientation
 - Safe area aware (notch, home indicator)
-- iOS system colors (light/dark compatible)
+- Color Tokens from architecture.md Design Direction (light/dark compatible)
 - Dynamic Type ready text sizes
 
 Interactive States:

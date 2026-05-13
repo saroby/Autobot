@@ -137,8 +137,8 @@ Read the architecture document to understand app screens and navigation, then us
 ### HomeView
 - **Layout**: [description from Stitch design]
 - **Key Components**: [identified UI components]
-   - **Interactions**: [tap targets, gestures, transitions]
-   - **Notes for ui-builder**: [specific SwiftUI implementation guidance]
+- **Interactions**: [tap targets, gestures, transitions]
+- **Notes for ui-builder**: [specific SwiftUI implementation guidance]
 
 ## Interaction Feel
 [Motion, transitions, gesture tone, feedback intensity.]

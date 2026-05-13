@@ -308,12 +308,6 @@ def _is_fallback(state: dict, phase: str) -> bool:
     return state.get("phases", {}).get(phase, {}).get("status") == "fallback"
 
 
-def check_design_spec_exists_or_fallback(proj: Path, app: str, state: dict) -> list[dict]:
-    if _is_fallback(state, "2"):
-        return [_ok("design_spec_fallback", True, "Phase 2 fallback", skipped=True)]
-    return [_file_exists(proj / ".autobot" / "design-spec.md", "design_spec")]
-
-
 def check_design_assets_exist_or_fallback(proj: Path, app: str, state: dict) -> list[dict]:
     if _is_fallback(state, "2"):
         return [_ok("design_assets_fallback", True, "Phase 2 fallback", skipped=True)]
@@ -585,7 +579,6 @@ GATE_CHECKS: dict[str, Any] = {
     "backend_required_consistent": check_backend_required_consistent,
     "codex_review_acceptable": check_codex_review_acceptable,
     # Gate 2→3
-    "design_spec_exists_or_fallback": check_design_spec_exists_or_fallback,
     "design_spec_sections_complete": check_design_spec_sections_complete,
     "design_assets_exist_or_fallback": check_design_assets_exist_or_fallback,
     # Gate 3→4
