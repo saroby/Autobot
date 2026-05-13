@@ -82,6 +82,38 @@ TabView {
 }
 ```
 
+#### Tab Bar 와 콘텐츠 겹침 방지 (필수)
+
+iOS 26 의 Liquid Glass `TabView` 는 시스템이 자동으로 자식 뷰에 bottom safe-area inset 을 더해 준다. **이 inset 을 무시하거나 덮어쓰면 콘텐츠(스크롤 마지막 항목, floating button, 커스텀 bottom bar)가 탭바에 가려진다.** 다음 규칙을 반드시 지킨다.
+
+1. **탭 자식 뷰의 루트에 `.ignoresSafeArea(.container, edges: .bottom)` 또는 `.ignoresSafeArea(.all, edges: .bottom)` 금지.**
+   - 배경 컬러/그라디언트에 한해서만 허용:
+     ```swift
+     ZStack {
+         Theme.background.ignoresSafeArea() // 배경만, 콘텐츠는 별개
+         contentView                          // 콘텐츠는 safe area 안쪽
+     }
+     ```
+2. **Floating button, custom bottom bar, sticky CTA 는 `.safeAreaInset(edge: .bottom)` 으로 부착한다.** `overlay(alignment: .bottom)` + 고정 offset 금지.
+   ```swift
+   List(items) { ... }
+       .safeAreaInset(edge: .bottom) {
+           PrimaryButton("저장") { save() }
+               .padding(.horizontal)
+               .padding(.bottom, 8)
+       }
+   ```
+3. **`ScrollView` 마지막 항목이 탭바와 겹치지 않는다는 가정 금지** — SwiftUI 가 자동으로 inset 을 더하지만, 커스텀 `LazyVStack` 안에 `.padding(.bottom, 고정값)` 만 주고 inset 을 제거하면 깨진다. `.contentMargins(.bottom, ...)` 또는 위의 `.safeAreaInset` 을 사용한다.
+4. **고정 픽셀로 탭바 높이를 가정해 padding 을 주는 코드 금지** (`.padding(.bottom, 49)`, `.padding(.bottom, 83)` 등). iOS 26 Liquid Glass 탭바 높이는 디바이스/방향/dynamic type 에 따라 달라진다. 항상 safe area API 로 위임한다.
+5. **Sheet/FullScreenCover 내부 탭바**: sheet 안에 별도 `TabView` 를 두는 경우, 부모의 inset 이 전달되지 않는다. sheet 루트에 `.toolbarBackground(.visible, for: .tabBar)` 와 자체 `.safeAreaInset(edge: .bottom)` 을 함께 사용한다.
+6. **Hide tab bar in nested NavigationStack**: `.toolbar(.hidden, for: .tabBar)` 를 푸시된 화면에 적용했다면, 그 화면의 bottom 콘텐츠는 `.safeAreaInset` 대신 `.padding(.bottom)` 로 충분 — 단 푸시-팝 사이에 일관된 처리가 필요하다.
+
+**셀프 체크리스트** (ui-builder 가 탭 화면을 만들 때마다 확인):
+- [ ] 자식 뷰에 `.ignoresSafeArea(.*, edges: .bottom)` 이 있는가? → 배경 외에는 제거
+- [ ] Floating/sticky 요소가 `.safeAreaInset(edge: .bottom)` 으로 부착됐는가?
+- [ ] 하드코딩된 `.padding(.bottom, <number>)` 가 탭바 높이를 보정하려는 의도인가? → 제거하고 safe area 사용
+- [ ] 스크롤 마지막 항목이 미리보기에서 탭바에 가리지 않는가?
+
 ### Data Persistence
 
 ```swift
