@@ -1,6 +1,6 @@
 ---
 name: deployer
-description: Use this agent when registering an app on App Store Connect, archiving, and uploading to TestFlight. Handles fastlane produce, code signing, archive, IPA export, upload, and tester group setup.
+description: Use this agent when deploying an iOS app to TestFlight. Chains 4 single-responsibility skills — autobot-register-app, autobot-archive-build, autobot-upload-build, autobot-invite-testers. The register step is idempotent (already_exists is silent success) so this agent can be re-run safely. Halts with explicit user guidance on register failures (name_collision, bundle_id_taken, api_key_insufficient_role) before any archive/upload work happens.
 model: sonnet
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -8,7 +8,10 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 You are an iOS deployment specialist for App Store Connect and TestFlight.
 
 **Your Mission:**
-Register the app on App Store Connect (if needed), archive the app, upload to App Store Connect, create the '내부' tester group, and invite the user.
+Chain the 4 deploy-phase skills in order: **register → archive → upload → invite-testers**. Each skill has a single responsibility and writes its own status JSON. You read each status to decide whether to proceed to the next.
+
+**Idempotency:**
+The register step (`autobot-register-app`) is fully idempotent on the same Apple Developer team — re-running with the same bundle ID returns `already_exists` and proceeds silently. App-name collisions and bundle-ID conflicts surface as explicit halts before archive starts, so the user doesn't waste time on a doomed build.
 
 If `.autobot/phase-learnings/deploy.md` exists, read it first.
 Then use `.autobot/active-learnings.md` only for shared fallback context.
@@ -21,16 +24,16 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
   --detail '{"sources":["phase-learnings/deploy.md","active-learnings.md"]}'
 ```
 
-**FIRST:** Read `$CLAUDE_PLUGIN_ROOT/skills/testflight-deploy/SKILL.md` for the detailed deployment pipeline and `references/signing-guide.md` for credential setup.
+**Reference docs (read once at start):**
+- `$CLAUDE_PLUGIN_ROOT/skills/autobot-register-app/SKILL.md`
+- `$CLAUDE_PLUGIN_ROOT/skills/autobot-archive-build/SKILL.md`
+- `$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/SKILL.md`
+- `$CLAUDE_PLUGIN_ROOT/skills/autobot-invite-testers/SKILL.md`
+- `$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/references/signing-guide.md`
 
-**Process:**
-
-### Step 0: ASC 인증 사전 검증
-
-Phase 6 시작 전에 ASC 인증 가능 여부를 확인한다. 미설정 시 archive + 로컬 IPA export까지만 진행하고 업로드를 건너뛴다.
+## Step 0: ASC 인증 사전 검증
 
 ```bash
-# build-state.json에서 ascConfigured 확인
 ASC_OK=$(python3 -c "
 import json
 with open('.autobot/build-state.json') as f:
@@ -38,43 +41,119 @@ with open('.autobot/build-state.json') as f:
 print(state.get('environment', {}).get('ascConfigured', False))
 " 2>/dev/null || echo "False")
 
-# 환경변수 직접 확인 (이중 검증)
 if [ "$ASC_OK" != "True" ] || [ -z "$ASC_API_KEY_ID" ] || [ -z "$ASC_API_ISSUER_ID" ] || [ -z "$ASC_API_KEY_PATH" ]; then
-  echo "⚠️ ASC 인증 미설정 — Archive + 로컬 IPA export만 진행합니다."
+  echo "⚠️ ASC 인증 미설정 — 등록/업로드/초대 건너뜀, archive 만 수행."
   ASC_UPLOAD=false
 else
   ASC_UPLOAD=true
 fi
 ```
 
-> **ASC_UPLOAD=false**일 때: 앱 등록(Step 2), upload(Step 5), 테스터 그룹(Step 6)을 건너뛴다. Archive + 로컬 IPA export만 수행.
+**ASC_UPLOAD=false** 면 Step 1 (register) / Step 3 (upload) / Step 4 (invite) 모두 건너뛰고 Step 2 (archive) 후 `upload.sh --no-upload` 로 로컬 IPA 만 생성한 뒤 Step 5 aggregate 로 직진.
 
-### Step 1-6: Deployment Pipeline
+## Step 1: Register app (ASC_UPLOAD=true만, idempotent)
 
-testflight-deploy 스킬의 파이프라인을 따른다:
+archive 전에 ASC 에 앱이 존재하는지 보장한다. 멱등 — 이미 등록된 앱이면 즉시 통과한다. 등록 단계에서 충돌이 잡히면 archive (5분+) 시작 전에 사용자에게 보고하고 중단한다.
 
-1. **Detect signing identity** — `security find-identity` + pbxproj에서 DEVELOPMENT_TEAM 확인
-2. **Register app** (ASC_UPLOAD=true만) — `fastlane produce create` (멱등)
-3. **ExportOptions.plist** — `ASC_UPLOAD` 값에 따라 `destination`을 `upload` 또는 `export`로 설정
-4. **Archive** — `xcodebuild archive -destination 'generic/platform=iOS'`
-5. **Export + Upload** (ASC_UPLOAD=true만) — `xcodebuild -exportArchive` with ASC auth params
-6. **TestFlight group** (ASC_UPLOAD=true만) — '내부' 그룹 생성 + 테스터 초대
+```bash
+AUTOBOT_REGISTER_STATUS_FILE=.autobot/register-status.json \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-register-app/scripts/register-app.sh" \
+  --bundle-id "$BUNDLE_ID" --display-name "$DISPLAY_NAME"
+```
 
-**Fallback Strategy:**
+`register-status.json` 의 `result` + `reason` 으로 분기:
 
-App 등록 실패 시:
-1. fastlane 설치 불가 → 수동 등록 안내: `https://appstoreconnect.apple.com → My Apps → +`
-2. 번들 ID, 앱 이름, SKU 값을 함께 안내하여 즉시 입력 가능하게 함
+| `result` | `reason` | 처리 |
+|----------|----------|------|
+| `created` | "" | 신규 등록 성공 → Step 2 진행 |
+| `already_exists` | "" | 이미 내 팀에 등록됨 → Step 2 진행 (조용히) |
+| `failed` | `name_collision` | **중단.** "다른 개발자가 같은 display name 을 사용 중입니다. `--display-name` 을 변경하세요 (회사명 prefix, 미세 변형). 변경 후 `/autobot:testflight` 재실행." |
+| `failed` | `bundle_id_taken` | **중단.** "이 bundle ID 는 다른 Apple Developer team 이 선점했습니다. 마지막 segment 변경 또는 prefix 교체 필요. `/autobot:setup` 으로 bundleIdPrefix 갱신 가능." |
+| `failed` | `api_key_insufficient_role` | **중단.** "ASC API Key role 이 부족합니다. App Store Connect → Users and Access → Integrations 에서 Key 를 'App Manager' 이상으로 승격 후 재시도하세요." |
+| `failed` | `fastlane_exit_N` | **중단.** fastlane 출력을 첨부하고 일시적 ASC 5xx 가능성 안내. 재시도 권장. |
 
-Upload 실패 시:
-1. Apple ID가 Xcode에 로그인되어 있으면 인증 파라미터 없이 재시도
-2. 실패하면 IPA 경로 안내 + Xcode Organizer 또는 Apple Transporter 수동 업로드 안내
+중단 시 `fail-phase --phase 6 --error <reason>` 으로 마킹 후 종료. archive/upload/invite 는 호출하지 않는다.
 
-**Error Handling:**
-- Signing 실패: provisioning profile 자동 갱신 시도
-- Upload 실패: 네트워크 재시도 (최대 3회)
-- API 인증 실패: 환경 변수 확인 안내
+## Step 2: Archive
+
+```bash
+AUTOBOT_ARCHIVE_STATUS_FILE=.autobot/archive-status.json \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-archive-build/scripts/archive.sh" \
+  --project-path "$PROJECT_PATH" --scheme "$SCHEME"
+```
+
+- exit 0 → `result: archived`, `archive_path` 추출 → Step 3 진행
+- exit 4 → 컴파일/서명 에러. `xcodebuild` 로그 분석 후:
+  - "No signing certificate" → Xcode → Settings → Accounts 안내
+  - "BUILD FAILED" (컴파일) → Phase 5(quality-engineer) 재시도 신호
+- **ASC_UPLOAD=false 경우:** archive 성공 후 IPA 만 만들고 종료. 업로드/초대는 건너뛴다:
+  ```bash
+  ARCHIVE_PATH=$(python3 -c "import json; print(json.load(open('.autobot/archive-status.json'))['archive_path'])")
+  AUTOBOT_UPLOAD_STATUS_FILE=.autobot/upload-status.json \
+  bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/scripts/upload.sh" \
+    --archive-path "$ARCHIVE_PATH" --no-upload
+  ```
+  결과 `result: exported_only` 와 `ipa_path` 를 사용자에게 보고 (Transporter/Organizer 수동 업로드용). Step 5 의 aggregate 로 직진.
+
+## Step 3: Upload (ASC_UPLOAD=true만)
+
+```bash
+ARCHIVE_PATH=$(python3 -c "import json; print(json.load(open('.autobot/archive-status.json'))['archive_path'])")
+
+AUTOBOT_UPLOAD_STATUS_FILE=.autobot/upload-status.json \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/scripts/upload.sh" \
+  --archive-path "$ARCHIVE_PATH"
+```
+
+- exit 0 → `result: uploaded`, `upload_success: true` → Step 4 진행
+- exit 5 → export 성공 + upload 실패. `ipa_path` 를 사용자에게 보고하고 수동 업로드 안내 (Xcode Organizer / Transporter). Step 4 건너뜀.
+- exit 4 → export 실패. Step 1 의 register 가 성공했으므로 등록 문제일 가능성은 낮음 (race condition 가능). signing/provisioning 점검 안내, 빌드 중단.
+
+## Step 4: Invite testers (ASC_UPLOAD=true && upload 성공만)
+
+```bash
+TESTER_EMAILS=$(bash "$CLAUDE_PLUGIN_ROOT/skills/setup/scripts/config.sh" \
+  get-or testerEmails "${TESTER_EMAIL:-}")
+
+if [ -n "$TESTER_EMAILS" ]; then
+  AUTOBOT_INVITE_STATUS_FILE=.autobot/invite-status.json \
+  bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-invite-testers/scripts/invite.sh" \
+    --bundle-id "$BUNDLE_ID" --emails "$TESTER_EMAILS"
+fi
+```
+
+- exit 0 → 모든 이메일 처리 (신규 초대 또는 이미 멤버)
+- exit 5 → 일부 실패. `emails_failed` 를 사용자에게 보고하고 부분 성공으로 마무리.
+- exit 3 → app 미등록. **Step 1 register 가 통과했음에도 invite 에서 미등록으로 잡힌다면 race condition (드뭄).** 재시도 권장.
+
+## Step 5: Aggregate deploy-status.json
+
+4개 status 파일을 합쳐 단일 `.autobot/deploy-status.json` 으로 출력:
+
+```bash
+python3 - <<'PY'
+import json, os
+out = {"timestamp": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
+for name in ("register", "archive", "upload", "invite"):
+    path = f".autobot/{name}-status.json"
+    if os.path.exists(path):
+        out[name] = json.load(open(path))
+status = "uploaded" if out.get("upload", {}).get("upload_success") else (
+    "archived" if out.get("archive", {}).get("result") == "archived" else "failed"
+)
+out["status"] = status
+with open(".autobot/deploy-status.json", "w") as f:
+    json.dump(out, f, ensure_ascii=False, indent=2)
+print(f"deploy status: {status}")
+PY
+```
+
+## Error Handling
+
+- Signing 실패: `xcodebuild` 가 자동 프로비저닝 재시도 (`-allowProvisioningUpdates`)
+- Upload 5xx: upload.sh 가 단일 시도. 재시도가 필요하면 archive 는 보존돼 있으므로 같은 archive_path 로 재호출.
+- API 인증 실패: 환경변수/`.p8` 경로 확인 안내
 
 **Output:**
-배포 결과를 `.autobot/deploy-status.json`에 기록하고 결과를 보고한다.
+`.autobot/deploy-status.json` 에 집계 결과를 기록. 각 skill 의 개별 status 도 그대로 보존된다.
 Do NOT ask any questions. Handle all deployment decisions autonomously.

@@ -1,6 +1,6 @@
 ---
-name: make
-description: "앱 아이디어를 입력하면 질문 없이 엔터프라이즈급 iOS 26+ 앱을 빌드하고 TestFlight에 업로드합니다."
+name: mvp
+description: "앱 아이디어를 입력하면 질문 없이 엔터프라이즈급 iOS 26+ MVP를 로컬에서 빌드합니다. TestFlight 업로드는 /autobot:testflight 로 분리되어 있습니다."
 argument-hint: "<앱 아이디어 설명>"
 allowed-tools:
   - Read
@@ -143,9 +143,15 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" record-environment \
 **ASC 인증 미설정 시 즉시 경고:**
 ```
 ⚠️ App Store Connect 인증 정보가 설정되지 않았습니다.
-   Phase 6(TestFlight 배포)가 건너뛰어집니다.
-   빌드는 로컬에서만 완료됩니다.
+   Phase 6의 업로드/테스터 초대가 건너뛰어집니다 (archive + 로컬 IPA 까지만 진행).
    설정 방법: .env 파일에 ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH 추가
+```
+
+**`/autobot:mvp` 는 TestFlight 업로드까지 가지 않는다 — 안내 메시지:**
+```
+ℹ️ 이 명령은 로컬 MVP 빌드까지만 수행합니다.
+   빌드 완료 후 시뮬레이터/디바이스에서 확인한 뒤 TestFlight 으로 보내려면:
+     /autobot:testflight    → ASC 자동 등록 (멱등) + archive + upload + 테스터 초대
 ```
 
 ### 앱 이름 결정
@@ -459,24 +465,26 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore-phase --phase 4
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event snapshot_restore --detail "phase-4-snapshot restored after 2 failures"
 ```
 
-## Phase 6: TestFlight 배포
+**Phase 5 완료 후 곧바로 Phase 7 로 직진** (Phase 6 는 `/autobot:testflight` 가 트리거하므로 여기서 건너뛴다):
 
 ```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase 6 --detail "TestFlight Deploy"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase 7 --detail "Retrospective (Phase 6 skipped — deferred to /autobot:testflight)"
 ```
 
-deployer 에이전트를 Agent 도구로 디스패치.
+Phase 6 는 `pending` 상태로 남는다 — 의도된 동작. resume 로직은 Phase 5 완료 + Phase 7 진행/완료 상태에서 Phase 6 pending 은 정상으로 간주한다 (manual phase).
 
-ASC 인증 미설정(`ascConfigured == false`) 시 deployer가 Archive + 로컬 IPA export만 진행.
+## Phase 6: TestFlight 배포 — `/autobot:mvp` 에서는 **실행하지 않는다**
 
-**→ Soft Gate**: 실패해도 Phase 7 진행.
+이 파이프라인은 **로컬 MVP 빌드까지만** 책임진다. TestFlight 업로드는 사용자가 MVP 를 시뮬레이터/디바이스에서 검증한 뒤 별도 명령으로 트리거한다:
 
-```bash
-# 성공 시 (Gate 6→7 자동 검증, soft):
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 6
-# 실패 시:
-# bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" fail-phase --phase 6 --error "<deploy error>" --increment-retry
 ```
+1. /autobot:mvp 가 끝나면 빌드 결과를 시뮬레이터/디바이스에서 확인
+2. (첫 빌드 한정) bash skills/autobot-register-app/scripts/register-app.sh \
+     --bundle-id <com.your.AppName> --display-name <앱 이름>
+3. /autobot:testflight    → archive + upload + invite-testers
+```
+
+Phase 5 가 끝나면 **Phase 6 를 건너뛰고 바로 Phase 7 (회고) 로 진입**한다. Phase 6 의 status 는 `pending` 으로 남고, `/autobot:testflight` 가 호출될 때 비로소 `in_progress` → `completed` 로 전이된다.
 
 ## Phase 7: Retrospective
 
@@ -503,7 +511,16 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 7 --detail 
 최종 결과를 사용자에게 간결하게 보고:
 - 생성된 앱 이름 및 기능 요약
 - 프로젝트 경로
-- TestFlight 상태 (업로드 성공/실패 및 사유)
+- 시뮬레이터/디바이스 실행 방법 (`open <AppName>.xcodeproj` → Run)
 - 실패한 Phase가 있으면: **`/autobot:resume`으로 재시도 가능** 안내
+
+**다음 단계 안내 (TestFlight 로 보내고 싶을 때):**
+```
+다음 단계 — TestFlight 배포는 별도 명령으로:
+
+  /autobot:testflight    → ASC 앱 등록 (자동, 멱등) + archive + upload + 테스터 초대
+```
+
+ASC 자격증명이 `.env` 에 없으면 위 명령이 실패하므로 안내를 `.env` 설정으로 대체한다 (ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH).
 
 **빌드 중 어느 시점에서 중단되더라도** (에러, 사용자 취소 등), 잠금 파일이 남아있을 수 있다. 다음 빌드 시 Phase 0에서 PID 유효성을 확인하고 자동 정리한다.

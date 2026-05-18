@@ -1,4 +1,4 @@
-"""Regression tests for skills/app-register/scripts/register-app.sh.
+"""Regression tests for skills/autobot-register-app/scripts/register-app.sh.
 
 These tests never touch the network — they only exercise input validation,
 JSON injection defense, and the --dry-run path. All require python3 + bash
@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
-SCRIPT = PLUGIN_DIR / "skills" / "app-register" / "scripts" / "register-app.sh"
+SCRIPT = PLUGIN_DIR / "skills" / "autobot-register-app" / "scripts" / "register-app.sh"
 
 
 def run(args, env_extra=None, strip_creds=False):

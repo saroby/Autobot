@@ -34,7 +34,7 @@
 ## codex 2차 리뷰에서 추가로 잡힌 결함 (이 PR에서 수정)
 
 ### 8. advance-phase 호출자가 --increment-retry를 빠뜨리면 retryCount 안 늘어남
-- **실패 모드**: `make.md`/`resume.md`의 일반 호출은 `--increment-retry` 없이 `advance-phase --phase N`. gate fail 시 phase status는 `failed`로 가지만 retryCount는 0 유지 → maxRetry/circuitBreaker 둘 다 무력화.
+- **실패 모드**: `mvp.md`/`resume.md`의 일반 호출은 `--increment-retry` 없이 `advance-phase --phase N`. gate fail 시 phase status는 `failed`로 가지만 retryCount는 0 유지 → maxRetry/circuitBreaker 둘 다 무력화.
 - **방지 규칙**: failure path는 호출자 플래그에 의존하지 않는다. `args.retry_count`가 명시적으로 지정된 경우만 그 값을 쓰고, 아니면 자동 증가. 책임은 runtime이 진다.
 
 ### 9. circuit breaker onTrip 정책 enforce 부재

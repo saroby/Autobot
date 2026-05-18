@@ -12,7 +12,7 @@ allowed-tools:
 
 # Autobot Setup
 
-`/autobot:make` 와 다른 모든 autobot 스킬이 공유할 사용자별 기본값을 등록한다.
+`/autobot:mvp` 와 다른 모든 autobot 스킬이 공유할 사용자별 기본값을 등록한다.
 저장 위치는 `~/.autobot/config.json` (권한 600). 스키마와 통합 규약은 `autobot-setup` 스킬 참조.
 
 ## 0. 사전 준비
@@ -119,7 +119,7 @@ echo "✅ 설정 저장됨: $(bash "$CONFIG_SH" path)"
 bash "$CONFIG_SH" show
 bash "$CONFIG_SH" validate
 echo ""
-echo "이제 /autobot:make 로 빌드를 시작할 수 있습니다."
+echo "이제 /autobot:mvp 로 빌드를 시작할 수 있습니다."
 ```
 
 ## 안전 정책

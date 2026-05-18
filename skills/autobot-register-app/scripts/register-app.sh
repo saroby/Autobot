@@ -197,7 +197,7 @@ MISSING=()
 [ -z "${ASC_API_KEY_PATH:-}" ]  && MISSING+=("ASC_API_KEY_PATH")
 if [ ${#MISSING[@]} -gt 0 ]; then
   log_error "missing ASC API credentials: ${MISSING[*]}"
-  log_info  "set them in .env — see skills/testflight-deploy/references/signing-guide.md"
+  log_info  "set them in .env — see skills/autobot-upload-build/references/signing-guide.md"
   exit 2
 fi
 

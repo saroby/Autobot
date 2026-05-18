@@ -85,7 +85,7 @@ bash "$CONFIG_SH" init [--force]
 
 ### 1. Phase 0 (또는 진입 직후) — validate 먼저
 
-`/autobot:make` 와 `/autobot:resume`, 그 외 빌드 진입점은 **무조건 첫 단계에서** validate 호출. 기본 validate는 로컬 빌드에 필요한 `bundleIdPrefix`, `deploymentTarget`만 요구한다:
+`/autobot:mvp` 와 `/autobot:resume`, 그 외 빌드 진입점은 **무조건 첫 단계에서** validate 호출. 기본 validate는 로컬 빌드에 필요한 `bundleIdPrefix`, `deploymentTarget`만 요구한다:
 
 ```bash
 CONFIG_SH="$CLAUDE_PLUGIN_ROOT/skills/setup/scripts/config.sh"
@@ -101,7 +101,7 @@ fi
 
 ### 2. Bundle ID 생성 — 추측 금지
 
-`make.md` 의 `<BundleId>` placeholder 는 **반드시** `config.sh bundle-id <AppName>` 결과로 채운다:
+`mvp.md` 의 `<BundleId>` placeholder 는 **반드시** `config.sh bundle-id <AppName>` 결과로 채운다:
 
 ```bash
 APP_NAME="SocialFitness"
@@ -122,7 +122,7 @@ architecture.md 에서 명시적으로 더 낮은 버전을 요구하지 않는 
 
 ### 4. Tester emails — Phase 6
 
-`testflight-deploy` 가 내부 그룹 초대 시 명시적 입력이 없으면 이 목록을 기본으로 사용. `.env` 의 `TESTER_EMAIL` 보다 **우선**한다 (배열 vs 단일값).
+`autobot-invite-testers` 가 명시적 `--emails` 인자가 없을 때 이 목록을 기본으로 사용. `.env` 의 `TESTER_EMAIL` 보다 **우선**한다 (배열 vs 단일값).
 
 ### 5. Development Team — 우선순위
 

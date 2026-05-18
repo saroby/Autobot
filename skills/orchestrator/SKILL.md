@@ -1,6 +1,6 @@
 ---
 name: autobot-orchestrator
-description: Use when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:make" or "/autobot:resume". Also use when a build stalls, needs error recovery, or requires phase-level retry coordination.
+description: Use when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:mvp" or "/autobot:resume". Also use when a build stalls, needs error recovery, or requires phase-level retry coordination.
 ---
 
 # Autobot Orchestrator
@@ -13,7 +13,7 @@ Master coordination skill for building iOS 26+ apps from ideas. Manages the comp
 
 - Phase 번호, 이름, 상태 전이, retry, gate 정의는 실행 스펙을 기준으로 한다
 - build/resume의 상태 전이, Gate 실행/기록, Phase lifecycle 로그는 `scripts/pipeline.sh` 경로만 사용한다
-- 이 문서와 `make.md`, `resume.md`는 실행 스펙의 설명/운영 가이드다
+- 이 문서와 `mvp.md`, `resume.md`는 실행 스펙의 설명/운영 가이드다
 - README는 개요와 사용법만 다룬다
 - 문서 간 충돌이 있으면 실행 스펙이 우선한다
 
@@ -63,7 +63,7 @@ Autobot은 위험도를 기준으로 동작한다:
 | 3 | Xcode 프로젝트 | (self) | No | → .xcodeproj 존재 검증 | 1 |
 | 4 | 병렬 코드 생성 | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 + sandbox 위반 0건 | 2 |
 | 5 | 통합 + 빌드 검증 | quality-engineer (`autobot-integration-build` 스킬) | No | → xcodebuild 성공 | 2 |
-| 6 | TestFlight 배포 | deployer | No | → 배포 결과 기록 (soft) | 1 |
+| 6 | TestFlight 배포 (수동, /autobot:testflight) | deployer | No | → 배포 결과 기록 (soft) | 1 |
 | 7 | 회고 | (self) | No | — | — |
 <!-- AUTOBOT_PHASE_SUMMARY:END -->
 
@@ -115,13 +115,15 @@ Phase 0에서 빌드 시작 전에 환경을 검증:
 ✓ (선택) ASC 인증 정보 → 없으면 **즉시 사용자에게 경고 출력**
 ```
 
-**ASC 미설정 시 즉시 경고 (Phase 0에서 출력):**
+**ASC 미설정 안내 (Phase 0에서 출력):**
 ```
-⚠️ App Store Connect 인증 정보가 설정되지 않았습니다.
-   Phase 6(TestFlight 배포)가 건너뛰어집니다.
-   빌드는 로컬에서만 완료됩니다.
-   설정 방법: .env 파일에 ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH 추가
+ℹ️ App Store Connect 인증 정보가 설정되지 않았습니다.
+   /autobot:mvp 는 로컬 빌드까지만 진행하므로 ASC 자격증명은 빌드에 영향이 없습니다.
+   나중에 /autobot:testflight 로 TestFlight 업로드를 하려면 .env 에 추가하세요:
+     ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH
 ```
+
+설정돼 있어도 `/autobot:mvp` 는 Phase 6 를 트리거하지 않는다 — 사용자가 명시적으로 `/autobot:testflight` 를 호출할 때 사용됨.
 
 하나라도 필수 항목이 실패하면 빌드를 시작하지 않고 해결 방법을 안내.
 

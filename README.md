@@ -19,13 +19,31 @@ git clone <repo-url> Autobot
 claude --plugin-dir /path/to/Autobot
 ```
 
-### 2. 빌드
+### 2. 로컬 MVP 빌드
 
 ```bash
-/autobot:make 소셜 피트니스 트래킹 앱
+/autobot:mvp 소셜 피트니스 트래킹 앱
 ```
 
-### 3. 중단 시 재개
+`/autobot:mvp` 는 **로컬 빌드까지만** 합니다. Phase 0~5(빌드 + 검증) + Phase 7(회고)가 실행되고, **Phase 6 (TestFlight 배포)는 건너뜁니다**. 시뮬레이터/디바이스에서 결과를 직접 확인하세요.
+
+### 3. TestFlight 으로 보내기 (선택)
+
+```bash
+/autobot:testflight
+```
+
+ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수행합니다. 등록은 멱등이라 첫 빌드든 반복 빌드든 같은 명령을 그대로 사용합니다. name/bundle-ID 충돌은 archive 시작 전에 잡혀 빌드 시간이 낭비되지 않습니다.
+
+### 4. App Store 메타데이터 (선택)
+
+```bash
+/autobot:meta
+```
+
+앱 컨텍스트(architecture·build-report)로 ASC 의 name·subtitle·description·키워드·릴리스 노트를 자동 작성해 `fastlane/metadata/` 에 저장합니다. 작성 후 결과를 보고하고 **ASC 업로드 여부를 묻습니다** (자동 업로드 안 함).
+
+### 5. 중단 시 재개
 
 ```bash
 /autobot:resume        # 마지막 실패 지점부터 자동 재개
@@ -61,7 +79,7 @@ claude --plugin-dir /path/to/Autobot
 | 3 | Xcode 프로젝트 | (self) | `.xcodeproj`, `.gitignore`, `PrivacyInfo.xcprivacy`, `.entitlements` |
 | 4 | 병렬 코드 생성 | ui-builder + data-engineer (+ backend-engineer) | `Views/`, `ViewModels/`, `Services/`, `App/`, `backend/` |
 | 5 | 통합 + 빌드 검증 | quality-engineer | 빌드 성공, 테스트, Integration Wiring |
-| 6 | TestFlight 배포 | deployer | 앱 등록, 아카이브, 업로드, 테스터 초대 |
+| 6 | TestFlight 배포 (수동, /autobot:testflight) | deployer (manual) | 앱 등록 (자동, 멱등), 아카이브, 업로드, 테스터 초대 |
 | 7 | 회고 | (self) | `build-report.md`, `learnings.json` 갱신 |
 <!-- AUTOBOT_PHASE_TABLE:END -->
 
@@ -75,7 +93,7 @@ claude --plugin-dir /path/to/Autobot
 - **Gate 2→3**: Stitch 성공 여부와 무관하게 design-spec 룩앤필 계약이 있고, primary 경로에서는 designs 산출물이 있는지 검증
 - **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증
 - **Gate 4→5**: Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건
-- **Gate 5→6**: 빌드 성공, 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증
+- **Gate 5→6**: 빌드 성공, 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)
 - **Gate 6→7**: 배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행 (soft gate)
 <!-- AUTOBOT_GATE_SUMMARY:END -->
 
@@ -140,8 +158,11 @@ architect → Models/ServiceProtocols.swift (인터페이스 정의)
 Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_ROOT)
 ├── .claude-plugin/plugin.json          # 플러그인 매니페스트
 ├── commands/
-│   ├── make.md                         # /autobot:make — 전체 빌드 파이프라인
-│   └── resume.md                       # /autobot:resume — 중단된 빌드 재개
+│   ├── mvp.md                          # /autobot:mvp — 로컬 MVP 빌드 (Phase 0-5 + 7)
+│   ├── testflight.md                   # /autobot:testflight — ASC 등록 + archive + upload + 초대
+│   ├── meta.md                         # /autobot:meta — App Store 텍스트 메타데이터 생성 (+ 선택 업로드)
+│   ├── resume.md                       # /autobot:resume — 중단된 빌드 재개
+│   └── setup.md                        # /autobot:setup — 글로벌 기본값 설정
 ├── agents/
 │   ├── architect.md                    # Phase 1: 아키텍처 + 타입/통합 계약
 │   ├── ui-builder.md                   # Phase 4: SwiftUI 뷰
@@ -163,10 +184,25 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   │   └── scripts/
 │   │       ├── create-xcode-project.sh # 프로젝트 생성 (xcodegen 우선, fallback)
 │   │       └── generate-pbxproj.py     # xcodegen 없이 .xcodeproj 생성
-│   ├── testflight-deploy/              # TestFlight 배포
+│   ├── autobot-register-app/           # Phase 6/1 ASC 앱 등록 (멱등, 자동 호출; 단독 실행도 가능)
+│   │   ├── SKILL.md
+│   │   └── scripts/register-app.sh
+│   ├── autobot-archive-build/          # Phase 6/2 xcodebuild archive
+│   │   ├── SKILL.md
+│   │   └── scripts/archive.sh
+│   ├── autobot-upload-build/           # Phase 6/3 export + upload (xcodebuild -exportArchive)
 │   │   ├── SKILL.md
 │   │   ├── references/signing-guide.md
-│   │   └── scripts/archive-upload.sh
+│   │   └── scripts/upload.sh
+│   ├── autobot-invite-testers/         # Phase 6/4 TestFlight 그룹 + 초대 (ASC API)
+│   │   ├── SKILL.md
+│   │   └── scripts/invite.sh
+│   ├── autobot-generate-metadata/      # /autobot:meta — fastlane/metadata/ 텍스트 생성 + ASC 길이 검증
+│   │   ├── SKILL.md
+│   │   └── scripts/write-metadata.sh
+│   ├── autobot-upload-metadata/        # /autobot:meta — `fastlane deliver --skip_binary_upload` 업로드
+│   │   ├── SKILL.md
+│   │   └── scripts/upload-metadata.sh
 │   └── retrospective/                  # 자기 개선 학습
 │       ├── SKILL.md
 │       └── references/learning-schema.md
@@ -207,7 +243,7 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 | `validate-state.sh` | 진단 전용 read-only: 스키마 검증, transition 검증, gate 체크 목록, 문서 일관성 검증 |
 | `agent-sandbox.sh` | `spec.fileOwnership`을 읽어 에이전트 파일 소유권 enforcement. 위반은 `phases.<id>.sandbox.violations`에 자동 기록 → Gate 4→5의 `sandbox_clean` 체크가 평가 |
 | `snapshot-contracts.sh` | Models/ 무결성 + Phase-level 스냅샷 — Phase 5 실패 시 Phase 4 복원 |
-| `build.lock` | `/autobot:make`·`/autobot:resume` 동시 실행 방지 — PID 기반 잠금 |
+| `build.lock` | `/autobot:mvp`·`/autobot:resume` 동시 실행 방지 — PID 기반 잠금 |
 
 ### 단일 truth source 원칙
 
@@ -251,7 +287,7 @@ Autobot은 위험도 기준으로 동작합니다:
 | Phase 실패 | `/autobot:resume` (자동 재개) 또는 `/autobot:resume <N>` (특정 Phase부터) |
 | 빌드 에러 반복 | `/autobot:resume 4` (코드 재생성부터) |
 | 배포만 재시도 | `/autobot:resume 6` |
-| 전체 초기화 | `rm -rf .autobot/build-state.json` 후 `/autobot:make` |
+| 전체 초기화 | `rm -rf .autobot/build-state.json` 후 `/autobot:mvp` |
 
 ## 라이선스
 

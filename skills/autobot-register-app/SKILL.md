@@ -1,22 +1,28 @@
 ---
-name: autobot-app-register
-description: Use when registering a new iOS app on App Store Connect (creating the App ID on Apple Developer Portal + app record on ASC) via `fastlane produce`. Bundle-ID re-runs are idempotent for the same team; app-name collisions surface as explicit failures so the caller can rename instead of silently continuing. Also use when troubleshooting "The bundle identifier is not available", "App Name you entered is already being used", "Could not create application" (API key role too low), or when an app needs to exist on ASC before the first TestFlight upload.
+name: autobot-register-app
+description: Use when registering a new iOS app on App Store Connect (creating the App ID on Apple Developer Portal + app record on ASC) via `fastlane produce`. Auto-called by `/autobot:testflight` (deployer agent Step 1) as the first step before archive, AND can be invoked standalone for pre-flight bundle-ID/name validation. Bundle-ID re-runs are idempotent for the same team; app-name collisions surface as explicit failures so the caller can rename instead of silently continuing. Also use when troubleshooting "The bundle identifier is not available", "App Name you entered is already being used", "Could not create application" (API key role too low), or when an app needs to exist on ASC before the first TestFlight upload.
 ---
 
 # iOS App Registration (App Store Connect)
 
 새로 만든 iOS 앱을 App Store Connect 에 등록한다. `fastlane produce create` 가 Apple Developer Portal 에 App ID 를, ASC 에 앱 레코드를 동시에 생성한다.
 
-`testflight-deploy` 의 Step 0 에 같은 로직이 들어있지만, **앱 등록만 단독 실행**해야 하는 경우(빌드 전 사전 등록, 번들 ID/앱 이름 충돌 검증, ASC 인증 점검) 이 스킬을 사용한다.
+**호출 경로 (2가지):**
+
+1. **자동 (`/autobot:testflight` 안에서)** — deployer agent 의 Step 1 으로 archive 직전에 호출된다. 멱등이라 매번 안전. 충돌 시 archive 시작 전에 사용자에게 보고하고 중단.
+2. **단독 (standalone)** — 사용자가 `/autobot:mvp` 시작 전이나, ASC 충돌 사전 검증, troubleshooting 용도로 직접 호출. `--dry-run` 으로 입력만 검증 가능.
+
+**`/autobot:mvp` 는 이 스킬을 부르지 않는다** — make 는 로컬 빌드까지만이고, ASC 와 무관.
+
+**Single Responsibility:** ASC 등록 하나만 한다. archive/upload/테스터 초대는 각각 `autobot-archive-build`, `autobot-upload-build`, `autobot-invite-testers` 가 담당한다.
 
 ## When to use
 
-- 새 앱을 처음 빌드하기 전에 ASC 레코드를 미리 만들고 싶다
-- TestFlight 업로드가 "The bundle identifier is not available" 로 실패해서 등록 상태를 확인하려 한다
-- 앱 이름/번들 ID 충돌 여부만 빠르게 검증한다
-- `archive-upload.sh` 가 fastlane/ASC 인증 문제로 등록 단계에서 멈췄다
-
-업로드까지 같이 할거면 `autobot-testflight-deploy` 를 그대로 쓰면 된다. 이 스킬은 그 안의 Step 0 만 단독으로 노출한다.
+- **자동 호출**: `/autobot:testflight` 의 Step 1 — 사용자가 별도 명령으로 부를 필요 없음 (멱등이므로 매번 부름)
+- **단독 호출 시나리오**:
+  - `/autobot:mvp` 시작 전에 bundle ID/name 충돌 여부 사전 검증 (`--dry-run`)
+  - `/autobot:testflight` 가 등록 충돌로 중단됐을 때 재시도 (메시지 변경 후)
+  - 동일 팀에서 이미 등록된 앱인지 확인 (멱등 — `already_exists` 응답)
 
 ## Prerequisites
 
@@ -53,7 +59,7 @@ JSON 출력(API Key JSON, status 파일)을 안전하게 직렬화하기 위해 
 ## Usage
 
 ```bash
-bash "$CLAUDE_PLUGIN_ROOT/skills/app-register/scripts/register-app.sh" \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-register-app/scripts/register-app.sh" \
   --bundle-id "com.axi.appname" \
   --display-name "앱 이름"
 ```
@@ -99,7 +105,7 @@ OK: dry-run validation passed
 
 ```bash
 AUTOBOT_REGISTER_STATUS_FILE=".autobot/register-status.json" \
-bash "$CLAUDE_PLUGIN_ROOT/skills/app-register/scripts/register-app.sh" \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-register-app/scripts/register-app.sh" \
   --bundle-id "com.axi.appname" --display-name "앱 이름"
 ```
 
@@ -181,14 +187,15 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/app-register/scripts/register-app.sh" \
 
 1. https://appstoreconnect.apple.com → My Apps → "+" → New App
 2. Platform: iOS, Name: `<display name>`, Primary Language: 한국어, Bundle ID: drop-down 에서 선택, SKU: bundle ID 그대로
-3. 이후 빌드/업로드 단계는 그대로 진행하면 된다 — `archive-upload.sh` 의 Step 0 이 `already_exists` 로 즉시 통과한다.
+3. 이후 빌드/업로드 단계는 그대로 진행하면 된다 — 이 스킬을 재실행하면 `already_exists` 로 즉시 통과한다.
 
 Bundle ID 가 drop-down 에 없으면 먼저 Apple Developer Portal 에서 App ID 를 등록해야 한다: https://developer.apple.com/account → Identifiers → "+".
 
 ## Integration with other Autobot skills
 
 - **`autobot-setup`** — `developmentTeam`, `bundleIdPrefix` 의 출처. 이 스킬은 직접 JSON 파싱하지 않고 항상 `config.sh get-or` 경유.
-- **`autobot-testflight-deploy`** — 같은 등록 로직을 Step 0 에 인라인으로 가지고 있다. 단독 검증/사전 등록이 필요한 경우만 이 스킬을 호출한다. 두 경로 모두 같은 멱등성 규칙을 따르므로 충돌 없음.
+- **`autobot-archive-build` / `autobot-upload-build`** — 이 스킬이 먼저 성공해야 호출된다. orchestrator 가 이 순서를 보장한다. archive/upload 스킬은 자체적으로 등록을 시도하지 않는다 — 미등록 상태면 fastlane/`xcodebuild` 에러로 명확히 실패한다.
+- **`autobot-invite-testers`** — 업로드 성공 후 호출. 등록 단계와는 무관.
 
 ## Files
 

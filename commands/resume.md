@@ -25,7 +25,7 @@ Phase 정의와 상태 의미는 `spec/pipeline.json`이 SSOT이며, 이 문서�
 
 ## CRITICAL RULES
 
-1. **`.autobot/build-state.json`이 없으면 즉시 중단** — "이전 빌드 상태를 찾을 수 없습니다. `/autobot:make`로 새 빌드를 시작하세요." 출력
+1. **`.autobot/build-state.json`이 없으면 즉시 중단** — "이전 빌드 상태를 찾을 수 없습니다. `/autobot:mvp`로 새 빌드를 시작하세요." 출력
 2. **상태 파일의 `projectPath`를 신뢰한다** — 해당 경로에 프로젝트가 실제 존재하는지 검증
 3. **재개 시에도 각 Phase 완료마다 상태를 저장한다** — build 커맨드와 동일한 상태 저장 로직 사용
 4. **이미 completed인 Phase는 건너뛴다** — 단, 사용자가 명시적으로 Phase 번호를 지정하면 `pipeline.sh start-phase --allow-terminal-restart` 규칙으로 해당 Phase부터 재실행
@@ -72,7 +72,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 
 상태 파일이 없으면:
 ```
-"이전 빌드 상태를 찾을 수 없습니다. `/autobot:make <앱 아이디어>`로 새 빌드를 시작하세요."
+"이전 빌드 상태를 찾을 수 없습니다. `/autobot:mvp <앱 아이디어>`로 새 빌드를 시작하세요."
 → 종료
 ```
 
@@ -91,8 +91,8 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 | 3 | Phase 2 completed 또는 fallback |
 | 4 | Phase 3 completed + `.xcodeproj` 존재 |
 | 5 | Phase 4 completed + `<AppName>/Views/` 및 `<AppName>/Services/` 디렉토리에 .swift 파일 존재 |
-| 6 | Phase 5 completed + 마지막 빌드 성공 |
-| 7 | Phase 6 completed 또는 failed (회고는 항상 가능) |
+| 6 | Phase 5 completed + 마지막 빌드 성공 — 단, **Phase 6는 manual phase 이므로 자동 resume 대상이 아니다**. resume 이 자동 진행할 때 Phase 5 다음은 Phase 7. 사용자가 명시적으로 `/autobot:resume 6` 또는 `/autobot:testflight` 를 호출했을 때만 진입. |
+| 7 | Phase 5 completed (Phase 6 는 manual 이므로 pending 이어도 무방). 또는 Phase 6 completed/failed |
 
 선행 조건이 충족되지 않으면:
 ```
@@ -111,7 +111,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 - retrospective는 `in_progress` (즉시 회고 진입 가능)
 
 이 상태에서 `/autobot:resume`은 **retrospective만 실행**한다. trip 원인을 분석한 뒤, 사용자가 의도적으로 다시 시도하려면:
-- `rm -rf .autobot/build-state.json` 후 `/autobot:make` (전체 초기화), 또는
+- `rm -rf .autobot/build-state.json` 후 `/autobot:mvp` (전체 초기화), 또는
 - `/autobot:resume <N>`로 특정 phase부터 강제 재시작 (`--allow-terminal-restart` 의미). 단, `skipped` phase에서 시작하려면 dependency 충족 여부를 운영자가 책임진다.
 
 ### 사용자가 Phase 번호를 생략한 경우
@@ -163,7 +163,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase <N> --detail 
 
 재개 지점부터 build 커맨드와 **동일한 Phase 로직**을 실행한다.
 
-각 Phase의 상세 구현은 `/autobot:make` 커맨드를 참조한다. 여기서는 재개 시 주의사항만 기술:
+각 Phase의 상세 구현은 `/autobot:mvp` 커맨드를 참조한다. 여기서는 재개 시 주의사항만 기술:
 
 ### Phase 0 재개
 
@@ -213,9 +213,10 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase <N> --detail 
 
 ### Phase 6 재개
 
-- deployer 에이전트를 다시 실행
-- **이전 실패 사유**를 에이전트 프롬프트에 포함
-- 앱 등록(fastlane produce)은 멱등이므로 동일 번들 ID면 안전하게 재시도 가능
+- Phase 6 는 **manual phase** — `/autobot:resume` 의 자동 진행 흐름에서는 건너뛴다. 사용자가 명시적으로 `/autobot:resume 6` 또는 (권장) `/autobot:testflight` 를 호출한 경우에만 진입한다.
+- 진입 시 deployer 에이전트를 다시 실행. **이전 실패 사유**를 에이전트 프롬프트에 포함.
+- archive 는 idempotent 하지 않다 — 새 빌드 변경이 있으면 다시 archive. 이전 archive 가 있고 코드 변경 없으면 그대로 재업로드 가능.
+- 미등록 앱이면 deployer 가 upload 실패 + `autobot-register-app` 안내. 등록은 이 agent 가 자동으로 하지 않는다.
 
 ### Phase 7 재개
 
