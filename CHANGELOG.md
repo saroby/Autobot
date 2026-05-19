@@ -2,6 +2,22 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [0.3.1] — 2026-05-19
+
+### Added
+- **Phase 6 단일책임 스킬 분해** — 기존 `testflight-deploy` 단일 스킬을 4개로 분리: `autobot-archive-build`(아카이브), `autobot-upload-build`(업로드), `autobot-generate-metadata`/`autobot-upload-metadata`(메타데이터), `autobot-invite-testers`(테스터 초대). 각 스킬은 독립 실행 가능한 `scripts/*.sh`를 동봉.
+- **ASC 앱 등록 전용 스킬** `autobot-app-register` 추가. `scripts/register-app.sh`로 App Store Connect 신규 앱 레코드 생성을 분리. 회귀 테스트 `tests/test_app_register.py` 동봉.
+- **명령 분리** — `make` 단일 명령을 목적별로 분해: `/autobot:mvp`(MVP 빌드), `/autobot:testflight`(TestFlight 전체 흐름), `/autobot:meta`(메타데이터 작업). `resume`, `setup` 명령도 새 레이아웃에 맞춰 정비.
+- **design-spec 룩앤필 계약 의무화** — 디자인 사양에 룩앤필 필드를 강제하고 Stitch 사용 불가 시 fallback 경로를 강화.
+
+### Changed
+- `agents/deployer.md`, `skills/orchestrator/SKILL.md`, `spec/pipeline.json`이 새 Phase 6 스킬 구조에 맞춰 갱신.
+- README, troubleshooting, build-report 문서가 분리된 스킬/명령 체계 기준으로 정리.
+- 검증 표면(validation surfaces) 정합성 보강 — 누락 조건 차단과 디버그 가시성 향상.
+
+### Removed
+- `skills/testflight-deploy/` — 4개 단일책임 스킬로 대체.
+
 ## [0.3.0] — 2026-04-30
 
 ### Changed
