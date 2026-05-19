@@ -45,7 +45,7 @@ Autobot 빌드는 사용자별로 일정한 메타데이터 — bundle ID prefix
 모든 스킬은 이 스크립트를 통해서만 config 를 다룬다. 직접 JSON 파싱 금지.
 
 ```bash
-CONFIG_SH="$CLAUDE_PLUGIN_ROOT/skills/setup/scripts/config.sh"
+CONFIG_SH="$CLAUDE_PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh"
 
 bash "$CONFIG_SH" path                       # 경로 출력
 bash "$CONFIG_SH" exists                     # exit 0/1
@@ -88,7 +88,7 @@ bash "$CONFIG_SH" init [--force]
 `/autobot:mvp` 와 `/autobot:resume`, 그 외 빌드 진입점은 **무조건 첫 단계에서** validate 호출. 기본 validate는 로컬 빌드에 필요한 `bundleIdPrefix`, `deploymentTarget`만 요구한다:
 
 ```bash
-CONFIG_SH="$CLAUDE_PLUGIN_ROOT/skills/setup/scripts/config.sh"
+CONFIG_SH="$CLAUDE_PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh"
 
 if ! bash "$CONFIG_SH" validate; then
   echo "⚠️ Autobot 글로벌 설정이 누락되었습니다."

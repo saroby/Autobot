@@ -17,12 +17,8 @@ Read `.autobot/architecture.md` and `<AppName>/Models/APIContracts.swift`, then 
 - All API endpoints MUST match the API Contract section in architecture.md exactly.
 - All request/response schemas MUST match the types in `Models/APIContracts.swift`.
 
-If `.autobot/phase-learnings/parallel_coding.md` exists, read it first; then `.autobot/active-learnings.md` for shared rules. After applying, record the fact:
-```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
-  --phase 4 --event learning_applied --agent backend-engineer \
-  --detail '{"sources":["phase-learnings/parallel_coding.md","active-learnings.md"]}'
-```
+**Learning bootstrap:**
+Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-bootstrap.md` with `phase=4`, `agent=backend-engineer`. backend-engineer 가 우선 적용할 필터: `## Prevention Rules` 중 API contract·SSE·Docker 와 관련된 것, 그리고 backend 를 직접 겨냥한 `## Pending Improvements`.
 
 **Process:**
 

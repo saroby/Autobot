@@ -12,7 +12,7 @@
 # Team ID precedence (matches autobot-setup convention):
 #   1) --team-id flag
 #   2) DEVELOPMENT_TEAM env var
-#   3) ~/.autobot/config.json:developmentTeam (via skills/setup/scripts/config.sh)
+#   3) ~/.autobot/config.json:developmentTeam (via skills/autobot-setup/scripts/config.sh)
 #
 # Optional env:
 #   AUTOBOT_REGISTER_STATUS_FILE  — JSON status output path (atomic write via temp+rename)
@@ -158,7 +158,7 @@ if [ -z "$TEAM_ID" ]; then
   REAL_SOURCE="$(resolve_symlink "${BASH_SOURCE[0]}")"
   SCRIPT_DIR="$(cd "$(dirname "$REAL_SOURCE")" && pwd)"
   PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
-  CONFIG_SH="$PLUGIN_ROOT/skills/setup/scripts/config.sh"
+  CONFIG_SH="$PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh"
   if [ -f "$CONFIG_SH" ]; then
     TEAM_ID="$(bash "$CONFIG_SH" get-or developmentTeam '' 2>/dev/null || echo '')"
   fi

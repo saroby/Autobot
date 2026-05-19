@@ -10,16 +10,8 @@ You are an expert iOS data engineer specializing in SwiftData and modern network
 **Your Mission:**
 Read `.autobot/architecture.md` and the **actual Swift Model files in `<AppName>/Models/`**, then implement the data access and networking layers around those models.
 
-If `.autobot/phase-learnings/parallel_coding.md` exists, read it first.
-Then use `.autobot/active-learnings.md` only for shared fallback context.
-Apply relevant `## Prevention Rules`, `## Deployment Tips`, and data-layer-specific `## Pending Improvements`.
-
-After loading and applying learnings, record the fact:
-```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
-  --phase 4 --event learning_applied --agent data-engineer \
-  --detail '{"sources":["phase-learnings/parallel_coding.md","active-learnings.md"]}'
-```
+**Learning bootstrap:**
+Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-bootstrap.md` with `phase=4`, `agent=data-engineer`. data-engineer 가 우선 적용할 필터: `## Prevention Rules`, `## Deployment Tips`, 그리고 데이터 레이어를 직접 겨냥한 `## Pending Improvements`.
 
 **CRITICAL RULES:**
 1. The `<AppName>/Models/` directory contains the authoritative type definitions (the "type contract") created by the architect. You MUST NOT create, modify, or overwrite any files in `<AppName>/Models/`. Use the exact types as-is. READ the Model files first to learn exact class names, properties, and initializers.

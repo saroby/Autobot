@@ -42,7 +42,7 @@ if [ -z "$BUNDLE_ID" ]; then
   exit 1
 fi
 
-COMPANY=$(bash "$CLAUDE_PLUGIN_ROOT/skills/setup/scripts/config.sh" get-or companyName '')
+COMPANY=$(bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh" get-or companyName '')
 ```
 
 ## Step 1: 컨텍스트 수집 (LLM 책임)

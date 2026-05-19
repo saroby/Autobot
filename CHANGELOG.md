@@ -2,11 +2,25 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [0.3.2] — 2026-05-19
+
+### Added
+- **학습 로드 프로토콜 SSOT** — `skills/autobot-orchestrator/references/learning-bootstrap.md` 신설. phase-learnings/active-learnings 2단계 fallback 순서, phase→파일 매핑, `build-log.sh` 호출 규약, `phases.<N>.learningsConsumed[]` 누적 메커니즘을 한 곳에 정리. architect, quality-engineer, deployer, data-engineer, ui-builder, backend-engineer 6개 에이전트의 중복 preamble(각 7-16줄)을 위임 + 에이전트별 필터로 축소해 드리프트 표면을 6→1.
+
+### Changed
+- **스킬 디렉토리 작명 통일** — 모든 스킬 디렉토리에 `autobot-` prefix 적용. 기존 8개 디렉토리(`app-icon`, `build-report`, `integration-build`, `ios-scaffold`, `orchestrator`, `retrospective`, `setup`, `ux-design`)가 각각 `autobot-app-icon`/`autobot-build-report`/`autobot-integration-build`/`autobot-ios-scaffold`/`autobot-orchestrator`/`autobot-retrospective`/`autobot-setup`/`autobot-ux-design`로 이동. frontmatter `name:` 필드와 일치하므로 grep/문서 참조가 한 번에 잡힌다.
+- `agents/quality-engineer.md`, `agents/deployer.md`, `commands/mvp.md`, `commands/meta.md`, `commands/setup.md`, 일부 skill SKILL.md/스크립트가 새 경로로 일괄 업데이트.
+- `scripts/verify_spec_docs.py`, `scripts/render_pipeline_docs.py`가 `autobot-orchestrator` 경로를 가리키도록 갱신. `DOCS_TO_CHECK`에서 사라진 `commands/make.md` 제거하고 `mvp.md`/`testflight.md`로 교체.
+- README "구성 요소" 트리가 실제 디렉토리(agents 7개, skills 14개)와 일치하도록 재작성. 누락되어 있던 `backend-engineer`, `ux-designer` 에이전트와 `autobot-app-icon`, `autobot-build-report`, `autobot-integration-build`, `autobot-setup`, `autobot-ux-design` 스킬을 트리에 명시.
+
+### Fixed
+- CHANGELOG 0.3.1 항목의 스킬 이름 오타 정정 — `autobot-app-register` → `autobot-register-app`.
+
 ## [0.3.1] — 2026-05-19
 
 ### Added
 - **Phase 6 단일책임 스킬 분해** — 기존 `testflight-deploy` 단일 스킬을 4개로 분리: `autobot-archive-build`(아카이브), `autobot-upload-build`(업로드), `autobot-generate-metadata`/`autobot-upload-metadata`(메타데이터), `autobot-invite-testers`(테스터 초대). 각 스킬은 독립 실행 가능한 `scripts/*.sh`를 동봉.
-- **ASC 앱 등록 전용 스킬** `autobot-app-register` 추가. `scripts/register-app.sh`로 App Store Connect 신규 앱 레코드 생성을 분리. 회귀 테스트 `tests/test_app_register.py` 동봉.
+- **ASC 앱 등록 전용 스킬** `autobot-register-app` 추가. `scripts/register-app.sh`로 App Store Connect 신규 앱 레코드 생성을 분리. 회귀 테스트 `tests/test_app_register.py` 동봉.
 - **명령 분리** — `make` 단일 명령을 목적별로 분해: `/autobot:mvp`(MVP 빌드), `/autobot:testflight`(TestFlight 전체 흐름), `/autobot:meta`(메타데이터 작업). `resume`, `setup` 명령도 새 레이아웃에 맞춰 정비.
 - **design-spec 룩앤필 계약 의무화** — 디자인 사양에 룩앤필 필드를 강제하고 Stitch 사용 불가 시 fallback 경로를 강화.
 

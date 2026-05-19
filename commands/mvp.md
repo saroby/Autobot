@@ -358,18 +358,18 @@ Stitch MCP가 설치되지 않았거나 재시도 후에도 실패한 경우:
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase 3 --detail "Project Scaffold"
 ```
 
-ios-scaffold 스킬 참조하여 직접 수행. **반드시 `--project-dir .`를 전달**하여 Phase 0에서 생성한 프로젝트 디렉토리를 재사용한다:
+autobot-ios-scaffold 스킬 참조하여 직접 수행. **반드시 `--project-dir .`를 전달**하여 Phase 0에서 생성한 프로젝트 디렉토리를 재사용한다:
 
 ```bash
 # 기본
-bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-project.sh" \
   --name "<AppName>" \
   --bundle-id "<BundleId>" \
   --project-dir "." \
   --deployment-target "26.0"
 
 # backend_required == true일 때 --backend 플래그 추가:
-bash "$CLAUDE_PLUGIN_ROOT/skills/ios-scaffold/scripts/create-xcode-project.sh" \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-project.sh" \
   --name "<AppName>" \
   --bundle-id "<BundleId>" \
   --project-dir "." \

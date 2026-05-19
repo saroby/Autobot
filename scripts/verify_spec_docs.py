@@ -25,9 +25,10 @@ SPEC_PATH = PLUGIN_DIR / "spec" / "pipeline.json"
 RENDER_SCRIPT = SCRIPT_DIR / "render_pipeline_docs.py"
 
 DOCS_TO_CHECK = [
-    PLUGIN_DIR / "skills" / "orchestrator" / "SKILL.md",
-    PLUGIN_DIR / "skills" / "orchestrator" / "references" / "phase-gates.md",
-    PLUGIN_DIR / "commands" / "make.md",
+    PLUGIN_DIR / "skills" / "autobot-orchestrator" / "SKILL.md",
+    PLUGIN_DIR / "skills" / "autobot-orchestrator" / "references" / "phase-gates.md",
+    PLUGIN_DIR / "commands" / "mvp.md",
+    PLUGIN_DIR / "commands" / "testflight.md",
     PLUGIN_DIR / "commands" / "resume.md",
 ]
 
@@ -73,7 +74,7 @@ def load_spec() -> dict:
 
 def check_gate_sections(spec: dict) -> list[str]:
     """Every gate in pipeline.json should have a section in phase-gates.md."""
-    gates_md = PLUGIN_DIR / "skills" / "orchestrator" / "references" / "phase-gates.md"
+    gates_md = PLUGIN_DIR / "skills" / "autobot-orchestrator" / "references" / "phase-gates.md"
     if not gates_md.is_file():
         return [f"MISSING: {gates_md}"]
 
@@ -143,7 +144,7 @@ def check_retry_drift(spec: dict) -> list[str]:
 
 def check_phase_count(spec: dict) -> list[str]:
     """Phase count in pipeline.json should match tables in SKILL.md."""
-    skill_md = PLUGIN_DIR / "skills" / "orchestrator" / "SKILL.md"
+    skill_md = PLUGIN_DIR / "skills" / "autobot-orchestrator" / "SKILL.md"
     if not skill_md.is_file():
         return []
 

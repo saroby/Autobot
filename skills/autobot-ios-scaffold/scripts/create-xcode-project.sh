@@ -331,7 +331,7 @@ else
   GENERATOR="${SCRIPT_DIR}/generate-pbxproj.py"
 
   if [ ! -f "$GENERATOR" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    GENERATOR="${CLAUDE_PLUGIN_ROOT}/skills/ios-scaffold/scripts/generate-pbxproj.py"
+    GENERATOR="${CLAUDE_PLUGIN_ROOT}/skills/autobot-ios-scaffold/scripts/generate-pbxproj.py"
   fi
 
   if [ -f "$GENERATOR" ]; then

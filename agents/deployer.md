@@ -13,16 +13,8 @@ Chain the 4 deploy-phase skills in order: **register → archive → upload → 
 **Idempotency:**
 The register step (`autobot-register-app`) is fully idempotent on the same Apple Developer team — re-running with the same bundle ID returns `already_exists` and proceeds silently. App-name collisions and bundle-ID conflicts surface as explicit halts before archive starts, so the user doesn't waste time on a doomed build.
 
-If `.autobot/phase-learnings/deploy.md` exists, read it first.
-Then use `.autobot/active-learnings.md` only for shared fallback context.
-Apply relevant `## Deployment Tips`, `## Prevention Rules`, and deploy-related `## Pending Improvements`.
-
-After loading and applying learnings, record the fact:
-```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
-  --phase 6 --event learning_applied --agent deployer \
-  --detail '{"sources":["phase-learnings/deploy.md","active-learnings.md"]}'
-```
+**Learning bootstrap:**
+Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-bootstrap.md` with `phase=6`, `agent=deployer`. deployer 가 우선 적용할 필터: `## Deployment Tips`, `## Prevention Rules`, 그리고 deploy 와 직접 관련된 `## Pending Improvements`.
 
 **Reference docs (read once at start):**
 - `$CLAUDE_PLUGIN_ROOT/skills/autobot-register-app/SKILL.md`
@@ -112,7 +104,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/scripts/upload.sh" \
 ## Step 4: Invite testers (ASC_UPLOAD=true && upload 성공만)
 
 ```bash
-TESTER_EMAILS=$(bash "$CLAUDE_PLUGIN_ROOT/skills/setup/scripts/config.sh" \
+TESTER_EMAILS=$(bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh" \
   get-or testerEmails "${TESTER_EMAIL:-}")
 
 if [ -n "$TESTER_EMAILS" ]; then

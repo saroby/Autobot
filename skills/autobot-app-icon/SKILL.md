@@ -46,12 +46,12 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 2 \
 
 ```bash
 # imagegen 실패 후 또는 imagegen 자체가 부재할 때
-bash "$CLAUDE_PLUGIN_ROOT/skills/app-icon/scripts/pillow-fallback.sh" \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-app-icon/scripts/pillow-fallback.sh" \
   --name "<AppName>" \
   --out ".autobot/app-icon-1024.png"
 
 # architect 가 brand color 를 정의한 경우 명시 전달 (선택)
-bash "$CLAUDE_PLUGIN_ROOT/skills/app-icon/scripts/pillow-fallback.sh" \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-app-icon/scripts/pillow-fallback.sh" \
   --name "<AppName>" \
   --out ".autobot/app-icon-1024.png" \
   --color "#3366FF"

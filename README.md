@@ -5,7 +5,7 @@
 5개의 전문 에이전트가 병렬로 협업하여, 아키텍처 설계부터 TestFlight 업로드까지 자동으로 수행합니다.
 성공 기준은 기능 완성뿐 아니라 아이디어에 맞는 룩앤필 계약 구현까지 포함합니다.
 
-> 파이프라인 실행 규격의 단일 기준(SSOT)은 `spec/pipeline.json`입니다. `skills/orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
+> 파이프라인 실행 규격의 단일 기준(SSOT)은 `spec/pipeline.json`입니다. `skills/autobot-orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
 > 상태 전이, Gate 실행/기록, Phase lifecycle 로그의 유일한 엔진은 `scripts/pipeline.sh` + `runtime.py`입니다.
 
 ## 빠른 시작
@@ -165,12 +165,16 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   └── setup.md                        # /autobot:setup — 글로벌 기본값 설정
 ├── agents/
 │   ├── architect.md                    # Phase 1: 아키텍처 + 타입/통합 계약
+│   ├── ux-designer.md                  # Phase 2: Stitch 기반 UX 모형
 │   ├── ui-builder.md                   # Phase 4: SwiftUI 뷰
 │   ├── data-engineer.md                # Phase 4: 데이터 레이어
+│   ├── backend-engineer.md             # Phase 4: 백엔드 (backend_required=true 시)
 │   ├── quality-engineer.md             # Phase 5: 통합 + 빌드 검증
 │   └── deployer.md                     # Phase 6: TestFlight 배포
+├── references/
+│   └── ios-ux-style.md                 # iOS 26+ 디자인/API 패턴 + 안티패턴 (모든 에이전트 권위 참조)
 ├── skills/
-│   ├── orchestrator/                   # 파이프라인 조율
+│   ├── autobot-orchestrator/           # 파이프라인 조율
 │   │   ├── SKILL.md                    #   스펙 기반 오케스트레이션 설명
 │   │   └── references/
 │   │       ├── phase-gates.md          #   Gate check 구현 메모
@@ -178,12 +182,27 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   │       ├── planning-patterns.md    #   아이디어 분석 패턴
 │   │       ├── agent-dispatch.md       #   병렬 에이전트 전략
 │   │       └── troubleshooting.md      #   증상별 진단 + 해결법
-│   ├── ios-scaffold/                   # Xcode 프로젝트 생성
+│   ├── autobot-setup/                  # 글로벌 config (~/.autobot/config.json) 읽기/쓰기 단일 진입점
+│   │   ├── SKILL.md
+│   │   └── scripts/config.sh
+│   ├── autobot-ux-design/              # Phase 2: Stitch 사용 규약 + design-spec 룩앤필 계약
+│   │   └── SKILL.md
+│   ├── autobot-ios-scaffold/           # Phase 3: Xcode 프로젝트 생성
 │   │   ├── SKILL.md
 │   │   ├── references/project-templates.md
 │   │   └── scripts/
 │   │       ├── create-xcode-project.sh # 프로젝트 생성 (xcodegen 우선, fallback)
 │   │       └── generate-pbxproj.py     # xcodegen 없이 .xcodeproj 생성
+│   ├── autobot-app-icon/               # Phase 3/4 보조: imagegen + Pillow fallback 아이콘 생성
+│   │   ├── SKILL.md
+│   │   └── scripts/
+│   │       ├── pillow-fallback.sh
+│   │       └── pillow-fallback.py
+│   ├── autobot-integration-build/      # Phase 5 전용: Wiring 패턴 + 빌드 에러 진단 트리
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       ├── wiring-patterns.md
+│   │       └── build-error-catalog.md
 │   ├── autobot-register-app/           # Phase 6/1 ASC 앱 등록 (멱등, 자동 호출; 단독 실행도 가능)
 │   │   ├── SKILL.md
 │   │   └── scripts/register-app.sh
@@ -203,7 +222,10 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   ├── autobot-upload-metadata/        # /autobot:meta — `fastlane deliver --skip_binary_upload` 업로드
 │   │   ├── SKILL.md
 │   │   └── scripts/upload-metadata.sh
-│   └── retrospective/                  # 자기 개선 학습
+│   ├── autobot-build-report/           # Phase 7 빌드 리포트 + 학습 제안 템플릿
+│   │   ├── SKILL.md
+│   │   └── references/report-template.md
+│   └── autobot-retrospective/          # Phase 7 자기 개선 학습 스키마
 │       ├── SKILL.md
 │       └── references/learning-schema.md
 ├── hooks/hooks.json                    # SessionStart 훅
@@ -280,7 +302,7 @@ Autobot은 위험도 기준으로 동작합니다:
 
 ## 트러블슈팅
 
-자세한 증상별 진단은 `skills/orchestrator/references/troubleshooting.md` 참조.
+자세한 증상별 진단은 `skills/autobot-orchestrator/references/troubleshooting.md` 참조.
 
 | 상황 | 해결 |
 |------|------|

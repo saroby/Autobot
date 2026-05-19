@@ -18,7 +18,7 @@ allowed-tools:
 ## 0. 사전 준비
 
 ```bash
-CONFIG_SH="$CLAUDE_PLUGIN_ROOT/skills/setup/scripts/config.sh"
+CONFIG_SH="$CLAUDE_PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh"
 ```
 
 ## 1. 인자 분기

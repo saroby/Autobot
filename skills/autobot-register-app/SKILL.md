@@ -52,7 +52,7 @@ JSON 출력(API Key JSON, status 파일)을 안전하게 직렬화하기 위해 
 
 1. `--team-id` flag
 2. `$DEVELOPMENT_TEAM` 환경변수
-3. `~/.autobot/config.json:developmentTeam` (`skills/setup/scripts/config.sh` 경유)
+3. `~/.autobot/config.json:developmentTeam` (`skills/autobot-setup/scripts/config.sh` 경유)
 
 모두 비어있으면 fastlane 이 계정에 연결된 첫 팀을 사용한다 — 멀티-팀 계정이면 명시하는 편이 안전하다.
 

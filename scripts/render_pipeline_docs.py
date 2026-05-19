@@ -88,7 +88,7 @@ def render_targets(spec: dict) -> dict[Path, dict[str, str]]:
             "AUTOBOT_PHASE_TABLE": render_readme_phase_table(spec),
             "AUTOBOT_GATE_SUMMARY": render_readme_gate_summary(spec),
         },
-        PLUGIN_DIR / "skills" / "orchestrator" / "SKILL.md": {
+        PLUGIN_DIR / "skills" / "autobot-orchestrator" / "SKILL.md": {
             "AUTOBOT_PHASE_SUMMARY": render_skill_phase_summary(spec),
         },
     }

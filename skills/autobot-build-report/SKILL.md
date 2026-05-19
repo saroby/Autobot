@@ -87,7 +87,7 @@ ls -R <AppName>/Views/ <AppName>/Services/ <AppName>/ViewModels/ 2>/dev/null
 | 카테고리 | 설명 | 수정 대상 (보통) |
 |----------|------|-----------------|
 | `agent-prompt` | 에이전트 프롬프트의 지침 부족/오류 | `agents/*.md` |
-| `orchestrator-logic` | 오케스트레이터의 흐름 제어 문제 | `skills/orchestrator/` |
+| `orchestrator-logic` | 오케스트레이터의 흐름 제어 문제 | `skills/autobot-orchestrator/` |
 | `gate-validation` | Phase 검증이 잡지 못한 문제 | `references/phase-gates.md` |
 | `tooling` | 스크립트/도구의 버그 | `scripts/` |
 | `template` | 프로젝트 템플릿의 누락/오류 | `references/project-templates.md` |

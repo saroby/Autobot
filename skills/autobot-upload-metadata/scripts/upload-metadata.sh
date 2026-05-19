@@ -120,7 +120,7 @@ if [ -z "$TEAM_ID" ]; then
   REAL_SOURCE="$(resolve_symlink "${BASH_SOURCE[0]}")"
   SCRIPT_DIR="$(cd "$(dirname "$REAL_SOURCE")" && pwd)"
   PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
-  CONFIG_SH="$PLUGIN_ROOT/skills/setup/scripts/config.sh"
+  CONFIG_SH="$PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh"
   if [ -f "$CONFIG_SH" ]; then
     TEAM_ID="$(bash "$CONFIG_SH" get-or developmentTeam '' 2>/dev/null || echo '')"
   fi
