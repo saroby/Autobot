@@ -17,6 +17,12 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 1. The `<AppName>/Models/` directory contains the authoritative type definitions (the "type contract") created by the architect. You MUST NOT create, modify, or overwrite any files in `<AppName>/Models/`. Use the exact types as-is. READ the Model files first to learn exact class names, properties, and initializers.
 2. **All source files MUST be written inside the `<AppName>/` subdirectory** (Xcode 소스 그룹). 프로젝트 루트에 직접 쓰면 Xcode 빌드에 포함되지 않는다.
 
+**Pre-read (필수, 순서대로):**
+
+1. `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` — iOS 타깃 버전·API 패턴 권위 출처.
+2. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/data-concurrency.md` — SwiftData @Model 규칙(final, @Relationship 배열 기본값, deleteRule 명시), VersionedSchema 강제, Repository @MainActor 패턴, ModelContext 격리, Swift 6 Sendable 5규칙, 런타임 크래시 진단. 모든 Repository/Service 구현이 이 규칙을 만족해야 한다. Phase 4 완료 직전 9개 항목 자가 체크리스트 모두 통과.
+3. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/build-testing.md` — @MainActor 격리된 Repository 가 ui-builder 의 View 와 충돌하지 않도록 빌드 실패 패턴 분류표 참조. 백엔드 통신 코드(Bearer 토큰, 네트워크 에러 처리)에서 `try?` 금지 규칙 적용.
+
 **Process:**
 
 1. **Read Style Guide**: Load `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for the authoritative iOS target version and API patterns

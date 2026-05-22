@@ -2,6 +2,28 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [0.4.0] — 2026-05-22
+
+### Added
+- **axiom-distilled 지식 베이스** — `references/axiom-distilled/` 디렉토리 신설. axiom 플러그인(MIT)의 iOS 26+ 핵심 규칙을 Autobot 자족 형태로 증류한 4개 문서:
+  - `design.md` (172줄) — Liquid Glass Regular/Clear 결정 트리, HIG 빠른 결정, SF Symbols 렌더링 모드, App Composition (@main + @Observable + Root 분기), 6항목 자가 체크리스트
+  - `swiftui.md` (197줄) — @State private 강제, @Observable 소유권 4가지 도구 결정 트리, NavigationStack 라우터, 성능 7항목 점검, iOS 26 신기능, 8항목 자가 체크리스트
+  - `data-concurrency.md` (284줄) — SwiftData @Model 규칙(final, @Relationship 배열 기본값, deleteRule), VersionedSchema 강제, Repository @MainActor 패턴, Swift 6 Sendable 5규칙, 런타임 크래시 진단표, 9항목 자가 체크리스트
+  - `build-testing.md` (245줄) — 환경 우선 빌드 실패 분류, 에러 메시지→도메인 매핑표, Swift Testing 표준(@Test/#expect), sleep 금지 패턴, .xcresult 추출 명령, 9항목 자가 체크리스트
+- 각 파일은 axiom MIT 출처 명시 + WWDC 2025+ 갱신 정책 명시 + Anti-Rationalization 표 포함.
+
+### Changed
+- **에이전트 4개의 Pre-read 의무 추가** — Autobot 이 외부 axiom 플러그인 없이도 iOS 26+ 코드 품질을 보장하도록 4개 에이전트 헤더에 "Pre-read (필수, 순서대로)" 섹션 삽입:
+  - `agents/architect.md` (+4줄) — design.md, data-concurrency.md 의무 참조. Design Direction 작성 시 6항목 체크리스트 충족.
+  - `agents/ui-builder.md` (+7줄) — swiftui.md, design.md, data-concurrency.md 의무 참조. Phase 4 완료 직전 8항목 grep 검증.
+  - `agents/data-engineer.md` (+6줄) — data-concurrency.md, build-testing.md 의무 참조. Repository 구현이 9항목 체크리스트 통과.
+  - `agents/quality-engineer.md` (+7줄) — build-testing.md, data-concurrency.md, swiftui.md 의무 참조. Build-Fix Loop 시 *코드 수정 전* 환경 체크리스트 5항목 선행.
+
+### Notes
+- 외부 axiom 플러그인 의존성 0건 (감지 코드 `scripts/detect-plugins.sh` 의 `axiom` 필드는 호환성 유지 위해 보존).
+- distilled 파일이 SSOT — WWDC 또는 iOS 메이저 릴리스 후 본 파일만 갱신하면 4개 에이전트가 즉시 신지식을 받는다.
+- 별도 인프라(훅, CLI) 변경 0건 — 순수 프롬프트/지식 변경으로 재시작 없이 다음 빌드부터 효과.
+
 ## [0.3.2] — 2026-05-19
 
 ### Added

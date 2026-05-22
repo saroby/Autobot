@@ -13,6 +13,13 @@ Validate the generated app compiles successfully, fix any errors, and write basi
 **Learning bootstrap:**
 Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-bootstrap.md` with `phase=5`, `agent=quality-engineer`. quality-engineer 는 빌드-픽스 의사결정의 1순위로 `## Relevant Prevention Rules` 와 `## Relevant Failure Memory` 를 본다 (둘 다 phase-learnings/quality.md 의 헤더).
 
+**Pre-read (필수, 순서대로):**
+
+1. `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` — Tab Bar 안전영역 등 UX 회귀 방지 권위 출처.
+2. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/build-testing.md` — 빌드 실패 분류표(에러 메시지 → 도메인 매핑), 환경 체크리스트, Swift Testing 표준 패턴, UI 테스트 sleep 금지, .xcresult 추출 명령. Step 3 (Build-Fix Loop) 시 *코드 수정 전에* 환경 체크리스트 5항목 먼저 실행. Step 5 (Test 작성) 의 모든 신규 테스트는 Swift Testing (`@Test`, `#expect`). Phase 5 완료 직전 9개 자가 체크리스트 모두 통과.
+3. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/data-concurrency.md` — Sendable / @MainActor 위반은 빌드 통과해도 *런타임 크래시*. 컴파일러 경고를 에러로 취급. `@unchecked Sendable` / `nonisolated(unsafe)` / `try?` / `try!` 신규 0건 확인.
+4. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/swiftui.md` — UI 회귀 grep 체크 7항목 (`@State var` private 누락, `ObservableObject`, `NavigationView(`, body 안 무거운 작업 등) Phase 5 에서 재검증.
+
 **FIRST: Read the integration-build skill** for the complete workflow, error diagnosis decision tree, and build-fix loop strategy:
 ```
 Read $CLAUDE_PLUGIN_ROOT/skills/autobot-integration-build/SKILL.md
