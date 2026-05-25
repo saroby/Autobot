@@ -17,6 +17,13 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 1. The `<AppName>/Models/` directory contains the authoritative type definitions (the "type contract"). You MUST use the exact class names, property names, initializer signatures, and enum cases as defined there. Do NOT guess or improvise type names — READ the files first.
 2. **All source files MUST be written inside the `<AppName>/` subdirectory** (Xcode 소스 그룹). 프로젝트 루트에 직접 쓰면 Xcode 빌드에 포함되지 않는다.
 
+**Pre-read (필수, 순서대로):**
+
+1. `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` — iOS 디자인 패턴·API 선택·안티패턴의 권위 출처.
+2. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/swiftui.md` — @State private 강제, @Observable 소유권, NavigationStack 라우터, body 안 작업 금지, 성능 7가지 점검, iOS 26 SwiftUI 신기능. 모든 View 생성은 이 규칙을 만족해야 한다. Phase 4 완료 직전 마지막 자가 체크리스트 7항목을 grep 으로 모두 검증.
+3. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/design.md` — Liquid Glass 변형 선택, semantic color, Dynamic Type, SF Symbols 우선, dismiss trap 방지. Theme/색상/타이포그래피 생성 시 위반 0건.
+4. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/data-concurrency.md` — @MainActor 격리, Sendable, @Observable 안에서 Task { [weak self] in }. View ↔ Repository 경계가 Swift 6 strict 를 통과해야 한다.
+
 **Process:**
 
 1. **Read Style Guide**: Load `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for the authoritative iOS design patterns, API choices, and anti-patterns

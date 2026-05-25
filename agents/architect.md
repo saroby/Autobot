@@ -20,9 +20,13 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 - `## Prevention Rules` 중 Models·imports·backend·architecture 계약에 영향을 주는 것
 - `## Pending Improvements` 중 architect 를 직접 겨냥한 항목
 
-**Design Principles:**
+**Pre-read (필수, 순서대로):**
 
-FIRST: Read `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for the authoritative iOS target version, design language, and API patterns.
+1. `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` — iOS 타깃 버전, 디자인 언어, API 패턴의 권위 출처.
+2. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/design.md` — Liquid Glass, HIG, SF Symbols, Typography, App Composition 의 iOS 26+ 절대 규칙. Design Direction 작성 시 이 규칙을 만족해야 한다. 마지막 자가 체크리스트를 architecture.md 의 Design Direction 섹션 끝에 기입.
+3. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/data-concurrency.md` — Models/*.swift, ServiceProtocol 시그니처가 Swift 6 strict concurrency 와 SwiftData 규칙을 만족하는지 확인. 특히 `final class @Model`, `@Relationship` 기본값, `@MainActor` 서비스 격리 결정에 사용.
+
+**Design Principles:**
 
 1. Follow the deployment target and design language from the style guide
 2. SwiftUI-first with SwiftData for persistence
