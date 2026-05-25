@@ -212,12 +212,24 @@ log_info "configuration: $CONFIGURATION"
 log_info "archive path:  $ARCHIVE_PATH"
 [ -n "$TEAM_ID" ] && log_info "team:          $TEAM_ID"
 
+# Pre-compute whether export-compliance override will be appended, so dry-run
+# can display the same final invocation that the real archive will use.
+COMPLIANCE_OVERRIDE=""
+if [ -n "$XCODEPROJ" ] && [ -f "$XCODEPROJ/project.pbxproj" ]; then
+  if ! grep -q 'ITSAppUsesNonExemptEncryption' "$XCODEPROJ/project.pbxproj" 2>/dev/null; then
+    COMPLIANCE_OVERRIDE="INFOPLIST_KEY_ITSAppUsesNonExemptEncryption=NO"
+  fi
+elif [ -z "$XCODEPROJ" ]; then
+  # workspace-only project — can't introspect, assume override needed for safety
+  COMPLIANCE_OVERRIDE="INFOPLIST_KEY_ITSAppUsesNonExemptEncryption=NO"
+fi
+
 if [ "$DRY_RUN" -eq 1 ]; then
   log_info "DRY RUN — would invoke:"
-  python3 - "${PROJECT_FLAG[@]}" "$SCHEME" "$ARCHIVE_PATH" "$CONFIGURATION" "$TEAM_ID" <<'PY'
+  python3 - "${PROJECT_FLAG[@]}" "$SCHEME" "$ARCHIVE_PATH" "$CONFIGURATION" "$TEAM_ID" "$COMPLIANCE_OVERRIDE" <<'PY'
 import shlex, sys
-# argv: project_flag_name, project_path, scheme, archive_path, configuration, team_id
-pflag, ppath, scheme, archive, config, team = sys.argv[1:7]
+# argv: project_flag_name, project_path, scheme, archive_path, configuration, team_id, compliance_override
+pflag, ppath, scheme, archive, config, team, compliance = sys.argv[1:8]
 parts = [
     "xcodebuild archive",
     f"  {pflag} {shlex.quote(ppath)}",
@@ -230,6 +242,8 @@ parts = [
 ]
 if team:
     parts.append(f"  DEVELOPMENT_TEAM={shlex.quote(team)}")
+if compliance:
+    parts.append(f"  {compliance}")
 print(" \\\n".join(parts))
 PY
   log_ok "dry-run validation passed"
@@ -252,6 +266,15 @@ ARCHIVE_CMD=(
 )
 [ -n "$TEAM_ID" ] && ARCHIVE_CMD+=("DEVELOPMENT_TEAM=$TEAM_ID")
 
+# Export Compliance: append the precomputed override if the project did not
+# already declare ITSAppUsesNonExemptEncryption. Match `grep` is value-agnostic
+# on purpose — a YES set by an architect (non-exempt encryption app) must not
+# be overridden. ASC blocks builds without this key as "Missing Compliance".
+if [ -n "$COMPLIANCE_OVERRIDE" ]; then
+  log_info "injecting $COMPLIANCE_OVERRIDE (not set in project)"
+  ARCHIVE_CMD+=("$COMPLIANCE_OVERRIDE")
+fi
+
 set +e
 "${ARCHIVE_CMD[@]}"
 ARCHIVE_EXIT=$?
@@ -263,6 +286,19 @@ if [ $ARCHIVE_EXIT -ne 0 ] || [ ! -d "$ARCHIVE_PATH" ]; then
   [ ! -d "$ARCHIVE_PATH" ] && log_info "archive directory was not created: $ARCHIVE_PATH"
   write_status "failed" "xcodebuild_exit_${ARCHIVE_EXIT}"
   exit 4
+fi
+
+# Export Compliance post-check: verify the embedded Info.plist contains
+# ITSAppUsesNonExemptEncryption. If missing, the build will be flagged
+# "Missing Compliance" on ASC and testers can't install it — refuse to ship it.
+EMBEDDED_APP="$(ls -d "$ARCHIVE_PATH"/Products/Applications/*.app 2>/dev/null | head -1 || true)"
+if [ -n "$EMBEDDED_APP" ] && [ -f "$EMBEDDED_APP/Info.plist" ]; then
+  if ! plutil -extract ITSAppUsesNonExemptEncryption raw "$EMBEDDED_APP/Info.plist" &>/dev/null; then
+    log_error "archive Info.plist missing ITSAppUsesNonExemptEncryption — would trigger '수출 규정 관련 문서 누락' on ASC"
+    log_info  "set INFOPLIST_KEY_ITSAppUsesNonExemptEncryption=NO in the target's build settings"
+    write_status "failed" "missing_export_compliance"
+    exit 4
+  fi
 fi
 
 log_ok "archive created: $ARCHIVE_PATH"

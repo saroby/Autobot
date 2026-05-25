@@ -329,6 +329,7 @@ def generate_pbxproj(
     if team_setting:
         w(team_setting)
     w(f'\t\t\t\tGENERATE_INFOPLIST_FILE = YES;')
+    w(f'\t\t\t\tINFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;')
     w(f'\t\t\t\tINFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;')
@@ -352,6 +353,7 @@ def generate_pbxproj(
     if team_setting:
         w(team_setting)
     w(f'\t\t\t\tGENERATE_INFOPLIST_FILE = YES;')
+    w(f'\t\t\t\tINFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;')
     w(f'\t\t\t\tINFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;')
     w(f'\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;')

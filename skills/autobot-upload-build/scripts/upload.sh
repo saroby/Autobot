@@ -89,6 +89,20 @@ fi
 # Normalize to absolute path
 ARCHIVE_PATH="$(cd "$ARCHIVE_PATH" && pwd)"
 
+# Export Compliance: reject archives whose embedded Info.plist is missing
+# ITSAppUsesNonExemptEncryption. Such uploads land on ASC as "Missing Compliance"
+# ("수출 규정 관련 문서 누락") and block TestFlight installs until manually answered.
+# autobot-archive-build always injects this; this check defends against externally
+# produced .xcarchive bundles passed in via --archive-path.
+EMBEDDED_APP="$(ls -d "$ARCHIVE_PATH"/Products/Applications/*.app 2>/dev/null | head -1 || true)"
+if [ -n "$EMBEDDED_APP" ] && [ -f "$EMBEDDED_APP/Info.plist" ]; then
+  if ! plutil -extract ITSAppUsesNonExemptEncryption raw "$EMBEDDED_APP/Info.plist" &>/dev/null; then
+    log_error "archive Info.plist missing ITSAppUsesNonExemptEncryption — would trigger '수출 규정 관련 문서 누락' on ASC"
+    log_info  "re-archive with autobot-archive-build, or set INFOPLIST_KEY_ITSAppUsesNonExemptEncryption=NO in the target"
+    exit 2
+  fi
+fi
+
 case "$METHOD" in
   app-store-connect|release-testing|development) ;;
   *) log_error "--method must be app-store-connect | release-testing | development (got: $METHOD)"; exit 1;;

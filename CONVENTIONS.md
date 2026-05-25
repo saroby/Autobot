@@ -117,3 +117,25 @@ No third place to update — the facade's contract is implicit.
    events or missing required fields fail-loud at the wrapper layer.
 3. Add a regression test under `tests/test_log_validation.py` if the event
    is decision-relevant (gate input or retro audit).
+
+## iOS project content contract
+
+Every iOS project that Autobot ships through TestFlight **must** carry
+`ITSAppUsesNonExemptEncryption` in its app target's Info.plist (typically
+via the `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption` build setting). Default
+value: `NO`.
+
+- **Why**: ASC flags any build missing this key as "Missing Compliance" / "수출
+  규정 관련 문서 누락", which blocks every tester (internal included) until a
+  human answers the question in the web UI. Autobot's value is "no questions",
+  so we ship the safe default automatically.
+- **Where it's enforced** (defense in depth):
+  - `autobot-ios-scaffold` writes the key in both generator paths
+    (xcodegen YAML + pbxproj fallback) at project creation.
+  - `autobot-archive-build` injects it as an `xcodebuild` override if absent
+    from the pbxproj, then verifies the embedded Info.plist after archive.
+  - `autobot-upload-build` re-verifies the embedded Info.plist before export
+    so externally produced archives are also caught.
+- **Override**: an architect who designs an app using non-exempt encryption
+  must set the value to `YES` and arrange the ERN / annual report flow
+  separately — they should not bypass the check.

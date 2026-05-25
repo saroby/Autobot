@@ -113,6 +113,8 @@ architecture.md의 `Required Permissions`를 빌드 설정에 반영:
 - pbxproj: build settings에 직접 추가
 - 예: `INFOPLIST_KEY_NSCameraUsageDescription = "카메라 설명"`
 
+> **Export Compliance contract**: `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption` 는 scaffold 의 두 generator 가 이미 `NO` 로 emit 한다 (CONVENTIONS.md "iOS project content contract"). 권한을 추가할 때 이 키를 제거하지 말 것 — 누락되면 archive 단계에서 차단된다.
+
 ### SPM Dependencies
 
 architecture.md의 `Dependencies` 섹션이 `N/A`가 아닐 때:

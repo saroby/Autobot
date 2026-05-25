@@ -306,6 +306,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGN_ENTITLEMENTS: ${APP_NAME}/${APP_NAME}.entitlements

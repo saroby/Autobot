@@ -111,6 +111,15 @@ xcodebuild archive \
 
 archive 디렉토리가 실제로 만들어졌는지 검증 후 종료한다 — `xcodebuild` 가 exit 0 를 반환해도 archive 가 없으면 실패로 분류.
 
+### Export Compliance enforcement
+
+`ITSAppUsesNonExemptEncryption` 가 누락된 빌드는 ASC 에서 "수출 규정 관련 문서 누락" 으로 마킹돼 테스터가 설치할 수 없다. 이 스킬은 두 단계로 강제한다:
+
+1. archive 직전: `*.xcodeproj/project.pbxproj` 에 키가 없으면 `xcodebuild` 인자에 `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption=NO` 를 자동 추가
+2. archive 직후: `<archive>/Products/Applications/<App>.app/Info.plist` 에 키가 존재하는지 `plutil -extract` 로 검증, 없으면 exit 4 + `reason=missing_export_compliance`
+
+기본값은 `NO` (HTTPS/TLS 만 사용하는 면제 대상). 자체 암호화를 쓰는 앱이라면 architect 가 빌드 설정에서 `YES` 로 명시해야 한다.
+
 ### Atomic status write
 
 status JSON 은 `python3 -c json.dumps` + temp+rename 으로 원자적으로 기록된다. 다른 스킬과 동일한 안전성 보장.

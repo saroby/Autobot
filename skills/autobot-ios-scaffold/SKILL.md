@@ -88,6 +88,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-proje
 - `CFBundleDisplayName`: App display name
 - `UILaunchScreen`: Empty dict (for SwiftUI apps)
 - `UISupportedInterfaceOrientations`: Portrait + Landscape
+- `ITSAppUsesNonExemptEncryption = NO`: Export Compliance — always emitted via `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption` build setting so TestFlight never shows "수출 규정 관련 문서 누락". See CONVENTIONS.md → "iOS project content contract".
 
 ### Build Settings
 - `SWIFT_VERSION`: 6.0
