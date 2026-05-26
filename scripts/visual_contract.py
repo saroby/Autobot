@@ -86,7 +86,7 @@ def _pillow_stats(path: Path):
     try:
         with Image.open(path) as img:
             small = img.convert("RGB").resize((64, 96))  # downsample for speed
-            pixels = list(small.getdata())
+            pixels = list(small.get_flattened_data())
     except Exception:
         return None, None
     if not pixels:
