@@ -1,0 +1,40 @@
+name: smoke-e2e
+
+# 단위 회귀 슈트(tests/run_tests.sh)가 잡지 못하는 실제 Xcode/simulator 회귀 보호.
+# 매일 09:00 UTC (18:00 KST) 와 수동 트리거.
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          ls /Applications | grep -E "^Xcode" || true
+          # macos-15 runner 의 최신 Xcode 사용. 26 미만이면 즉시 실패.
+          sudo xcode-select -s /Applications/Xcode_26.app/Contents/Developer || \
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+
+      - name: Unit regression
+        run: bash tests/run_tests.sh
+
+      - name: Smoke e2e
+        run: bash scripts/smoke-e2e.sh
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-e2e-logs
+          path: |
+            /tmp/autobot-smoke-*/
+          retention-days: 7
