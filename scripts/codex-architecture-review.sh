@@ -111,25 +111,39 @@ if raw_json is not None:
     review_entry["hardViolations"] = raw_json.get("hardViolations", [])
     review_entry["softWarnings"] = raw_json.get("softWarnings", [])
 
+# Generic peerReview view (bi-directional). This script is the host=claude -> peer=codex
+# path; the Codex-host -> Claude review writes its own peerReview entry directly.
+peer_review_entry = dict(review_entry)
+peer_review_entry["host"] = "claude"
+peer_review_entry["peer"] = "codex"
+peer_review_entry["blockingFindingsCount"] = int(hard)
+
 def mutate(s):
     p1 = s.setdefault("phases", {}).setdefault("1", {"status": "pending"})
     md = p1.setdefault("metadata", {})
-    md["codexReview"] = review_entry
+    md["codexReview"] = review_entry         # legacy key for backward compat
+    md["peerReview"] = peer_review_entry     # generic key consumed by gate
 
 mutate_state_with_validation(state_path, spec, mutate)
 
 detail = {
+    "host": "claude",
+    "peer": "codex",
     "verdict": verdict,
     "attempt": int(attempt),
+    "blockingFindingsCount": int(hard),
     "hardViolationsCount": int(hard),
     "softWarningsCount": int(soft),
 }
 if skip_reason:
     detail["skipReason"] = skip_reason
 
+# Emit unified peer_review event. The legacy codex_review event is retained in
+# spec.logEvents for backward compatibility with archived build-log.jsonl files
+# but is no longer produced by Autobot itself.
 append_build_log(
     Path(project_dir),
-    "codex_review",
+    "peer_review",
     phase="1",
     detail=detail,
     spec=spec,

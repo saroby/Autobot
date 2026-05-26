@@ -155,6 +155,20 @@ def _advance_phase_core(args: argparse.Namespace) -> AdvanceResult:
     gate_checks = gate_evidence["checks"]
     metadata_items = args.metadata or []
 
+    # Pre-compute the input hash when the phase is about to succeed so the
+    # mutator can stash it without re-reading the (now-mutated) state.
+    # Best-effort: any failure here is non-fatal — the rest of the pipeline
+    # still works, idempotent-resume just won't fast-skip this phase.
+    input_hash_result: tuple[str, dict] | None = None
+    if success_path:
+        try:
+            from input_hash import compute_phase_input_hash
+            input_hash_result = compute_phase_input_hash(
+                project_dir, spec, pre_state, phase,
+            )
+        except Exception:  # noqa: BLE001 — best-effort, must not crash advance
+            input_hash_result = None
+
     def mutate(next_state: dict[str, Any]) -> None:
         next_state.setdefault("gates", {})[gate_id] = gate_evidence
 
@@ -168,6 +182,19 @@ def _advance_phase_core(args: argparse.Namespace) -> AdvanceResult:
             phase_state.pop("error", None)
             # Soft-gate failure information lives in gates[gate_id].status
             # (already written above as "soft_failed"); no per-phase mirror.
+
+            # Record the input hash so /autobot:resume can skip this phase
+            # next time if nothing upstream has changed (LOOP 17/26).
+            if input_hash_result is not None:
+                try:
+                    from input_hash import mark_inputs
+                    mark_inputs(
+                        next_state, phase,
+                        hash_value=input_hash_result[0],
+                        manifest=input_hash_result[1],
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
         else:
             phase_state["failedAt"] = timestamp
             phase_state["error"] = f"gate {gate_id} failed"

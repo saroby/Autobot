@@ -10,4 +10,11 @@ __pycache__/
 .autobot/build-log.jsonl
 .autobot/build.lock
 .autobot/sandbox/
+.autobot/phase-*/
+.autobot/env_snapshot.json
+.autobot/.guard-active
+.autobot/app-intent.json
+.autobot/architecture.json
+.autobot/metadata/
+artifacts/
 Samples/

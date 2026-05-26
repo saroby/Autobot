@@ -29,7 +29,11 @@ CHECK (environment_recorded):
   ✓ environment.xcodegen 기록됨
   ✓ environment.fastlane 기록됨
   ✓ environment.ascConfigured 기록됨
+  ✓ environment.axiom 기록됨
   ✓ environment.stitch 기록됨
+  ✓ environment.runtimeHost 기록됨
+  ✓ environment.peerAi 기록됨
+  ✓ environment.peerReviewAvailable 기록됨
 FAIL → Phase 0 재실행
 ```
 
@@ -148,8 +152,8 @@ POST-GATE (통과 후):
 
 ```
 CHECK:
-  ✓ xcodebuild build 종료 코드 == 0
-  ✓ "BUILD SUCCEEDED" 문자열 출력에 포함
+  ✓ phases.5.metadata.build_succeeded == true
+  ✓ phases.5.metadata.peerReview.verdict ∈ {PASS, skipped}
   ✓ App 엔트리포인트에서 Stub이 아닌 실제 서비스 사용:
     grep -qi "Stub" <AppName>/App/<AppName>App.swift → 불일치여야 통과 (Stub 참조 없음)
     grep -qi "Repository\|Service(" <AppName>/App/<AppName>App.swift → 일치여야 통과 (실제 서비스 존재)
@@ -268,6 +272,14 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" verify --app-name "<App
 
 # xcodebuild 결과 확인
 xcodebuild build ... 2>&1 | tail -1 | grep -q "BUILD SUCCEEDED"
+
+# Gate 5→6: opposite-runtime peer review 기록
+python3 - <<'PY'
+import json
+state = json.load(open(".autobot/build-state.json"))
+review = state["phases"]["5"]["metadata"]["peerReview"]
+assert review["verdict"] in {"PASS", "skipped"}
+PY
 
 # Gate 5→6: App 엔트리포인트에서 Stub 사용 여부 확인
 ! grep -qi "Stub" <AppName>/App/<AppName>App.swift        # Stub이 없어야 통과

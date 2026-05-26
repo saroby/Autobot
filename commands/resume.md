@@ -125,6 +125,26 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 4. 모든 Phase가 completed이면 → "빌드가 이미 완료되었습니다." 출력 후 종료
 ```
 
+### Idempotent skip — input_hash 기반
+
+재개 지점이 결정되면 그 phase 부터 다음 미완료 phase 까지 순회하면서, 각 phase 의 input 이 마지막 성공 시점과 동일하면 **재실행 없이 skip** 한다. 사용자 아이디어 / spec 슬라이스 / owned 파일 체크섬 / upstream 파일 체크섬 중 하나라도 바뀌었으면 그 phase 부터 재실행.
+
+```bash
+# 후보 phase 가 정말 다시 돌릴 필요가 있는지 먼저 확인
+for PHASE_ID in $(seq "$RESUME_FROM" 7); do
+  RESULT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" input-hash should-skip --phase "$PHASE_ID")
+  if echo "$RESULT" | grep -q '"skip": true'; then
+    echo "INFO: Phase $PHASE_ID skipped — $(echo $RESULT | python3 -c 'import json,sys;print(json.load(sys.stdin)[\"reason\"])')"
+    continue
+  fi
+  # 입력이 변했거나 hash 미저장 → 정상적으로 phase 실행
+  RESUME_FROM="$PHASE_ID"
+  break
+done
+```
+
+`--force` 옵션 (`/autobot:resume <N> --force` 또는 운영자 의도가 명확할 때) 은 skip 을 비활성화하고 무조건 재실행한다. phase 가 성공으로 마킹되는 시점에 `pipeline.sh advance-phase` 가 새 hash 를 다시 기록하므로, 다음 resume 부터 다시 cache 가 적중한다.
+
 ## Step 3: 컨텍스트 복원
 
 재개 전에 필수 컨텍스트를 로드:
@@ -238,9 +258,10 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase <N>
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase <N> \
   --status fallback --detail "<reason>"
 
-# Phase 5는 빌드 성공 metadata가 필수
+# Phase 5는 빌드 성공 + peer review metadata가 필수
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 5 \
-  --metadata build_succeeded=true
+  --metadata build_succeeded=true \
+  --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}'
 
 # 명시적 실패 (gate 도달 전 단계에서 에이전트가 실패한 경우)
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" fail-phase --phase <N> \

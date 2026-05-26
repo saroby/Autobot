@@ -1,4 +1,5 @@
 {
+  "_comment_pretool_use": "PreToolUse sandbox-pre-write.sh is intentionally NOT registered until first real builds validate the hook payload schema. Enable manually by adding the block from hooks/sandbox-pre-write.sh into a fresh PreToolUse array once you've tested it. The scripts/sandbox_guard.py module is still usable directly via `pipeline.sh sandbox check`.",
   "hooks": {
     "SessionStart": [
       {

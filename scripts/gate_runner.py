@@ -154,7 +154,10 @@ def check_environment_recorded(proj: Path, app: str, state: dict) -> list[dict]:
         return [_ok("env_recorded", False, "environment object missing from build-state.json")]
 
     results = []
-    for key in ("xcodegen", "fastlane", "ascConfigured", "stitch"):
+    for key in (
+        "xcodegen", "fastlane", "ascConfigured", "axiom", "stitch",
+        "runtimeHost", "peerAi", "peerReviewAvailable",
+    ):
         present = key in env
         results.append(_ok(f"env_{key}", present,
                            f"{key}={env[key]}" if present else f"{key} not recorded"))
@@ -254,51 +257,224 @@ def check_backend_required_consistent(proj: Path, app: str, state: dict) -> list
     return results
 
 
-def check_codex_review_acceptable(proj: Path, app: str, state: dict) -> list[dict]:
-    """Verify a codex architecture review has been performed (or explicitly skipped).
+_IOS26_SYMBOLS = (
+    (re.compile(r"\bimport\s+FoundationModels\b"), "FoundationModels framework"),
+    (re.compile(r"\b@Generable\b"), "@Generable macro"),
+    (re.compile(r"\bLanguageModelSession\b"), "LanguageModelSession"),
+    (re.compile(r"\bSystemLanguageModel\b"), "SystemLanguageModel"),
+    (re.compile(r"\.glassEffect\("), "Liquid Glass .glassEffect()"),
+    (re.compile(r"\bGlassEffectContainer\b"), "GlassEffectContainer"),
+    (re.compile(r"\bWritingToolsCoordinator\b"), "WritingToolsCoordinator"),
+    (re.compile(r"\bAlarmKit\b"), "AlarmKit"),
+)
 
-    Reads phases.1.metadata.codexReview written by scripts/codex-architecture-review.sh.
+
+def _parse_ios_major(target: str | None) -> int | None:
+    """Extract the major version number from a deployment target like '26.0'."""
+    if not isinstance(target, str):
+        return None
+    match = re.match(r"\s*(\d+)", target)
+    return int(match.group(1)) if match else None
+
+
+def _has_available_guard_above(lines: list[str], hit_line: int, *, window: int = 6) -> bool:
+    """Return True if any of the `window` lines above contains an iOS 26 `#available` guard."""
+    start = max(0, hit_line - window)
+    for line in lines[start:hit_line]:
+        if re.search(r"#available\([^)]*iOS\s+26", line):
+            return True
+        if re.search(r"@available\([^)]*iOS\s+26", line):
+            return True
+    return False
+
+
+def check_app_intent_declared(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 1→2 — architect must promise something concrete enough to test.
+
+    Soft when `app-intent.json` is absent (legacy build), strict when present
+    but missing required fields.
+    """
+    from intent_spec import load_app_intent, validate_manifest
+
+    intent = load_app_intent(proj)
+    if intent is None:
+        return [_ok(
+            "app_intent_declared", True,
+            ".autobot/app-intent.json absent — skipping (legacy build)",
+            skipped=True,
+        )]
+    ok, problems = validate_manifest(proj)
+    if ok:
+        return [_ok(
+            "app_intent_declared", True,
+            f"promise='{intent.promise[:60]}', primaryCTA='{intent.primary_cta}', "
+            f"{len(intent.required_anchors)} anchors",
+        )]
+    return [_ok(
+        "app_intent_declared", False,
+        f"app-intent.json invalid: {'; '.join(problems)}",
+    )]
+
+
+def check_intent_anchors_in_ui(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 4→5 — every anchor the architect promised must appear in the UI tree.
+
+    Without this, the UI test target launched at Phase 5 cannot find the views
+    it is supposed to assert against, and runtime-smoke can pass while the
+    actual happy path is broken.
+    """
+    from intent_spec import find_unused_anchors, load_app_intent
+
+    intent = load_app_intent(proj)
+    if intent is None:
+        return [_ok(
+            "intent_anchors_in_ui", True,
+            "app-intent.json absent — skipping",
+            skipped=True,
+        )]
+    missing, present = find_unused_anchors(proj, app)
+    if not missing:
+        return [_ok(
+            "intent_anchors_in_ui", True,
+            f"all {len(present)} required anchors present in UI tree",
+        )]
+    return [_ok(
+        "intent_anchors_in_ui", False,
+        f"missing accessibility identifiers in UI: {', '.join(missing)} "
+        f"(present: {', '.join(present) or 'none'})",
+    )]
+
+
+def check_ios_capability_safe(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify iOS 26+ APIs are either supported by the deployment target or
+    properly `#available(iOS 26, *)` guarded.
+
+    Soft when `architecture.json` is absent — Phase 1 may pre-date the
+    capability manifest contract.
+    """
+    arch_json = proj / ".autobot" / "architecture.json"
+    deployment_major: int | None = None
+    if arch_json.is_file():
+        try:
+            data = load_json(arch_json)
+            caps = data.get("iosCapabilities") if isinstance(data, dict) else None
+            if isinstance(caps, dict):
+                deployment_major = _parse_ios_major(caps.get("deploymentTarget"))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # No manifest → skip (architect output predates this gate).
+    if deployment_major is None:
+        return [_ok(
+            "ios_capability_safe", True,
+            "architecture.json missing iosCapabilities — skipping (legacy build)",
+            skipped=True,
+        )]
+
+    # Deployment target already covers iOS 26 → no guards required.
+    if deployment_major >= 26:
+        return [_ok(
+            "ios_capability_safe", True,
+            f"deploymentTarget=iOS {deployment_major} — modern APIs always available",
+        )]
+
+    # Lower deployment target → every iOS 26+ symbol must be guarded.
+    app_root = proj / app
+    if not app_root.is_dir():
+        return [_ok("ios_capability_safe", True, "no app source tree yet", skipped=True)]
+
+    unguarded: list[str] = []
+    for swift in app_root.rglob("*.swift"):
+        try:
+            text = swift.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        lines = text.splitlines()
+        for idx, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith("//"):
+                continue
+            for pattern, label in _IOS26_SYMBOLS:
+                if pattern.search(line) and not _has_available_guard_above(lines, idx):
+                    unguarded.append(
+                        f"{swift.relative_to(proj)}:{idx+1}: {label} unguarded "
+                        f"(deploymentTarget=iOS {deployment_major})"
+                    )
+                    break  # one finding per line is enough
+
+    if unguarded:
+        sample = "; ".join(unguarded[:3])
+        more = f" (+{len(unguarded)-3} more)" if len(unguarded) > 3 else ""
+        return [_ok("ios_capability_safe", False, f"{sample}{more}")]
+    return [_ok(
+        "ios_capability_safe", True,
+        f"all iOS 26+ symbol usages are #available-guarded (target=iOS {deployment_major})",
+    )]
+
+
+def check_architecture_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify a Phase-1 peer architecture review has been performed (or explicitly skipped).
+
+    Bi-directional: the review runs whichever runtime is opposite the host.
+    Reads phases.1.metadata.peerReview first (new generic format), falls back to
+    phases.1.metadata.codexReview (legacy, codex-only).
+
+    Policy lookup: policies.peerArchitectureReview, falling back to
+    policies.codexArchitectureReview (deprecated alias).
+
     Acceptable verdicts:
       - "PASS"     → review passed
-      - "skipped"  → codex CLI unavailable, or review explicitly disabled
-      - missing    → if policy.codexArchitectureReview.enabled == false (backward compat)
+      - "skipped"  → peer CLI unavailable, or review explicitly disabled
+      - missing    → if policy.enabled == false (backward compat)
     Rejected:
-      - "FAIL"     → architect must re-run with hardViolations addressed
+      - "FAIL"     → architect must re-run with hardViolations / blockingFindings addressed
+      - "skipped" without skipReason → not auditable
     """
     spec = load_spec()
-    review_policy = spec.get("policies", {}).get("codexArchitectureReview", {})
+    policies = spec.get("policies", {})
+    review_policy = policies.get("peerArchitectureReview") or policies.get("codexArchitectureReview", {})
     enabled = bool(review_policy.get("enabled", False))
 
-    review = (
-        state.get("phases", {})
-             .get("1", {})
-             .get("metadata", {})
-             .get("codexReview")
-    )
+    p1_metadata = state.get("phases", {}).get("1", {}).get("metadata", {})
+    review = p1_metadata.get("peerReview") or p1_metadata.get("codexReview")
 
     if review is None:
         if not enabled:
-            return [_ok("codex_review_disabled", True,
-                        "codexArchitectureReview.enabled=false (backward compat skip)",
+            return [_ok("architecture_peer_review_disabled", True,
+                        "peerArchitectureReview.enabled=false (backward compat skip)",
                         skipped=True)]
-        return [_ok("codex_review_missing", False,
-                    "codex review not run; invoke scripts/codex-architecture-review.sh after architect dispatch")]
+        return [_ok("architecture_peer_review_missing", False,
+                    "Phase 1 peer review not run; invoke autobot-peer-review-bridge "
+                    "(host=claude → codex-architecture-review.sh; host=codex → claude review)")]
 
     verdict = str(review.get("verdict", ""))
     attempt = review.get("attempt")
     skip_reason = review.get("skipReason")
+    host = review.get("host", "unknown")
+    peer = review.get("peer", "unknown")
 
     if verdict == "PASS":
-        return [_ok("codex_review_pass", True,
-                    f"verdict=PASS (attempt {attempt})")]
+        return [_ok("architecture_peer_review_pass", True,
+                    f"{host}->{peer} verdict=PASS (attempt {attempt})")]
     if verdict == "skipped":
-        return [_ok("codex_review_skipped", True,
-                    f"skipped: {skip_reason or 'no reason recorded'}",
+        if not skip_reason:
+            return [_ok("architecture_peer_review_skipped_without_reason", False,
+                        f"{host}->{peer} verdict=skipped but skipReason missing — "
+                        "explicit skipReason required for audit")]
+        return [_ok("architecture_peer_review_skipped", True,
+                    f"{host}->{peer} skipped: {skip_reason}",
                     skipped=True)]
-    hard_count = len(review.get("hardViolations", []) or [])
-    return [_ok("codex_review_failed", False,
-                f"verdict={verdict or 'unknown'} (attempt {attempt}, "
-                f"{hard_count} hard violations) — fix and re-run")]
+    blocking = review.get("blockingFindingsCount")
+    if blocking is None:
+        blocking = len(review.get("hardViolations", []) or review.get("blockingFindings", []) or [])
+    return [_ok("architecture_peer_review_failed", False,
+                f"{host}->{peer} verdict={verdict or 'unknown'} (attempt {attempt}, "
+                f"{blocking} blocking findings) — fix and re-run")]
+
+
+# Legacy alias retained so external forks of spec/pipeline.json that still
+# reference codex_review_acceptable continue to work.
+check_codex_review_acceptable = check_architecture_peer_review_acceptable
 
 
 # ── Gate 2→3 checks ──
@@ -339,6 +515,36 @@ def check_design_spec_sections_complete(proj: Path, app: str, state: dict) -> li
 # ── Gate 3→4 checks ──
 
 
+def check_design_spec_json_valid(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 2→3 — the schema'd design-spec.json must be present (synthesized
+    on the fly when absent) and pass validation.
+
+    Synthesis path means the gate self-heals: if Phase 2 only produced prose
+    (Stitch unavailable, no manual JSON), this check derives a deterministic
+    palette + typography from architecture.md and writes design-spec.json so
+    visual_contract / ui-builder have a reliable contract.
+    """
+    from design_spec_validator import ensure
+
+    _path, payload, problems = ensure(proj, app_name=app, idea=state.get("idea", ""))
+    if problems:
+        return [_ok(
+            "design_spec_json_valid", False,
+            f"design-spec.json invalid: {'; '.join(problems[:3])}",
+        )]
+    info = (payload.get("_synthesizedFrom") or {}) if isinstance(payload, dict) else {}
+    notes = []
+    if info.get("fallbackPalette"):
+        notes.append("fallback-palette")
+    if info.get("architecture_md") or info.get("design_spec_md"):
+        notes.append("derived-from-text")
+    label = f" ({', '.join(notes)})" if notes else ""
+    return [_ok(
+        "design_spec_json_valid", True,
+        f"category={payload.get('appCategory')} primary={payload.get('colorTokens',{}).get('primary')}{label}",
+    )]
+
+
 def check_xcodeproj_exists(proj: Path, app: str, state: dict) -> list[dict]:
     xcodeprojs = sorted(proj.glob("*.xcodeproj"))
     results = [_ok("xcodeproj_dir", len(xcodeprojs) > 0, f"{len(xcodeprojs)} .xcodeproj")]
@@ -357,6 +563,34 @@ def check_privacy_manifest_exists(proj: Path, app: str, state: dict) -> list[dic
 
 def check_entitlements_exists(proj: Path, app: str, state: dict) -> list[dict]:
     return [_file_exists(proj / app / f"{app}.entitlements", "entitlements")]
+
+
+def check_scaffold_build_succeeded(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 3→4 — verify the empty scaffold app actually compiles.
+
+    Skips silently when xcodebuild is unavailable (CI / non-macOS) so the gate
+    still exists as a contract even when this machine cannot run it. The
+    structured result is also stashed in `phases.3.metadata.scaffoldBuild` by
+    the orchestrator so the run summary can show duration / log path.
+    """
+    # Local import avoids importing subprocess machinery for every gate run.
+    from xcodebuild_runner import scaffold_build
+
+    result = scaffold_build(proj, app)
+    status = result.get("status")
+    if status == "skipped":
+        reason = result.get("skipReason", "unknown")
+        return [_ok("scaffold_build", True, f"skipped: {reason}", skipped=True)]
+    if status == "passed":
+        return [_ok(
+            "scaffold_build", True,
+            f"xcodebuild build succeeded in {result.get('durationSeconds')}s",
+        )]
+    sig = (result.get("errorSignature") or "").splitlines()[0] if result.get("errorSignature") else "no stderr"
+    return [_ok(
+        "scaffold_build", False,
+        f"xcodebuild build failed (exit {result.get('exitCode')}): {sig[:160]} — log: {result.get('logPath')}",
+    )]
 
 
 def check_gitignore_exists(proj: Path, app: str, state: dict) -> list[dict]:
@@ -500,6 +734,230 @@ def check_build_succeeded(proj: Path, app: str, state: dict) -> list[dict]:
     )]
 
 
+def check_axiom_critical_audit_acceptable(proj: Path, app: str, state: dict) -> list[dict]:
+    """4-way branch over environment.axiom x phases.5.metadata.axiom_critical_audit.
+
+    - axiom NOT installed + metadata absent -> PASS (skipped).
+    - axiom installed     + metadata absent -> FAIL (bridge call missing).
+    - axiom installed     + ran=true + criticalCount==0 + findingsPath exists -> PASS.
+    - axiom installed     + ran=true + criticalCount>0                        -> FAIL (return to fix loop).
+    - axiom installed     + ran=false                                         -> FAIL (broken bridge).
+    """
+    env = state.get("environment", {})
+    axiom_installed = env.get("axiom") is True
+    audit = (
+        state.get("phases", {})
+             .get("5", {})
+             .get("metadata", {})
+             .get("axiom_critical_audit")
+    )
+
+    if not axiom_installed:
+        if audit is None:
+            return [_ok("axiom_audit_skipped_env", True,
+                        "environment.axiom=false; critical audit not required", skipped=True)]
+        return [_ok("axiom_audit_recorded_without_env", True,
+                    "metadata present though environment.axiom=false; trusting metadata", skipped=True)]
+
+    if audit is None:
+        return [_ok("axiom_audit_missing", False,
+                    "environment.axiom=true but phases.5.metadata.axiom_critical_audit absent — "
+                    "run autobot-axiom-bridge Mode 1 before Gate 5->6")]
+
+    ran = audit.get("ran")
+    if ran is not True:
+        return [_ok("axiom_audit_not_run", False,
+                    "axiom_critical_audit.ran is not true; bridge invocation failed or was skipped")]
+
+    findings_path_str = audit.get("findings_path") or audit.get("findingsPath")
+    if findings_path_str:
+        findings_path = proj / findings_path_str
+        if not findings_path.exists():
+            return [_ok("axiom_findings_missing", False,
+                        f"axiom_critical_audit.findings_path={findings_path_str} does not exist on disk")]
+
+    critical = audit.get("critical_count")
+    if critical is None:
+        critical = audit.get("criticalCount", 0)
+    try:
+        critical_int = int(critical)
+    except (TypeError, ValueError):
+        return [_ok("axiom_critical_count_invalid", False,
+                    f"axiom_critical_audit.critical_count is not an integer: {critical!r}")]
+
+    if critical_int > 0:
+        return [_ok("axiom_critical_present", False,
+                    f"axiom critical findings count={critical_int}; return to build-fix loop")]
+
+    return [_ok("axiom_critical_clean", True,
+                f"axiom critical findings count=0 (auditors={audit.get('auditors', [])})")]
+
+
+# Allowed skipReasons when peer tooling was advertised as available in environment.
+# These reflect legitimate runtime failures rather than refusal to invoke the bridge.
+_PEER_REVIEW_ALLOWED_SKIP_WHEN_AVAILABLE = {
+    "peer_invocation_failed",
+    "peer_timeout",
+    "peer_runtime_error",
+    "peer_returned_invalid_output",
+}
+
+
+def check_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict]:
+    """Require Phase 5 to attempt the opposite-runtime peer review.
+
+    Accepted verdicts:
+      - PASS: peer reviewed and found no blocking issue (findingsPath must exist on disk).
+      - skipped: peer tool unavailable or invocation failed; build remains standalone.
+        skipReason is REQUIRED. When environment.peerReviewAvailable=true, skipReason
+        must be in the allowed runtime-failure allowlist.
+    Rejected:
+      - missing: quality-engineer did not run the bridge.
+      - FAIL: peer found blocking issues that must return to the build-fix loop.
+      - skipped without skipReason: implicit skip — not auditable.
+      - skipped with non-allowlist reason while peerReviewAvailable=true: contradiction.
+    """
+    review = (
+        state.get("phases", {})
+             .get("5", {})
+             .get("metadata", {})
+             .get("peerReview")
+    )
+    if review is None:
+        return [_ok("peer_review_missing", False,
+                    "peer review not recorded; run autobot-peer-review-bridge before Gate 5->6")]
+
+    verdict = str(review.get("verdict", ""))
+    host = str(review.get("host", "unknown"))
+    peer = str(review.get("peer", "unknown"))
+
+    if verdict == "PASS":
+        findings_path_str = review.get("findingsPath") or review.get("findings_path")
+        if findings_path_str:
+            findings_path = proj / findings_path_str
+            if not findings_path.exists():
+                return [_ok("peer_review_findings_missing", False,
+                            f"peerReview.findingsPath={findings_path_str} does not exist on disk — "
+                            "PASS verdict without artifact is not auditable")]
+        return [_ok("peer_review_pass", True, f"{host}->{peer} verdict=PASS")]
+
+    if verdict == "skipped":
+        reason = review.get("skipReason")
+        if not reason:
+            return [_ok("peer_review_skipped_without_reason", False,
+                        f"{host}->{peer} verdict=skipped but skipReason missing — "
+                        "explicit skipReason required for audit")]
+        env_available = state.get("environment", {}).get("peerReviewAvailable") is True
+        if env_available and reason not in _PEER_REVIEW_ALLOWED_SKIP_WHEN_AVAILABLE:
+            return [_ok("peer_review_skip_contradicts_env", False,
+                        f"environment.peerReviewAvailable=true but skipReason={reason!r} "
+                        f"is not a runtime failure. Allowed when available: "
+                        f"{sorted(_PEER_REVIEW_ALLOWED_SKIP_WHEN_AVAILABLE)}")]
+        return [_ok("peer_review_skipped", True,
+                    f"{host}->{peer} skipped: {reason}", skipped=True)]
+
+    blocking = review.get("blockingFindingsCount")
+    if blocking is None:
+        blocking = len(review.get("blockingFindings", []) or [])
+    return [_ok("peer_review_failed", False,
+                f"{host}->{peer} verdict={verdict or 'unknown'} ({blocking} blocking findings)")]
+
+
+def check_visual_contract(proj: Path, app: str, state: dict) -> list[dict]:
+    """Compare the runtime screenshot against the design-spec palette/anchors.
+
+    Skipped when no screenshot is available yet (runtime_smoke also skipped) or
+    when no palette can be derived. Otherwise it catches blank screens, broken
+    root views, and "design said warm coral, app shipped system blue" regressions.
+    """
+    from visual_contract import evaluate
+
+    result = evaluate(proj)
+    status = result.get("status")
+    if status == "skipped":
+        return [_ok(
+            "visual_contract", True,
+            f"skipped: {result.get('skipReason', 'unknown')}",
+            skipped=True,
+        )]
+    if status == "passed":
+        match = result.get("paletteMatch")
+        if match:
+            extra = f" — dominant matches '{match['closestToken']}' (ΔE={match['deltaE']})"
+        else:
+            extra = " — no palette tokens declared, structural checks only"
+        return [_ok(
+            "visual_contract", True,
+            f"screenshot OK{extra} ({result.get('notes')})",
+        )]
+    return [_ok(
+        "visual_contract", False,
+        f"visual contract violated: {result.get('reason', 'unknown')}",
+    )]
+
+
+def check_runtime_smoke(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 5→6 — boot a simulator, install the .app, launch it, confirm the
+    process stays alive a few seconds, and capture a screenshot.
+
+    `simctl_unavailable` / `app_artifact_missing` / `no_ios_simulator_available`
+    are treated as `skipped` (the gate still records the check exists).
+    Hard failures (boot/install/launch/process-death) fail the gate.
+    """
+    from sim_runtime import smoke
+
+    result = smoke(proj, app)
+    status = result.get("status")
+    if status == "skipped":
+        return [_ok(
+            "runtime_smoke", True,
+            f"skipped: {result.get('skipReason', 'unknown')}",
+            skipped=True,
+        )]
+    if status == "passed":
+        screenshot = result.get("screenshotPath") or "no screenshot"
+        return [_ok(
+            "runtime_smoke", True,
+            f"app launched on {result.get('udidSource')} — {result.get('processDetail')} — screenshot: {screenshot}",
+        )]
+    return [_ok(
+        "runtime_smoke", False,
+        f"runtime smoke failed: {result.get('reason', 'unknown')}",
+    )]
+
+
+def check_metadata_readiness(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 5→6 — App Store / TestFlight metadata is ready before archive.
+
+    Skipped on the /autobot:mvp path (no ASC) so local builds aren't blocked;
+    hard-required on the /autobot:testflight path (ascConfigured=true).
+    """
+    from metadata_validator import evaluate
+
+    env = state.get("environment") or {}
+    result = evaluate(proj, asc_configured=bool(env.get("ascConfigured")))
+    status = result.get("status")
+    if status == "skipped":
+        return [_ok(
+            "metadata_readiness", True,
+            f"skipped: {result.get('skipReason', 'unknown')}",
+            skipped=True,
+        )]
+    if status == "passed":
+        counts = result.get("screenshotCounts") or {}
+        total_shots = sum(counts.values())
+        return [_ok(
+            "metadata_readiness", True,
+            f"locale={result.get('locale')} category={result.get('category')} "
+            f"age={result.get('age_rating')} export={result.get('export_compliance')} "
+            f"screenshots={total_shots}",
+        )]
+    return [_ok(
+        "metadata_readiness", False,
+        f"metadata not ready for upload: {result.get('reason', 'unknown')}",
+    )]
+
+
 def check_app_uses_real_repositories(proj: Path, app: str, state: dict) -> list[dict]:
     entry = proj / app / "App" / f"{app}App.swift"
     return [
@@ -530,6 +988,102 @@ def check_deployment_attempt_recorded(proj: Path, app: str, state: dict) -> list
 
 
 # ── Sandbox enforcement (Gate 4→5) ──
+
+
+def check_composition_seam_intact(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify the Phase 3 composition seam (single @main, stubs, root) is intact
+    before Phase 5 wires real repositories.
+
+    Hard checks:
+      - exactly one `@main` annotation across the app source tree (duplicates
+        crash Phase 5 with "multiple files match the @main attribute")
+      - `<AppName>/App/ServiceStubs.swift` exists (Preview seam)
+
+    Soft check (skipped when artifact is missing — emitted by architect once
+    `architecture.json` becomes the SSOT for Phase 3+5):
+      - `.autobot/architecture.json` parses and has required fields
+      - if `<AppName>/App/CompositionRoot.swift` exists, it is free of
+        `fatalError(` and unfilled `// TODO:` markers in production paths
+    """
+    app_root = proj / app
+    results: list[dict] = []
+
+    # @main uniqueness — count occurrences across the app source tree.
+    main_files: list[str] = []
+    if app_root.is_dir():
+        main_pattern = re.compile(r"^\s*@main\b")
+        for swift in app_root.rglob("*.swift"):
+            try:
+                content = swift.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for line in content.splitlines():
+                if main_pattern.match(line):
+                    main_files.append(str(swift.relative_to(proj)))
+                    break
+    if len(main_files) == 1:
+        results.append(_ok("single_main_entry", True, f"@main in {main_files[0]}"))
+    elif len(main_files) == 0:
+        results.append(_ok("single_main_entry", False, "no @main found in app source tree"))
+    else:
+        results.append(_ok(
+            "single_main_entry", False,
+            f"multiple @main entries: {', '.join(main_files)} — composition seam is broken",
+        ))
+
+    # ServiceStubs.swift presence (Preview seam — also re-checked at Gate 5→6).
+    results.append(_file_exists(app_root / "App" / "ServiceStubs.swift", "service_stubs_present"))
+
+    # architecture.json — soft until architect always emits it.
+    arch_json = proj / ".autobot" / "architecture.json"
+    if arch_json.is_file():
+        try:
+            data = load_json(arch_json)
+            required = ("appName", "models", "serviceProtocols", "rootScreens")
+            missing = [k for k in required if k not in data]
+            if missing:
+                results.append(_ok(
+                    "architecture_json_schema", False,
+                    f"architecture.json missing required keys: {', '.join(missing)}",
+                ))
+            else:
+                results.append(_ok(
+                    "architecture_json_schema", True,
+                    f"architecture.json declares {len(data.get('models', []))} models, "
+                    f"{len(data.get('serviceProtocols', []))} protocols",
+                ))
+        except (json.JSONDecodeError, OSError) as exc:
+            results.append(_ok("architecture_json_schema", False, f"parse error: {exc}"))
+    else:
+        results.append(_ok(
+            "architecture_json_schema", True,
+            "architecture.json absent (legacy build — skipping schema check)",
+            skipped=True,
+        ))
+
+    # CompositionRoot.swift — soft check, only when present.
+    comp_root = app_root / "App" / "CompositionRoot.swift"
+    if comp_root.is_file():
+        content = comp_root.read_text(encoding="utf-8")
+        offenders = []
+        if re.search(r"\bfatalError\s*\(", content):
+            offenders.append("fatalError(")
+        if re.search(r"//\s*TODO\b", content):
+            offenders.append("// TODO")
+        if offenders:
+            results.append(_ok(
+                "composition_root_clean", False,
+                f"CompositionRoot.swift contains {', '.join(offenders)} — production path must be filled",
+            ))
+        else:
+            results.append(_ok("composition_root_clean", True, "no fatalError/TODO"))
+    else:
+        results.append(_ok(
+            "composition_root_clean", True,
+            "CompositionRoot.swift absent (legacy build — skipping)",
+            skipped=True,
+        ))
+    return results
 
 
 def check_sandbox_clean(proj: Path, app: str, state: dict) -> list[dict]:
@@ -578,22 +1132,34 @@ GATE_CHECKS: dict[str, Any] = {
     "contracts_snapshot_saved": check_contracts_snapshot_saved,
     "backend_required_consistent": check_backend_required_consistent,
     "codex_review_acceptable": check_codex_review_acceptable,
+    "architecture_peer_review_acceptable": check_architecture_peer_review_acceptable,
+    "ios_capability_safe": check_ios_capability_safe,
+    "app_intent_declared": check_app_intent_declared,
+    "intent_anchors_in_ui": check_intent_anchors_in_ui,
     # Gate 2→3
     "design_spec_sections_complete": check_design_spec_sections_complete,
     "design_assets_exist_or_fallback": check_design_assets_exist_or_fallback,
+    "design_spec_json_valid": check_design_spec_json_valid,
     # Gate 3→4
     "xcodeproj_exists": check_xcodeproj_exists,
     "privacy_manifest_exists": check_privacy_manifest_exists,
     "entitlements_exists": check_entitlements_exists,
     "gitignore_exists": check_gitignore_exists,
+    "scaffold_build_succeeded": check_scaffold_build_succeeded,
     # Gate 4→5
     "views_exist": check_views_exist,
     "services_exist": check_services_exist,
     "models_checksum_matches": check_models_checksum_matches,
     "backend_artifacts_exist_if_required": check_backend_artifacts_exist_if_required,
+    "composition_seam_intact": check_composition_seam_intact,
     # Gate 5→6
     "build_succeeded": check_build_succeeded,
+    "peer_review_acceptable": check_peer_review_acceptable,
+    "axiom_critical_audit_acceptable": check_axiom_critical_audit_acceptable,
     "app_uses_real_repositories": check_app_uses_real_repositories,
+    "runtime_smoke": check_runtime_smoke,
+    "visual_contract": check_visual_contract,
+    "metadata_readiness": check_metadata_readiness,
     "service_stubs_preserved": check_service_stubs_preserved,
     # Gate 6→7
     "deployment_attempt_recorded": check_deployment_attempt_recorded,
@@ -826,7 +1392,7 @@ def cmd_run_gate(args: argparse.Namespace) -> int:
 
 _DECLARATIVE_TYPES = {
     "file_exists", "dir_exists", "dir_has_swift", "file_grep",
-    "command_success", "state_field_eq", "all",
+    "command_success", "state_field_eq", "state_field_contains", "all",
 }
 
 

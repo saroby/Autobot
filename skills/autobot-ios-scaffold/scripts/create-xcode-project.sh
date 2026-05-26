@@ -214,41 +214,100 @@ cat > "${SOURCES_DIR}/${APP_NAME}.entitlements" << 'ENT_EOF'
 ENT_EOF
 fi
 
-# Create App Entry Point (이미 존재하면 건너뛰기 — 에이전트 산출물 보호)
+# Composition seam (AppEntry → CompositionRoot → RootView)
+# Phase 4 ui-builder fills RootView body; quality-engineer wires real Services in CompositionRoot.
+# These three files are the SEAM — `composition_seam_intact` gate (Gate 4→5) checks
+# @main uniqueness here and ServiceStubs presence below.
+
 if [ ! -f "${SOURCES_DIR}/App/${APP_NAME}App.swift" ]; then
 cat > "${SOURCES_DIR}/App/${APP_NAME}App.swift" << SWIFT_EOF
+// AppEntry — single @main for the app. Do not duplicate this annotation
+// elsewhere; the composition seam check (Gate 4→5) enforces uniqueness.
 import SwiftUI
-import SwiftData
 
 @main
 struct ${APP_NAME}App: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            CompositionRoot()
         }
     }
 }
 SWIFT_EOF
 fi
 
-# Create ContentView placeholder (이미 존재하면 건너뛰기)
-if [ ! -f "${SOURCES_DIR}/Views/Screens/ContentView.swift" ]; then
-cat > "${SOURCES_DIR}/Views/Screens/ContentView.swift" << SWIFT_EOF
+if [ ! -f "${SOURCES_DIR}/App/CompositionRoot.swift" ]; then
+cat > "${SOURCES_DIR}/App/CompositionRoot.swift" << SWIFT_EOF
+// CompositionRoot — assembles ModelContainer + real services for production.
+// Only quality-engineer (Phase 5) edits the production wiring here.
+// ui-builder (Phase 4) does NOT modify this file — fill RootView instead.
+import SwiftUI
+import SwiftData
+
+struct CompositionRoot: View {
+    // ui-builder may keep this as a thin wrapper over RootView.
+    var body: some View {
+        RootView()
+            // Production ModelContainer is injected by quality-engineer in Phase 5:
+            // .modelContainer(for: [/* models from Models/ */])
+    }
+}
+
+#Preview {
+    CompositionRoot()
+}
+SWIFT_EOF
+fi
+
+if [ ! -f "${SOURCES_DIR}/App/ServiceStubs.swift" ]; then
+cat > "${SOURCES_DIR}/App/ServiceStubs.swift" << SWIFT_EOF
+// ServiceStubs — Preview-only mock implementations of the protocols declared
+// in Models/ServiceProtocols.swift. ui-builder (Phase 4) populates these so
+// that #Preview blocks render without a real ModelContainer. Phase 5 keeps
+// this file intact — production wiring goes into CompositionRoot.
+//
+// Do NOT delete this file. Gate 5→6 service_stubs_preserved check enforces it.
+import Foundation
+
+// Add per-protocol stubs as ui-builder produces ViewModels that need Previews.
+SWIFT_EOF
+fi
+
+if [ ! -f "${SOURCES_DIR}/Views/Screens/RootView.swift" ]; then
+cat > "${SOURCES_DIR}/Views/Screens/RootView.swift" << SWIFT_EOF
+// RootView — the first screen the user sees. ui-builder fills the body
+// following .autobot/architecture.md (## Screens / ## Navigation Structure).
+// The .accessibilityIdentifier("autobot.root") below is REQUIRED:
+// Gate 4→5 (intent_anchors_in_ui) and Phase 5 runtime_smoke both look for it.
 import SwiftUI
 
-struct ContentView: View {
+struct RootView: View {
     var body: some View {
         NavigationStack {
             Text("${APP_NAME}")
                 .font(.largeTitle)
                 .navigationTitle("Home")
+                .accessibilityIdentifier("autobot.primaryTitle")
         }
+        .accessibilityIdentifier("autobot.root")
     }
 }
 
 #Preview {
-    ContentView()
+    RootView()
 }
+SWIFT_EOF
+fi
+
+# Backwards compat — keep ContentView.swift creation but as a thin alias when
+# legacy code or older agents reference it.
+if [ ! -f "${SOURCES_DIR}/Views/Screens/ContentView.swift" ]; then
+cat > "${SOURCES_DIR}/Views/Screens/ContentView.swift" << SWIFT_EOF
+// Legacy alias — RootView is the canonical entrypoint. Kept so older
+// references compile; ui-builder may remove this once unused.
+import SwiftUI
+
+typealias ContentView = RootView
 SWIFT_EOF
 fi
 

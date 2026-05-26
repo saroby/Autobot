@@ -93,7 +93,7 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 - **Gate 2→3**: Stitch 성공 여부와 무관하게 design-spec 룩앤필 계약이 있고, primary 경로에서는 designs 산출물이 있는지 검증
 - **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증
 - **Gate 4→5**: Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건
-- **Gate 5→6**: 빌드 성공, 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)
+- **Gate 5→6**: 빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)
 - **Gate 6→7**: 배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행 (soft gate)
 <!-- AUTOBOT_GATE_SUMMARY:END -->
 
@@ -104,6 +104,23 @@ Gate 실패 시 자동 재시도(최대 2회), 반복 실패 시 Phase 7(회고)
 - `spec/pipeline.json`이 Phase, Gate, retry, log event, file ownership의 단일 기준입니다. README와 orchestrator 문서의 표도 이 스펙에서 렌더링해 drift를 검출합니다.
 - `advance-phase`는 Gate 실행 결과와 Phase 상태 변경을 하나의 atomic mutation으로 기록합니다. transition이 거부되면 gate evidence와 build-log 모두 남기지 않습니다.
 - `learning_applied` 이벤트는 build-log와 Phase별 consumed 목록을 함께 갱신합니다. 회고 기반 자기 개선이 말뿐인 메모가 아니라 검증 가능한 상태로 남습니다.
+
+### Axiom 통합 (선택)
+
+[Axiom 플러그인](https://github.com/CharlesWiltgen/Axiom)이 설치되어 있으면 Autobot이 두 지점에서 자동으로 호출합니다 (미설치 환경에서는 silent skip — 단독 동작 보장):
+
+- **Phase 5 / Gate 5→6 — Critical Audit**: 빌드 통과 직후 `axiom:concurrency-auditor` · `axiom:swiftdata-auditor` · `axiom:memory-auditor` · `axiom:swiftui-architecture-auditor` 4개를 병렬 dispatch. 빌드는 통과하지만 런타임에서 깨지는 4개 클래스 (Swift 6 data race, SwiftData 스키마 손실, 누수, SwiftUI 구조 위반) 를 잡아 Step 3 Build-Fix Loop 의 다음 배치로 흘려 보냅니다. critical 0건이어야 Gate 5→6 통과.
+- **Phase 7 — Health-Check**: `axiom:health-check` 1회 dispatch. 결과를 `build-report.md` 의 `## Axiom Health-Check` 섹션 + `learnings.json` 의 `patterns.axiom_findings` 에 누적해 다음 빌드의 Phase-0 learning bootstrap 이 흡수합니다. 회고는 절대 막지 않습니다.
+
+호출 규칙·프롬프트·결과 기록 위치 SSOT 는 `skills/autobot-axiom-bridge/SKILL.md`. 감지는 `scripts/detect-axiom.sh` (exit 0 = 설치됨, 1 = 미설치).
+
+### Peer Review Bridge
+
+Autobot 실행 위치가 Codex면 Claude, Claude면 Codex를 리뷰어로 사용합니다. 도구가 없으면 `skipped`로 명시 기록하고 계속 진행합니다.
+
+- 감지: `scripts/detect-peer-ai.sh`
+- 실행 규칙: `skills/autobot-peer-review-bridge/SKILL.md`
+- Gate 5→6: `phases.5.metadata.peerReview.verdict ∈ {PASS, skipped}` 이어야 통과
 
 ### 병렬 에이전트 격리
 
@@ -149,6 +166,7 @@ architect → Models/ServiceProtocols.swift (인터페이스 정의)
 | 플러그인 | 활용 | Fallback |
 |----------|------|----------|
 | **Axiom** | iOS 전문 스킬 (ios-ui, ios-data, ios-build 등) | 내장 iOS 지식 |
+| **Peer AI** | Codex-host는 Claude, Claude-host는 Codex 리뷰 | 명시적 skip 기록 |
 | **Serena** | 시맨틱 코딩 — 심볼 기반 편집, 리팩토링 | 일반 Edit 도구 |
 | **context7** | 최신 라이브러리/프레임워크 문서 조회 | 학습 데이터 |
 
@@ -203,6 +221,8 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   │   └── references/
 │   │       ├── wiring-patterns.md
 │   │       └── build-error-catalog.md
+│   ├── autobot-peer-review-bridge/     # Codex-host는 Claude, Claude-host는 Codex 리뷰
+│   │   └── SKILL.md
 │   ├── autobot-register-app/           # Phase 6/1 ASC 앱 등록 (멱등, 자동 호출; 단독 실행도 가능)
 │   │   ├── SKILL.md
 │   │   └── scripts/register-app.sh
@@ -244,6 +264,7 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
     ├── sandbox_runner.py               # spec.fileOwnership 기반 파일 소유권 enforcement
     ├── snapshot_runner.py              # spec.fileOwnership 기반 phase별 snapshot save/restore
     ├── detect-plugins.sh               # 플러그인/도구 감지
+    ├── detect-peer-ai.sh               # 현재 host와 opposite peer reviewer 감지
     ├── load-learnings.sh               # SessionStart 요약 (학습 데이터 + 빌드 상태)
     ├── render-active-learnings.py      # active/phase learnings 렌더링
     ├── snapshot-contracts.sh           # Models/ snapshot 진입점 (Phase-level은 snapshot_runner.py로 위임)

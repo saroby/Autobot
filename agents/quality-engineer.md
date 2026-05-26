@@ -19,6 +19,8 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 2. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/build-testing.md` — 빌드 실패 분류표(에러 메시지 → 도메인 매핑), 환경 체크리스트, Swift Testing 표준 패턴, UI 테스트 sleep 금지, .xcresult 추출 명령. Step 3 (Build-Fix Loop) 시 *코드 수정 전에* 환경 체크리스트 5항목 먼저 실행. Step 5 (Test 작성) 의 모든 신규 테스트는 Swift Testing (`@Test`, `#expect`). Phase 5 완료 직전 9개 자가 체크리스트 모두 통과.
 3. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/data-concurrency.md` — Sendable / @MainActor 위반은 빌드 통과해도 *런타임 크래시*. 컴파일러 경고를 에러로 취급. `@unchecked Sendable` / `nonisolated(unsafe)` / `try?` / `try!` 신규 0건 확인.
 4. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/swiftui.md` — UI 회귀 grep 체크 7항목 (`@State var` private 누락, `ObservableObject`, `NavigationView(`, body 안 무거운 작업 등) Phase 5 에서 재검증.
+5. `$CLAUDE_PLUGIN_ROOT/skills/autobot-axiom-bridge/SKILL.md` — Step 7 (Axiom Critical Audit) 의 호출 규칙·dispatch 패턴·soft-skip 계약. 빌드가 통과한 직후, Gate 5→6 기록 전에 Mode 1 을 반드시 시도한다 (Axiom 미설치면 자동 통과).
+6. `$CLAUDE_PLUGIN_ROOT/skills/autobot-peer-review-bridge/SKILL.md` — host 가 Codex면 Claude, host 가 Claude면 Codex 에게 Phase 5 산출물을 리뷰시킨다. peer 도구 부재는 soft skip 이지만 `phases.5.metadata.peerReview` 기록은 필수다.
 
 **FIRST: Read the integration-build skill** for the complete workflow, error diagnosis decision tree, and build-fix loop strategy:
 ```
@@ -39,6 +41,9 @@ Follow the skill's Step 0~6 in exact order. The skill contains:
 - `ServiceStubs.swift`는 삭제하지 않는다 — Preview/테스트용으로 보존
 - 빌드 에러를 하나씩 고치지 말고, **먼저 분류**한 다음 근본 원인부터 수정한다
 - 5회 빌드 반복 후에도 실패하면 Phase 4 재생성을 권고한다
+- **Build-Fix Loop 는 spec `policies.buildFixLoop` 가 SSOT**. 각 attempt 후 xcodebuild stderr 를 `python3 $CLAUDE_PLUGIN_ROOT/scripts/error_signature.py record --phase 5 --stderr-file <log>` 로 기록한다. exit code 2 (signature 2회 반복 = breaker trip) 가 나오면 즉시 수정 시도를 중단하고 `snapshot-contracts.sh restore-phase --phase 4` 로 되돌린 뒤 동일 에러를 다시 만들지 않을 다른 전략으로 attempt 를 시작한다. 모든 attempt 는 `build_fix_attempt` 이벤트로 기록되어야 한다 (`scripts/build-log.sh --event build_fix_attempt --detail '{"attempt":N,"signature":"...","category":"..."}'`).
+- 빌드 통과 후 **반드시 Step 7 (Axiom Critical Audit) 을 시도**한다. Axiom 미설치는 silent skip — 절차 자체는 건너뛰지 않는다. critical 발견 시 `build_succeeded` 기록 전에 fix 루프로 복귀한다.
+- Axiom 이후 **반드시 Peer Review Bridge 를 시도**한다. Codex-hosted run 은 Claude, Claude-hosted run 은 Codex 를 사용한다. `PASS` 또는 `skipped` 를 `phases.5.metadata.peerReview` 에 기록하기 전에는 Gate 5→6 로 가지 않는다.
 - **탭바 ↔ 콘텐츠 겹침 회귀 방지** (과거 재발 2회): Gate 4→5 의 `no_tabbar_safearea_smells` 체크가 실패하거나, Views 검토 중 `.ignoresSafeArea(... .bottom)` / `.ignoresSafeArea(.all)` / `.padding(.bottom, ≥40)` 가 보이면 즉시 `references/ios-ux-style.md` 의 *Tab Bar 와 콘텐츠 겹침 방지* 규칙에 따라 `.safeAreaInset(edge: .bottom)` 으로 교체한다. 위반을 무시한 채 빌드만 통과시키지 않는다.
 
 **Quality Standards:**

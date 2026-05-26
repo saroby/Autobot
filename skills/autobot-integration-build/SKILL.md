@@ -147,7 +147,31 @@ print('generic/platform=iOS Simulator')
 ")
 xcodebuild -project *.xcodeproj -scheme <scheme> \
   -destination "$SIM_DEST" \
-  build 2>&1 | tail -50
+  build 2>&1 | tee /tmp/xcb-attempt-${ATTEMPT}.log | tail -50
+```
+
+### Error Signature 기록 (필수, 매 attempt 후)
+
+빌드가 실패한 직후 stderr 를 `error_signature.py` 로 정규화해 누적한다. 같은 시그니처가 spec `policies.circuitBreaker.errorSignatureRepeat.maxRepeats` (기본 2) 만큼 반복되면 breaker 가 트립되어 더 이상 동일 에러를 고치지 않는다 — 시간 낭비 방지.
+
+```bash
+SIGNATURE_RESULT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/error_signature.py" \
+  record --phase 5 --stderr-file /tmp/xcb-attempt-${ATTEMPT}.log)
+echo "$SIGNATURE_RESULT"  # {"tripped":true|false,"occurrences":N,"hash":"..."}
+
+# 매 attempt 를 이벤트로도 남긴다 (run-summary 가 사용)
+HASH=$(echo "$SIGNATURE_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['hash'])")
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
+  --phase 5 --event build_fix_attempt \
+  --detail "{\"attempt\":${ATTEMPT},\"signature\":\"${HASH}\",\"category\":\"<A|B|C|D|E>\"}"
+
+# breaker 가 트립되면 더 고치지 말고 Phase 4 스냅샷으로 복원
+if echo "$SIGNATURE_RESULT" | grep -q '"tripped":true'; then
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore-phase --phase 4 --app-name "<AppName>"
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_fix_loop_exhausted \
+    --detail "{\"attempts\":${ATTEMPT},\"lastSignature\":\"${HASH}\",\"abortStrategy\":\"snapshot_restore_then_handoff\"}"
+  exit 1
+fi
 ```
 
 ### 에러 진단 의사결정 트리
@@ -286,6 +310,40 @@ struct ItemTests {
 | 모든 파일에 적절한 import | 빌드 성공으로 검증됨 |
 | Swift 6 concurrency 위반 없음 | 빌드 경고 메시지 확인 |
 
+## Step 7: Axiom Critical Audit (선택, soft-skip)
+
+빌드가 통과하고 Step 6의 grep 체크가 끝났으면, `autobot-axiom-bridge` 스킬의 **Mode 1 (Gate-5 Critical Audit)** 을 실행한다. Axiom 플러그인이 설치되어 있을 때만 동작하며, 미설치 환경에서는 한 줄 로그만 남기고 즉시 통과한다.
+
+```bash
+Read $CLAUDE_PLUGIN_ROOT/skills/autobot-axiom-bridge/SKILL.md
+```
+
+목적:
+- Swift 6 data race / SwiftData 스키마 실수 / 메모리 누수 / SwiftUI 구조 위반처럼 **빌드는 통과하지만 런타임에서 깨지는 4개 클래스**를 한 번에 잡는다.
+- 발견된 critical 항목은 Step 3 (Build-Fix Loop) 의 다음 배치로 처리해 수정 → 재빌드 → critical 항목만 재감사 사이클을 돌린다.
+- `phases.5.metadata.axiom_critical_audit` 에 결과를 기록 (`ran`, `auditors`, `critical_count`, `findings_path`).
+
+호출 규칙은 bridge 스킬에 SSOT 로 정리되어 있다. 이 스킬에서는 다음만 기억한다:
+
+- Axiom 부재 → soft skip, Gate 5→6 통과에 영향 없음.
+- critical 0건 → Gate 5→6 진행.
+- critical > 0 → `build_succeeded` 플래그를 켜기 전에 Step 3 로 돌아가 fix_hint 를 따라 수정. 5회 한계 도달 시 회고로 우회.
+
+## Step 8: Opposite-Runtime Peer Review (필수 시도, soft-skip)
+
+빌드와 Axiom critical audit 이 통과했으면 `autobot-peer-review-bridge` 스킬을 실행한다. 현재 실행 위치가 Codex면 Claude에게, Claude면 Codex에게 Phase 5 산출물을 리뷰시킨다.
+
+```bash
+Read $CLAUDE_PLUGIN_ROOT/skills/autobot-peer-review-bridge/SKILL.md
+```
+
+기록 규칙:
+
+- `phases.5.metadata.peerReview.verdict == "PASS"` → Gate 5→6 진행.
+- peer 도구 부재/호출 실패 → `verdict="skipped"` 와 `skipReason` 기록 후 진행.
+- `verdict == "FAIL"` → `blockingFindings` 를 Step 3 Build-Fix Loop 의 다음 에러 배치로 처리한다.
+- 누락은 실패다. Gate 5→6 의 `peer_review_acceptable` 체크가 `peerReview` 기록을 강제한다.
+
 ## Gate 5→6 통과 조건
 
 빌드 성공만으로는 부족하다. 다음 모두 충족해야 한다:
@@ -306,6 +364,12 @@ test -f <AppName>/App/ServiceStubs.swift
 test -f <AppName>/PrivacyInfo.xcprivacy
 
 # 5. (조건부) Docker 검증 통과
+
+# 6. Axiom critical audit — Axiom 미설치면 자동 통과, 설치돼 있으면 critical 0건
+#    (Step 7 에서 기록한 phases.5.metadata.axiom_critical_audit 를 신뢰)
+
+# 7. Opposite-runtime peer review — peer 미설치면 skipped 기록으로 통과
+#    (Step 8 에서 기록한 phases.5.metadata.peerReview 를 Gate 가 검사)
 ```
 
 ## Phase 4 재생성 판단 기준

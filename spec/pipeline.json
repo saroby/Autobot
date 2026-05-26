@@ -69,9 +69,60 @@
     "circuitBreaker": {
       "maxConsecutivePhaseFailures": 3,
       "scope": "global",
-      "onTrip": "skipToRetrospective"
+      "onTrip": "skipToRetrospective",
+      "errorSignatureRepeat": {
+        "enabled": true,
+        "maxRepeats": 2,
+        "scope": "phase",
+        "normalize": {
+          "stripPaths": true,
+          "stripLineNumbers": true,
+          "stripTimestamps": true,
+          "stripHexAddresses": true,
+          "preserveErrorCode": true,
+          "preserveErrorCategory": true
+        }
+      }
+    },
+    "buildFixLoop": {
+      "enabled": true,
+      "appliesTo": ["5"],
+      "maxAttempts": 4,
+      "checkpoint": {
+        "saveBeforeFirstAttempt": true,
+        "saveAfterEachAttempt": true,
+        "rollbackOnSignatureRepeat": true
+      },
+      "errorCategories": [
+        "swift_syntax_or_type",
+        "missing_file_or_target",
+        "duplicate_symbol",
+        "project_setting",
+        "signing_or_entitlement",
+        "spm_or_package",
+        "linker",
+        "macro_expansion",
+        "unknown"
+      ],
+      "diffCapBytes": 20480,
+      "abortOnSignatureRepeat": true,
+      "abortStrategy": "snapshot_restore_then_handoff"
+    },
+    "peerArchitectureReview": {
+      "enabled": true,
+      "maxAttempts": 2,
+      "excludeFromCircuitBreaker": true,
+      "skipReasons": [
+        "peer_cli_unavailable",
+        "peer_invocation_failed",
+        "peer_timeout",
+        "review_explicitly_disabled",
+        "codex_cli_unavailable"
+      ]
     },
     "codexArchitectureReview": {
+      "deprecated": true,
+      "supersededBy": "peerArchitectureReview",
       "enabled": true,
       "maxAttempts": 2,
       "excludeFromCircuitBreaker": true,
@@ -350,6 +401,8 @@
       }
     },
     "codex_review": {
+      "deprecated": true,
+      "supersededBy": "peer_review",
       "required": [
         "phase",
         "detail"
@@ -375,6 +428,178 @@
             "type": "integer"
           },
           "skipReason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "peer_review": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "host",
+          "peer",
+          "verdict"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "peer": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "blockingFindingsCount": {
+            "type": "integer"
+          },
+          "skipReason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "axiom_audit_skipped": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "detail"
+      ],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "axiom_audit_completed": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "mode",
+          "criticalCount"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "criticalCount": {
+            "type": "integer"
+          },
+          "warningCount": {
+            "type": "integer"
+          },
+          "auditors": {
+            "type": "array"
+          },
+          "findingsPath": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "circuit_breaker_triggered": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "repeatCount": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "build_fix_attempt": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "attempt",
+          "signature",
+          "category"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "diffBytes": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "build_fix_loop_exhausted": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "attempts",
+          "lastSignature"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer"
+          },
+          "lastSignature": {
+            "type": "string"
+          },
+          "lastCategory": {
+            "type": "string"
+          },
+          "abortStrategy": {
             "type": "string"
           }
         }
@@ -729,8 +954,18 @@
         },
         {
           "type": "procedural",
-          "name": "codex_review_acceptable",
-          "label": "codex_review_acceptable"
+          "name": "architecture_peer_review_acceptable",
+          "label": "architecture_peer_review_acceptable"
+        },
+        {
+          "type": "procedural",
+          "name": "ios_capability_safe",
+          "label": "ios_capability_safe"
+        },
+        {
+          "type": "procedural",
+          "name": "app_intent_declared",
+          "label": "app_intent_declared"
         },
         {
           "type": "state_field_contains",
@@ -764,6 +999,11 @@
           "type": "procedural",
           "name": "design_assets_exist_or_fallback",
           "label": "design_assets_exist_or_fallback"
+        },
+        {
+          "type": "procedural",
+          "name": "design_spec_json_valid",
+          "label": "design_spec_json_valid"
         }
       ]
     },
@@ -793,6 +1033,11 @@
           "type": "procedural",
           "name": "gitignore_exists",
           "label": "gitignore_exists"
+        },
+        {
+          "type": "procedural",
+          "name": "scaffold_build_succeeded",
+          "label": "scaffold_build_succeeded"
         }
       ]
     },
@@ -834,6 +1079,16 @@
           "label": "no_tabbar_safearea_smells"
         },
         {
+          "type": "procedural",
+          "name": "composition_seam_intact",
+          "label": "composition_seam_intact"
+        },
+        {
+          "type": "procedural",
+          "name": "intent_anchors_in_ui",
+          "label": "intent_anchors_in_ui"
+        },
+        {
           "type": "state_field_contains",
           "label": "phase4_agents_consumed_learnings",
           "field": "phases.4.learningsConsumed",
@@ -849,8 +1104,8 @@
       "fromPhase": "5",
       "toPhase": "6",
       "soft": false,
-      "summary": "The app builds successfully and runtime wiring uses real repositories.",
-      "docsSummary": "빌드 성공, 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)",
+      "summary": "The app builds successfully, receives opposite-runtime peer review, passes Axiom critical audit (when installed), and runtime wiring uses real repositories.",
+      "docsSummary": "빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)",
       "checks": [
         {
           "type": "state_field_eq",
@@ -861,6 +1116,16 @@
         },
         {
           "type": "procedural",
+          "name": "peer_review_acceptable",
+          "label": "peer_review_acceptable"
+        },
+        {
+          "type": "procedural",
+          "name": "axiom_critical_audit_acceptable",
+          "label": "axiom_critical_audit_acceptable"
+        },
+        {
+          "type": "procedural",
           "name": "app_uses_real_repositories",
           "label": "app_uses_real_repositories"
         },
@@ -868,6 +1133,21 @@
           "type": "file_exists",
           "path": "{appName}/App/ServiceStubs.swift",
           "label": "service_stubs_preserved"
+        },
+        {
+          "type": "procedural",
+          "name": "runtime_smoke",
+          "label": "runtime_smoke"
+        },
+        {
+          "type": "procedural",
+          "name": "visual_contract",
+          "label": "visual_contract"
+        },
+        {
+          "type": "procedural",
+          "name": "metadata_readiness",
+          "label": "metadata_readiness"
         },
         {
           "type": "state_field_contains",

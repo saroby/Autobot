@@ -111,6 +111,57 @@ Phase 0에서 `.autobot/learnings.json`을 읽고:
 
 `learnings.json` 업데이트 후 다음 세션에서 바로 사용할 수 있도록 `.autobot/active-learnings.md`와 `.autobot/phase-learnings/*.md` 압축본도 재생성한다. 이 파일들은 SessionStart 훅과 build/resume Phase 0의 1차 입력이다.
 
+## Axiom Health-Check 통합 (선택, soft-skip)
+
+Phase 7 의 **데이터 수집 단계 중간**에 Axiom 의 전체 health-check 를 1회 실행해 회고 데이터의 폭을 넓힌다. Phase 5 Critical Audit 와 달리 **절대 빌드를 막지 않는다** — Phase 7 은 학습용이지 게이트가 아니다.
+
+호출 규칙·프롬프트·결과 기록 위치는 `autobot-axiom-bridge` 스킬의 **Mode 2 (Phase-7 Health-Check)** 에 SSOT 로 있다:
+
+```bash
+Read $CLAUDE_PLUGIN_ROOT/skills/autobot-axiom-bridge/SKILL.md
+```
+
+이 스킬에서 추가로 기억할 것:
+
+1. Axiom 부재 → 한 줄 로그(`axiom_audit_skipped`)만 남기고 회고 진행.
+2. `axiom:health-check` 에이전트 단일 dispatch (개별 auditor 호출 X — 중복 비용).
+3. 결과를 `learnings.json` → `patterns.axiom_findings[rule].frequency` 에 누적. 키 스키마는 `patterns.common_build_errors` 와 동일하게 유지해 Phase 0 의 learning bootstrap 이 별도 코드 없이 흡수한다.
+4. `phases.7.metadata.axiom_health_check` 에 `{ran, findings_path, summary_path}` 기록.
+5. executive summary 는 `build-report.md` 의 `## Axiom Health-Check` 섹션으로 첨부.
+
+### Phase 7 closing steps (필수, 순서대로)
+
+회고 본문 작성과 `learnings.json` 갱신이 끝났다면 — **Phase 7 self-check 직전** — 아래 두 호출을 차례로 실행한다. 이 단계가 빠지면 다음 빌드의 `Phase 0` 이 효과 없는 learning 을 그대로 다시 적용하고, 운영자는 무슨 일이 있었는지 알 수 없게 된다.
+
+```bash
+# (a) Learning effect 채점: phase 별 status / breaker / build-fix attempts 를 보고
+#     learnings.json 의 effect_score 누적. hurt 누적 시 자동 quarantine.
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" grade-learnings \
+  --build-id "$(python3 -c "import json; print(json.load(open('.autobot/build-state.json'))['buildId'])")"
+
+# (b) Run summary 생성: artifacts/<buildId>/run-summary.{json,md} + latest 심볼릭.
+#     성공/실패 모든 run 에서 호출. /autobot:resume 안내가 footer 에 자동 들어간다.
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" write-run-summary
+```
+
+`grade-learnings` 의 출력 (`{"updated": N, "summaries": [...]}`) 을 build-report.md 의 `## Learning Impact` 섹션에 그대로 첨부한다. quarantined 가 발생했다면 `## Quarantined Learnings` 섹션도 추가한다 (`pipeline.sh grade-learnings` 출력의 negative effect_score 항목들).
+
+### Phase 7 self-check (필수)
+
+회고 종료 직전 — Phase 7 status 를 `completed` 로 마킹하기 전에 — 아래 검증 스크립트를 실행해 Axiom 호출 (또는 명시적 skip) 이 기록됐는지 확인한다. Phase 7 은 게이트가 없으므로 이 self-check 가 유일한 강제 지점이다.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify-phase7-axiom.py" "$PROJECT_DIR" || {
+  echo "Phase 7 self-check failed — Axiom Mode 2 가 호출되지 않았거나 skip 이벤트가 누락"
+  exit 1
+}
+```
+
+통과 조건:
+- `environment.axiom == false` → build-log.jsonl 에 `phase=7` 의 `axiom_audit_skipped` 이벤트 ≥ 1개
+- `environment.axiom == true` → `phases.7.metadata.axiom_health_check.ran == true` 이고 `findings_path` (있으면) 실제 파일 존재
+
 ## Additional Resources
 
 - **`references/learning-schema.md`** — learnings.json 전체 스키마, 예시, 업데이트 규칙
+- **`$CLAUDE_PLUGIN_ROOT/skills/autobot-axiom-bridge/SKILL.md`** — Axiom 호출 규칙 SSOT (Mode 1 = Phase 5 critical, Mode 2 = Phase 7 health-check)
