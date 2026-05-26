@@ -70,8 +70,14 @@ class IsolatedProjectCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         result = run_pipeline(
             "record-environment",
-            "--xcodegen", "true", "--fastlane", "false",
-            "--ascConfigured", "false", "--axiom", "false", "--stitch", "false",
+            "--xcodegen", "true",
+            "--fastlane", "false",
+            "--ascConfigured", "false",
+            "--axiom", "false",
+            "--stitch", "false",
+            "--runtimeHost", "codex",
+            "--peerAi", "claude",
+            "--peerReviewAvailable", "false",
             project_dir=self.project_dir,
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)

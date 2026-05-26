@@ -113,7 +113,10 @@ def record_environment(args: argparse.Namespace) -> int:
     state_path = state_file_from_args(args)
 
     updates: dict[str, Any] = {}
-    known_keys = ["xcodegen", "fastlane", "ascConfigured", "axiom", "stitch"]
+    known_keys = [
+        "xcodegen", "fastlane", "ascConfigured", "axiom", "stitch",
+        "runtimeHost", "peerAi", "peerReviewAvailable",
+    ]
     for key in known_keys:
         value = getattr(args, key)
         if value is not None:
@@ -427,6 +430,9 @@ def build_parser() -> argparse.ArgumentParser:
     environment.add_argument("--ascConfigured")
     environment.add_argument("--axiom")
     environment.add_argument("--stitch")
+    environment.add_argument("--runtimeHost")
+    environment.add_argument("--peerAi")
+    environment.add_argument("--peerReviewAvailable")
     environment.add_argument("--field", action="append", default=[], metavar="KEY=VALUE")
     environment.set_defaults(func=record_environment)
 
