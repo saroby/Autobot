@@ -48,3 +48,34 @@
 - [x] circuit breaker가 runtime의 transition validator에서 enforce (global scope)
 - [x] runtime.py 분리 완료. 1225L → 66L facade + 6개 모듈 (spec_loader/state_store/event_log/transitions/gate_persistence/cli). BC 호환을 위해 runtime.py가 외부 import 표면을 re-export
 - [x] verify_spec_docs.py 모든 카테고리 PASS, render_pipeline_docs.py --check 통과
+
+---
+
+# v0.5.0 사이클 — declarative gate + axiom/peer bridge 정착
+
+목적: Phase 5/Gate 5→6 에서 빌드는 통과하지만 런타임에서 깨지는 결함(Swift 6 data race, SwiftData 손실, 누수, SwiftUI 구조) 을 차단. 자기개선 루프의 마지막 마디(학습 효과 점수화 + 컨텍스트 팩) 도입.
+
+## 작업 결과 (커밋 분할)
+
+- [x] C1 — `feat(env)`: record-environment 에 runtimeHost / peerAi / peerReviewAvailable 3 필드 추가 (cli/state_store/conftest)
+- [x] C2 — `feat(tools)`: 신규 헬퍼 모듈 14개 + 회귀 테스트 9종 + hooks/sandbox-pre-write.sh
+- [x] C3 — `feat(bridge)`: detect-axiom.sh / detect-peer-ai.sh + autobot-axiom-bridge / autobot-peer-review-bridge SKILL.md
+- [x] C4 — `feat(v0.5.0)`: declarative gate 확장(+620 in gate_runner) + spec(+290) + agent/command/orchestrator/integration/scaffold/retrospective SSOT 위임 + test_peer_review_bridge / test_axiom_and_peer_strict
+- [x] C5 — `chore`: CHANGELOG [0.5.0] + plugin.json 0.4.0→0.5.0
+- [x] C6 — `feat(hooks)`: PreToolUse sandbox-pre-write 정식 등록
+
+## 성공 기준 (DoD)
+
+- [x] 회귀 슈트 148/148 PASS — 각 토픽 커밋 직후 stash 격리로 검증
+- [x] CHANGELOG [0.5.0] — 신규 모듈 14개, 회귀 테스트 11종, 거대 리팩토링, 핵심 변경 7항목 모두 기록
+- [x] plugin.json version 0.5.0 으로 bump
+- [x] hooks/sandbox-pre-write.sh 활성화 — 마커 없을 때 no-op + 마커 있을 때 broad-access 동작 검증
+- [ ] smoke e2e 도입 — 단위로 못 잡는 회귀(실제 simulator 부팅, xclog 캡처, ASC 자격 검증) 보호
+- [ ] Pillow API: getdata() → get_flattened_data() — visual_contract.py:89 DeprecationWarning 제거 (Pillow 14 / 2027-10-15 제거 예정)
+
+## 후속 사이클 후보
+
+1. **smoke e2e CI** — nightly 로 "Hello World 앱 1개 build + simulator boot + xclog capture" 시나리오 자동 실행. 회귀 슈트가 잡지 못하는 Xcode 26 / iOS 26 시뮬레이터 회귀 보호.
+2. **declarative gate primitive 일반화** — gate_runner.py lazy import 라우팅을 spec 의 `gate.primitives` 등록표로 외부화하면 신규 primitive 추가 시 코드 변경 0.
+3. **learning effect_score 자동 회귀** — `learning_impact.py` 가 5빌드 이상 누적될 때 effect_score 분포를 기반으로 한 학습 제거 추천 기능.
+4. **peer-review verdict 캐싱** — 동일 input_hash 의 phase 재실행 시 peer-review 재호출 절약 (API/요금 비용 절감).
