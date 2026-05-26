@@ -2,6 +2,49 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [0.5.0] — 2026-05-26
+
+자기개선 루프의 마지막 마디를 닫고, Phase 5/Gate 5→6 에서 빌드는 통과하지만 런타임에서 깨지는 결함을 차단하는 릴리스. 신규 헬퍼 모듈 14개 + 회귀 테스트 11종 + declarative gate 확장 + agent/command/orchestrator 거대 리팩토링.
+
+### Added
+- **신규 헬퍼 모듈 14개** (`scripts/`) — gate descriptor 가 직접 호출하는 단일 책임 도구:
+  - `sandbox_guard.py` — agent file ownership 사전 차단
+  - `visual_contract.py` — 디자인 룩앤필 픽셀 비교 (Pillow)
+  - `sim_runtime.py` — 시뮬레이터 부팅 + smoke 실행
+  - `xcodebuild_runner.py` — xcodebuild 호출 + 에러 시그니처 추출
+  - `intent_spec.py` — 앱 의도 manifest 로드 + 미사용 앵커 탐지
+  - `input_hash.py` — 입력 해시 + phase skip 판정 (`/autobot:resume` 의존)
+  - `error_signature.py` — 빌드 에러 정규화 + 누적 (Build-Fix Loop 학습 입력)
+  - `metadata_validator.py` — App Store 메타데이터 길이/형식 검증
+  - `design_spec_validator.py` — design-spec 룩앤필 계약 검증/합성
+  - `learning_impact.py` — 학습 적용 효과 점수화 (effect_score 자동 갱신)
+  - `run_summary.py` — `artifacts/<buildId>/run-summary.{json,md}` 생성
+  - `context_pack.py` — phase/agent 별 컨텍스트 팩 빌드 (토큰 예산 인식)
+  - `env_snapshot.py` — capture/load/ensure/is-stale 환경 스냅샷
+  - `verify-phase7-axiom.py` — Phase 7 axiom health-check 결과 검증
+- **회귀 테스트 11종** — `test_sandbox_guard`, `test_visual_contract`, `test_intent_spec`, `test_input_hash`, `test_error_signature`, `test_design_spec_validator`, `test_learning_impact`, `test_run_summary`, `test_peer_review_bridge`, `test_axiom_and_peer_strict`. 회귀 슈트 148 → 148 통과 (이전 39 → 신규 109).
+- **Axiom / Peer Review Bridge SSOT** — `skills/autobot-axiom-bridge/SKILL.md` + `skills/autobot-peer-review-bridge/SKILL.md`. 호출 규칙·프롬프트·결과 기록 위치를 한 곳에 정리. 감지는 `scripts/detect-axiom.sh` / `scripts/detect-peer-ai.sh` (exit code 기반, silent skip 보장).
+- **record-environment 필드 확장** — `runtimeHost`, `peerAi`, `peerReviewAvailable` 3개 추가. peer-review 가용성을 build-state 에 명시 기록해 Gate 5→6 verdict 검증의 근거로 사용.
+- **`pipeline.sh` 신규 서브커맨드 8개** — `env-snapshot`, `write-run-summary`, `grade-learnings`, `input-hash`, `context-pack`, `error-signature`, `design-spec`, `sandbox`. 모든 신규 도구를 단일 진입점으로 노출.
+- **`hooks/sandbox-pre-write.sh`** — PreToolUse 활성화 후보. payload schema 검증 전까지는 hooks.json 미등록 (메모 보존).
+
+### Changed
+- **agent/command/orchestrator 거대 리팩토링 — SSOT 위임** — drift 표면 6→1:
+  - `agents/architect.md` -330 줄 (Design Direction 체크리스트 → references 위임)
+  - `commands/mvp.md` -450 줄 (Phase 단계 설명 → orchestrator SKILL 위임)
+  - `skills/autobot-orchestrator/SKILL.md` -380 줄 (spec/pipeline.json 으로 위임)
+  - `agents/quality-engineer.md` / `agents/ui-builder.md` — 신규 헬퍼 사용 의무 명시
+- **Gate 5→6 강화** — axiom critical-audit 통과 + peer-review verdict ∈ {PASS, skipped} 강제. 코드 변경: `spec/pipeline.json` (+290), `scripts/gate_runner.py` (+620 lazy import 라우팅), `scripts/phase_advance.py`.
+- **Phase 1 codex review verdict 강화** (`scripts/codex-architecture-review.sh`) — skipped 명시 기록, hardViolations 적재, max 2회 재실행.
+- **Phase 5 통합 빌드 SKILL** (`skills/autobot-integration-build/SKILL.md`) — error_signature 호출 + Build-Fix Loop 환경 우선 체크리스트 5항목 선행.
+- **Phase 7 회고 — axiom health-check 흡수** (`skills/autobot-retrospective/SKILL.md`) — `verify-phase7-axiom.py` 결과를 build-report.md / learnings.json 에 누적.
+- **Xcode 프로젝트 생성 강화** (`skills/autobot-ios-scaffold/scripts/create-xcode-project.sh`) — Export Compliance 자동 처리, privacy/entitlements 기본값 보정.
+- **README** — Axiom / Peer Review Bridge 섹션 신설, Phase 표 갱신.
+
+### Notes
+- 모든 신규 헬퍼는 lazy import — gate 미사용 경로에서 import 오버헤드 0.
+- 회귀 슈트는 stdlib only (`python3 -m unittest`) — pytest 의존성 없음.
+
 ## [0.4.0] — 2026-05-22
 
 ### Added
