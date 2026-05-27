@@ -31,6 +31,7 @@ def generate_pbxproj(
     bundle_id: str,
     deployment_target: str,
     team_id: str = "",
+    design_system_module: str = None,
 ) -> str:
     """Generate a complete project.pbxproj using Folder References."""
 
@@ -70,6 +71,11 @@ def generate_pbxproj(
     CONTAINER_PROXY    = uid("containerProxy")
     TARGET_DEPENDENCY  = uid("targetDependency")
 
+    # ── Design system SPM UUIDs (only used when design_system_module is set) ──
+    DS_PKG_REF        = uid(f"dsLocalPkgRef:{design_system_module}") if design_system_module else None
+    DS_PKG_DEP        = uid(f"dsPkgProductDep:{design_system_module}") if design_system_module else None
+    DS_BUILD_FILE     = uid(f"dsBuildFile:{design_system_module}") if design_system_module else None
+
     # ── Build the pbxproj string ──
     lines = []
     w = lines.append
@@ -82,6 +88,13 @@ def generate_pbxproj(
     w('\tobjectVersion = 77;')
     w('\tobjects = {')
     w('')
+
+    # ── PBXBuildFile (design system package product, if any) ──
+    if design_system_module:
+        w('/* Begin PBXBuildFile section */')
+        w(f'\t\t{DS_BUILD_FILE} = {{isa = PBXBuildFile; productRef = {DS_PKG_DEP}; }};')
+        w('/* End PBXBuildFile section */')
+        w('')
 
     # ── PBXContainerItemProxy ──
     w('/* Begin PBXContainerItemProxy section */')
@@ -123,6 +136,8 @@ def generate_pbxproj(
     w('\t\t\tisa = PBXFrameworksBuildPhase;')
     w('\t\t\tbuildActionMask = 2147483647;')
     w('\t\t\tfiles = (')
+    if design_system_module:
+        w(f'\t\t\t\t{DS_BUILD_FILE},')
     w('\t\t\t);')
     w('\t\t\trunOnlyForDeploymentPostprocessing = 0;')
     w('\t\t};')
@@ -178,6 +193,10 @@ def generate_pbxproj(
     w(f'\t\t\t\t{APP_FOLDER_REF},')
     w('\t\t\t);')
     w(f'\t\t\tname = "{app_name}";')
+    if design_system_module:
+        w('\t\t\tpackageProductDependencies = (')
+        w(f'\t\t\t\t{DS_PKG_DEP},')
+        w('\t\t\t);')
     w(f'\t\t\tproductName = "{app_name}";')
     w(f'\t\t\tproductReference = {APP_PRODUCT};')
     w('\t\t\tproductType = "com.apple.product-type.application";')
@@ -220,6 +239,10 @@ def generate_pbxproj(
     w('\t\t\t\tko,')
     w('\t\t\t);')
     w(f'\t\t\tmainGroup = {MAIN_GROUP};')
+    if design_system_module:
+        w('\t\t\tpackageReferences = (')
+        w(f'\t\t\t\t{DS_PKG_REF},')
+        w('\t\t\t);')
     w(f'\t\t\tproductRefGroup = {PRODUCTS_GROUP};')
     w('\t\t\tprojectDirPath = "";')
     w('\t\t\tprojectRoot = "";')
@@ -271,6 +294,25 @@ def generate_pbxproj(
     w('\t\t};')
     w('/* End PBXTargetDependency section */')
     w('')
+
+    # ── XCLocalSwiftPackageReference + XCSwiftPackageProductDependency ──
+    if design_system_module:
+        w('/* Begin XCLocalSwiftPackageReference section */')
+        w(f'\t\t{DS_PKG_REF} = {{')
+        w('\t\t\tisa = XCLocalSwiftPackageReference;')
+        w(f'\t\t\trelativePath = "Packages/{design_system_module}";')
+        w('\t\t};')
+        w('/* End XCLocalSwiftPackageReference section */')
+        w('')
+
+        w('/* Begin XCSwiftPackageProductDependency section */')
+        w(f'\t\t{DS_PKG_DEP} = {{')
+        w('\t\t\tisa = XCSwiftPackageProductDependency;')
+        w(f'\t\t\tpackage = {DS_PKG_REF};')
+        w(f'\t\t\tproductName = {design_system_module};')
+        w('\t\t};')
+        w('/* End XCSwiftPackageProductDependency section */')
+        w('')
 
     # ── XCBuildConfiguration ──
     team_setting = f'\t\t\t\tDEVELOPMENT_TEAM = "{team_id}";' if team_id else None
@@ -446,6 +488,8 @@ def main():
     parser.add_argument("--deployment-target", default="26.0", help="iOS deployment target")
     parser.add_argument("--sources-dir", required=True, help="Path to app source directory")
     parser.add_argument("--team-id", default="", help="Development team ID")
+    parser.add_argument("--design-system-module", default=None,
+                        help="Local SPM module name to add as a package dependency (e.g. InstagramDS)")
     args = parser.parse_args()
 
     app_name = args.name
@@ -459,6 +503,7 @@ def main():
         bundle_id=args.bundle_id,
         deployment_target=args.deployment_target,
         team_id=args.team_id,
+        design_system_module=args.design_system_module,
     )
 
     # Write
