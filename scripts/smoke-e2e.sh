@@ -98,12 +98,23 @@ if ! bash "$PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-project
         --name "$APP_NAME" \
         --bundle-id "$BUNDLE_ID" \
         --deployment-target 26.0 \
-        --project-dir "$WORKDIR" >"$WORKDIR/scaffold.log" 2>&1; then
+        --project-dir "$WORKDIR" \
+        --design-system-module "${APP_NAME}DS" >"$WORKDIR/scaffold.log" 2>&1; then
   err "scaffold 실패 — log:"
   tail -20 "$WORKDIR/scaffold.log" >&2
   exit 2
 fi
 [[ -d "$WORKDIR/$APP_NAME.xcodeproj" ]] || { err "xcodeproj 생성 안 됨"; exit 2; }
+
+log "design system package 골격 검증"
+PKG="$WORKDIR/$APP_NAME/Packages/${APP_NAME}DS"
+[[ -f "$PKG/Package.swift" ]] || { err "Package.swift 없음: $PKG"; exit 2; }
+grep -q "name: \"${APP_NAME}DS\"" "$PKG/Package.swift" || { err "Package.swift name 불일치"; exit 2; }
+for f in Color.swift Typography.swift Spacing.swift Radius.swift; do
+  [[ -s "$PKG/Sources/${APP_NAME}DS/Tokens/$f" ]] || { err "Token stub 누락 또는 빈 파일: $f"; exit 2; }
+done
+grep -q "package: ${APP_NAME}DS" "$WORKDIR/$APP_NAME/project.yml" || { err "project.yml 에 package dependency 누락"; exit 2; }
+log "design system package 골격 OK"
 
 # ---- 3. env_snapshot --------------------------------------------------------
 log "env_snapshot capture"
