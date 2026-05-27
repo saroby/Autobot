@@ -21,6 +21,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 
 - **Identifier**: `/^[A-Z][a-zA-Z0-9]*$/`, 2–30 자, Swift 예약어 금지. 한글/CJK 아이디어는 영어 의역 (`소셜 피트니스 → SocialFitness`). 모든 Swift 파일·디렉토리·struct 이름은 이 값을 사용.
 - **Display Name**: CFBundleDisplayName 용. 한글/이모지 허용.
+- **designSystemModule**: `appName + "DS"`. 예외 없음. architect 가 architecture.json 에 적는다.
 
 `architecture.md` 최상단에 `Identifier`, `Display Name`, `Bundle ID` 세 줄로 명시.
 
@@ -70,6 +71,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
   "appName": "...",
   "displayName": "...",
   "bundleId": "...",
+  "designSystemModule": "...",
   "models": ["Item", "Tag"],
   "serviceProtocols": ["ItemServiceProtocol"],
   "rootScreens": ["HomeView"],
@@ -82,6 +84,11 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
   }
 }
 ```
+
+`designSystemModule` 규칙 (필수):
+- 값 = `appName + "DS"` (예: `appName: "Instagram"` → `"InstagramDS"`).
+- PascalCase ASCII 만. 길이 ≤ 30.
+- Phase 3 scaffold 가 이 값을 읽어 `Packages/<designSystemModule>/` 를 만들고 `Package.swift` 의 `name:` 으로 사용한다. design-system 에이전트 / ui-builder 도 같은 값을 읽는다. **architect 가 단일 결정자**.
 
 스키마는 `spec/pipeline.json.architectureSchema` 가 SSOT.
 
