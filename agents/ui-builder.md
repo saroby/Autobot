@@ -81,7 +81,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
    ```swift
    // 큰 숫자 stat 카드 + LazyVGrid 대시보드
    ScrollView {
-       LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Theme.itemSpacing) {
+       LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: <Module>Spacing.m) {
            StatCard(title: "Steps", value: "12,345", trend: .up)  // 큰 숫자 + 트렌드 아이콘
            StatCard(title: "Calories", value: "890", trend: .down)
        }
@@ -93,7 +93,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
    ```swift
    // 큰 이미지 카드 피드
    ScrollView {
-       LazyVStack(spacing: Theme.sectionSpacing) {
+       LazyVStack(spacing: <Module>Spacing.l) {
            ForEach(items) { item in
                ContentCard(image: item.image, title: item.title, subtitle: item.description)
                    .frame(height: 280)  // photo-forward: 이미지가 카드의 60%+
