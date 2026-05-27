@@ -1017,8 +1017,8 @@
       "fromPhase": "3",
       "toPhase": "4",
       "soft": false,
-      "summary": "The scaffolded Xcode project and required configuration files exist.",
-      "docsSummary": ".xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증",
+      "summary": "The scaffolded Xcode project, required configuration files, and Design System package skeleton (with token stubs) exist.",
+      "docsSummary": ".xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 + Design System 패키지 스켈레톤(토큰 스텁 포함) 존재를 검증",
       "checks": [
         {
           "type": "procedural",
@@ -1047,11 +1047,13 @@
         },
         {
           "type": "procedural",
+          "name": "design_system_package_exists",
           "label": "design_system_package_exists",
           "docs": "Packages/<designSystemModule>/Package.swift 존재 + name 필드가 designSystemModule 과 일치"
         },
         {
           "type": "procedural",
+          "name": "design_system_tokens_exist",
           "label": "design_system_tokens_exist",
           "docs": "Sources/<designSystemModule>/Tokens/ 아래 Color.swift, Typography.swift, Spacing.swift, Radius.swift 모두 존재 + 비어있지 않음"
         }
