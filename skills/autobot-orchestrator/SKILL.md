@@ -52,10 +52,11 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
 
    출력 (≤ 40KB) 을 그대로 Agent 프롬프트 맨 앞에 붙인다. dropped 항목이 있으면 build-log 에 정보용으로 기록한다.
 5. **sandbox guard 활성화 / 해제**: sub-agent dispatch 직전 `pipeline.sh sandbox set-active --agent <name> --phase <N>`, 완료 직후 `pipeline.sh sandbox clear-active`. PreToolUse hook 이 marker 를 보고 사전 차단한다 (LOOP 12).
-6. Phase 4 는 **반드시 한 메시지에서** ui-builder + data-engineer (+조건부 backend-engineer) 를 동시 디스패치한다. 이때 sandbox marker 는 첫 agent 가 시작될 때 set, 마지막 agent 가 끝날 때 clear. 병렬 동안은 broadAccess 가 일시적으로 켜지지 않도록 marker 의 `agent` 필드는 가장 제한적인 agent 로 설정한다.
-7. Phase 완료 후 `pipeline.sh advance-phase --phase <N>` 으로 outgoing gate 실행 + 상태 마킹 + (성공 시) inputHash 자동 기록을 한 호출로 처리한다.
-8. Gate 실패 시 `retryCount < maxRetry` 면 같은 Phase 재실행, 아니면 `failed` 마킹 후 Phase 7 로 점프.
-9. Circuit breaker (3 연속 phase 실패 또는 에러 시그니처 2회 반복) 트립 시 Phase 7 만 진행.
+6. Phase 3 은 **두 단계 dispatch**: (a) `create-xcode-project.sh` 를 self 로 실행, 직후 (b) `design-system` 에이전트를 단일 dispatch. 둘 다 끝난 뒤 `advance-phase --phase 3` 으로 gate 실행.
+7. Phase 4 는 **반드시 한 메시지에서** ui-builder + data-engineer (+조건부 backend-engineer) 를 동시 디스패치한다. 이때 sandbox marker 는 첫 agent 가 시작될 때 set, 마지막 agent 가 끝날 때 clear. 병렬 동안은 broadAccess 가 일시적으로 켜지지 않도록 marker 의 `agent` 필드는 가장 제한적인 agent 로 설정한다.
+8. Phase 완료 후 `pipeline.sh advance-phase --phase <N>` 으로 outgoing gate 실행 + 상태 마킹 + (성공 시) inputHash 자동 기록을 한 호출로 처리한다.
+9. Gate 실패 시 `retryCount < maxRetry` 면 같은 Phase 재실행, 아니면 `failed` 마킹 후 Phase 7 로 점프.
+10. Circuit breaker (3 연속 phase 실패 또는 에러 시그니처 2회 반복) 트립 시 Phase 7 만 진행.
 
 ## Agent 디스패치 컨텍스트 전달
 
@@ -132,6 +133,15 @@ Phase 3 scaffold 는 다음을 **컴파일 가능한 형태로** 생성한다 �
 - `<AppName>/Models/ServiceProtocols.swift` — 통합 계약 (architect 만 수정)
 
 Phase 4 의 ui-builder/data-engineer 는 protocol 뒤 구현만 작성한다. `@main`, `CompositionRoot`, `Models` 직접 수정 금지 — Gate 4→5 에서 차단.
+
+### Phase 3 two-step dispatch
+
+Phase 3 는 두 단계로 실행된다 (모두 같은 phase 번호 내에서):
+
+1. **scaffold (self)** — `create-xcode-project.sh` 호출. 인자에 `--design-system-module $(jq -r .designSystemModule .autobot/architecture.json)` 를 반드시 전달. Composition seam + `Packages/<Module>/Package.swift` + project.yml wiring + Tokens stub 4개 생성.
+2. **design-system 에이전트 dispatch** — context-pack 으로 phase 슬라이스 + fileOwnership.agents.design-system.writes + design-spec.md / architecture.md 슬라이스를 전달. sandbox marker 의 `agent` 는 `design-system`.
+
+두 단계 사이에는 `advance-phase` 를 호출하지 않는다 (같은 phase). step 1 실패 시 step 2 는 생략. step 2 실패 시 retryCount 가 phase 3 의 maxRetry (1) 안이면 step 2 만 재실행.
 
 ## Error Recovery
 
