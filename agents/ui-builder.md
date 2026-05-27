@@ -43,74 +43,26 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
    이 파일은 Phase 2 (Stitch MCP)에서 생성되며, 존재할 경우 architecture.md보다 시각적 결정에서 우선한다.
    **Fallback**: Stitch 미설치/실패 시에도 최소 `design-spec.md`가 존재해야 한다. `.autobot/designs/*.png`가 없으면 screenshot reference만 생략하고, design-spec의 Visual Concept/Color Tokens/Typography/Spacing/Screen Layout/Interaction/States 계약은 그대로 따른다.
 4. **Read Model Files**: Read ALL `.swift` files in `<AppName>/Models/` to learn exact type names, properties, and initializers
-5. **Generate Theme (Design Direction이 있을 때)**:
-   architecture.md의 `## Design Direction` 섹션을 읽고 아래를 생성한다:
+5. **Read Design System Module name**:
+   `.autobot/architecture.json` 의 `designSystemModule` 값 (예: `InstagramDS`) 을 읽는다. Phase 3 scaffold 가 `Packages/<Module>/` 를 만들었고 design-system 에이전트가 Tokens/Components 를 채웠다. ui-builder 는 그 패키지를 **import 만 한다 — Theme.swift 를 만들지 않는다**.
 
-   a. **Asset Catalog 색상 세트** — 각 팔레트 색상에 대해 Light/Dark 변형 포함:
-   ```
-   <AppName>/Assets.xcassets/
-   ├── ThemePrimary.colorset/Contents.json
-   ├── ThemeSecondary.colorset/Contents.json
-   ├── ThemeAccent.colorset/Contents.json
-   └── ThemeSurface.colorset/Contents.json
-   ```
-   색상 세트 JSON 형식:
-   ```json
-   {
-     "colors": [
-       {
-         "idiom": "universal",
-         "color": { "color-space": "srgb", "components": { "red": "0.XX", "green": "0.XX", "blue": "0.XX", "alpha": "1.0" } }
-       },
-       {
-         "idiom": "universal",
-         "appearances": [{ "appearance": "luminosity", "value": "dark" }],
-         "color": { "color-space": "srgb", "components": { "red": "0.XX", "green": "0.XX", "blue": "0.XX", "alpha": "1.0" } }
-       }
-     ],
-     "info": { "version": 1, "author": "xcode" }
-   }
-   ```
-   hex를 RGB 0.0-1.0으로 변환: `0xFF` → `1.000`, `0x80` → `0.502` 등.
-   AccentColor.colorset도 Primary 색상으로 덮어쓴다.
-
-   b. **`<AppName>/Utilities/Theme.swift`** — 디자인 토큰 중앙 정의:
+   생성하는 모든 SwiftUI 파일 (Views, ViewModels) 상단:
    ```swift
    import SwiftUI
-
-   enum Theme {
-       // MARK: - Colors (Asset Catalog 기반, Light/Dark 자동 전환)
-       static let primary = Color("ThemePrimary")
-       static let secondary = Color("ThemeSecondary")
-       static let accent = Color("ThemeAccent")
-       static let surface = Color("ThemeSurface")
-
-       // MARK: - Typography (Design Direction에서 결정)
-       static func display(_ style: Font.TextStyle = .largeTitle) -> Font {
-           .system(style, design: .rounded, weight: .bold)  // font design은 Design Direction 참조
-       }
-       static func headline(_ style: Font.TextStyle = .headline) -> Font {
-           .system(style, design: .rounded, weight: .semibold)
-       }
-       static func body(_ style: Font.TextStyle = .body) -> Font {
-           .system(style, design: .default, weight: .regular)
-       }
-
-       // MARK: - Layout
-       static let cornerRadius: CGFloat = 16
-       static let cardPadding: CGFloat = 16
-       static let sectionSpacing: CGFloat = 24
-       static let itemSpacing: CGFloat = 12
-   }
+   import <DesignSystemModule>
    ```
 
-   c. **재사용 컴포넌트** — Component Patterns에 따라 `<AppName>/Views/Components/`에 생성:
-   - `ThemedCard.swift` — Surface 배경 + cornerRadius + shadow 조합의 카드
-   - `ThemedSectionHeader.swift` — Primary 색상 강조가 있는 섹션 헤더
-   - `EmptyStateView.swift` — SF Symbol + 메시지 + 액션 버튼 패턴
-   - 기타 Component Patterns에 명시된 스타일
+   사용 예:
+   ```swift
+   Text("Hello")
+       .font(<Module>Font.headline(.title2))
+       .foregroundStyle(<Module>Color.primary)
+       .padding(<Module>Spacing.m)
+       .background(<Module>Color.surface, in: RoundedRectangle(cornerRadius: <Module>Radius.m))
+   ```
 
-   **Design Direction 또는 design-spec 토큰이 없으면**: Phase 2/1 계약 위반이다. generic semantic-color UI로 조용히 대체하지 말고 문제를 보고한다.
+   - Asset Catalog 의 ThemePrimary/ThemeSecondary 등 colorset 은 생성하지 않는다 (design-system 패키지가 이를 코드 토큰으로 대체했다). AccentColor.colorset 은 scaffold 가 만든 그대로 둔다.
+   - `Color.accentColor`, `Color.primary` 같은 시스템 기본값 직접 사용 금지 — 항상 `<Module>Color.*` 사용.
 
 6. **Create App Entry Point**: `<AppName>/App/[AppName]App.swift` with @main, WindowGroup, `.modelContainer(for:)` listing ALL @Model types from `<AppName>/Models/`. App에서 Service 프로토콜의 **stub 구현체**를 생성하여 ViewModel에 주입 (data-engineer가 나중에 실제 구현체로 교체):
    ```swift
@@ -310,7 +262,7 @@ struct ContentView: View {
 - `String`, `URL` 등 `Transferable` 준수 타입은 `ShareLink`를 그대로 사용해도 된다.
 
 **Quality Standards:**
-- **Theme.swift가 존재하면 반드시 `Theme.*` 토큰을 사용한다** — `Color.accentColor`, `Color.primary` 등 시스템 기본값 직접 사용 금지. `Theme.primary`, `Theme.surface`, `Theme.display()` 등으로 대체
+- **반드시 `import <DesignSystemModule>` 후 토큰을 사용한다** — `Color.accentColor`, `Color.primary`, 하드코딩 RGB, magic CGFloat 금지. 토큰이 부족하면 design-system 에이전트의 산출물을 읽고 사용 가능한 가장 가까운 토큰을 선택한다 (새 토큰 정의 금지).
 - Cards, buttons, section headers는 Component Patterns에 정의된 스타일로 통일
 - EmptyStateView를 모든 빈 목록/빈 상태에 적용 — 빈 화면을 방치하지 않는다
 - Every view must support Dynamic Type
@@ -328,3 +280,4 @@ If the architecture is ambiguous, choose the simpler approach.
 - If you need a view-local enum (e.g. `FilterOption`, `TabSelection`), define it in the relevant ViewModel file, NOT in Models/.
 - When creating the App entry point, list ALL @Model types in `.modelContainer(for:)` by reading `<AppName>/Models/`.
 - **All files go inside `<AppName>/`**: `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` — never at the project root.
+- **`Packages/` 절대 수정 금지.** Design system 패키지는 design-system 에이전트의 영역. 토큰이 부족하다고 느껴도 직접 수정하지 말고 가장 가까운 토큰을 선택한다.
