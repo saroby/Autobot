@@ -20,13 +20,19 @@ settings:
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
 
+packages:
+  ${DESIGN_SYSTEM_MODULE}:
+    path: Packages/${DESIGN_SYSTEM_MODULE}
+
 targets:
   ${APP_NAME}:
     type: application
     platform: iOS
     sources:
       - path: ${APP_NAME}
-        type: folder              # ← Folder Reference (PBXFileSystemSynchronizedRootGroup)
+        type: folder
+    dependencies:
+      - package: ${DESIGN_SYSTEM_MODULE}
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.axi.${APP_NAME_LOWER}
@@ -44,7 +50,7 @@ targets:
     platform: iOS
     sources:
       - path: ${APP_NAME}Tests
-        type: folder              # ← Folder Reference
+        type: folder
     dependencies:
       - target: ${APP_NAME}
     settings:
@@ -73,6 +79,45 @@ struct ${APP_NAME}App: App {
     }
 }
 ```
+
+## Design System Local Package
+
+Phase 3 scaffold 가 자동으로 생성하는 in-tree 로컬 패키지. 모듈 이름은 architect 가 `architecture.json.designSystemModule` 로 결정한다 (관례: `<AppName>DS`).
+
+````
+Packages/
+└── ${DESIGN_SYSTEM_MODULE}/
+    ├── Package.swift
+    └── Sources/
+        └── ${DESIGN_SYSTEM_MODULE}/
+            ├── Tokens/
+            │   ├── Color.swift          # design-system agent 가 채움
+            │   ├── Typography.swift     # design-system agent 가 채움
+            │   ├── Spacing.swift        # design-system agent 가 채움
+            │   └── Radius.swift         # design-system agent 가 채움
+            └── Components/
+                # design-system agent 가 채움 (PrimaryButton, Card, SectionHeader, EmptyStateView 등)
+````
+
+### Package.swift template
+
+```swift
+// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "${DESIGN_SYSTEM_MODULE}",
+    platforms: [.iOS(.v26)],
+    products: [
+        .library(name: "${DESIGN_SYSTEM_MODULE}", targets: ["${DESIGN_SYSTEM_MODULE}"]),
+    ],
+    targets: [
+        .target(name: "${DESIGN_SYSTEM_MODULE}", path: "Sources/${DESIGN_SYSTEM_MODULE}"),
+    ]
+)
+```
+
+소비측에서는 `import ${DESIGN_SYSTEM_MODULE}` 만 하면 토큰과 컴포넌트를 모두 쓸 수 있다.
 
 ## Asset Catalog Structure
 
