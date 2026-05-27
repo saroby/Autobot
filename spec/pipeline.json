@@ -625,8 +625,7 @@
           "{appName}/Views/",
           "{appName}/ViewModels/",
           "{appName}/App/",
-          "{appName}/Assets.xcassets/",
-          "{appName}/Utilities/Theme.swift"
+          "{appName}/Assets.xcassets/"
         ]
       },
       "data-engineer": {
@@ -653,6 +652,11 @@
           "build/",
           ".autobot/deploy-status.json"
         ]
+      },
+      "design-system": {
+        "writes": [
+          "Packages/"
+        ]
       }
     },
     "forbiddenAlways": [
@@ -675,11 +679,12 @@
       "architect"
     ],
     "forbiddenPerAgent": {
-      "data-engineer": [
-        "{appName}/Utilities/Theme.swift"
-      ],
       "ui-builder": [
-        "{appName}/Services/"
+        "{appName}/Services/",
+        "Packages/"
+      ],
+      "design-system": [
+        "{appName}/"
       ]
     }
   },
@@ -757,18 +762,19 @@
       ],
       "gate": "3->4",
       "allowFallback": false,
+      "agents": ["design-system"],
       "docs": {
-        "displayName": "Xcode 프로젝트",
-        "readmeAgent": "(self)",
-        "skillAgent": "(self)",
+        "displayName": "Xcode 프로젝트 + Design System",
+        "readmeAgent": "(self) + design-system",
+        "skillAgent": "(self) + design-system",
         "outputs": [
           "`.xcodeproj`",
-          "`.gitignore`",
+          "`Packages/<Name>DS/`",
           "`PrivacyInfo.xcprivacy`",
           "`.entitlements`"
         ],
         "parallel": false,
-        "gateLabel": "→ .xcodeproj 존재 검증"
+        "gateLabel": "→ .xcodeproj + Package 존재 + tokens 채워짐"
       }
     },
     "4": {
@@ -1038,6 +1044,16 @@
           "type": "procedural",
           "name": "scaffold_build_succeeded",
           "label": "scaffold_build_succeeded"
+        },
+        {
+          "type": "procedural",
+          "label": "design_system_package_exists",
+          "docs": "Packages/<designSystemModule>/Package.swift 존재 + name 필드가 designSystemModule 과 일치"
+        },
+        {
+          "type": "procedural",
+          "label": "design_system_tokens_exist",
+          "docs": "Sources/<designSystemModule>/Tokens/ 아래 Color.swift, Typography.swift, Spacing.swift, Radius.swift 모두 존재 + 비어있지 않음"
         }
       ]
     },
