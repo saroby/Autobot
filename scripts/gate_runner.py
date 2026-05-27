@@ -604,6 +604,78 @@ def check_gitignore_exists(proj: Path, app: str, state: dict) -> list[dict]:
     return results
 
 
+def _load_design_system_module(proj: Path, state: dict) -> str | None:
+    """state 우선, 그 다음 architecture.json 에서 designSystemModule 을 읽는다."""
+    arch_state = (state or {}).get("architecture") or {}
+    mod = arch_state.get("designSystemModule")
+    if mod:
+        return mod
+    arch_path = proj / ".autobot" / "architecture.json"
+    if not arch_path.is_file():
+        return None
+    try:
+        return json.loads(arch_path.read_text(encoding="utf-8")).get("designSystemModule")
+    except (OSError, ValueError):
+        return None
+
+
+def check_design_system_package_exists(proj: Path, app: str, state: dict) -> list[dict]:
+    module = _load_design_system_module(proj, state)
+    if not module:
+        return [_ok(
+            "design_system_package_exists", False,
+            "architecture.json.designSystemModule 누락 (architect 가 emit 해야 함)",
+        )]
+    pkg_root = proj / "Packages" / module
+    pkg_swift = pkg_root / "Package.swift"
+    if not pkg_swift.is_file():
+        return [_ok(
+            "design_system_package_exists", False,
+            f"Package.swift 없음: {pkg_swift.relative_to(proj)}",
+        )]
+    content = pkg_swift.read_text(encoding="utf-8", errors="replace")
+    if f'name: "{module}"' not in content:
+        return [_ok(
+            "design_system_package_exists", False,
+            f"Package.swift 의 name 이 '{module}' 가 아님",
+        )]
+    return [_ok("design_system_package_exists", True, str(pkg_swift.relative_to(proj)))]
+
+
+def check_design_system_tokens_exist(proj: Path, app: str, state: dict) -> list[dict]:
+    module = _load_design_system_module(proj, state)
+    if not module:
+        return [_ok(
+            "design_system_tokens_exist", False,
+            "architecture.json.designSystemModule 누락",
+        )]
+    tokens_dir = proj / "Packages" / module / "Sources" / module / "Tokens"
+    required = ["Color.swift", "Typography.swift", "Spacing.swift", "Radius.swift"]
+    missing: list[str] = []
+    empty: list[str] = []
+    for name in required:
+        p = tokens_dir / name
+        if not p.is_file():
+            missing.append(name)
+            continue
+        if p.stat().st_size == 0:
+            empty.append(name)
+    if missing:
+        return [_ok(
+            "design_system_tokens_exist", False,
+            f"missing token files: {', '.join(missing)}",
+        )]
+    if empty:
+        return [_ok(
+            "design_system_tokens_exist", False,
+            f"empty token files: {', '.join(empty)}",
+        )]
+    return [_ok(
+        "design_system_tokens_exist", True,
+        f"{len(required)} tokens present under {tokens_dir.relative_to(proj)}",
+    )]
+
+
 # ── Gate 4→5 checks ──
 
 
@@ -1146,6 +1218,8 @@ GATE_CHECKS: dict[str, Any] = {
     "entitlements_exists": check_entitlements_exists,
     "gitignore_exists": check_gitignore_exists,
     "scaffold_build_succeeded": check_scaffold_build_succeeded,
+    "design_system_package_exists": check_design_system_package_exists,
+    "design_system_tokens_exist": check_design_system_tokens_exist,
     # Gate 4→5
     "views_exist": check_views_exist,
     "services_exist": check_services_exist,
