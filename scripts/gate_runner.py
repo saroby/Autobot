@@ -605,7 +605,7 @@ def check_gitignore_exists(proj: Path, app: str, state: dict) -> list[dict]:
 
 
 def _load_design_system_module(proj: Path, state: dict) -> str | None:
-    """state 우선, 그 다음 architecture.json 에서 designSystemModule 을 읽는다."""
+    """Resolve designSystemModule from state first, then from architecture.json on disk."""
     arch_state = (state or {}).get("architecture") or {}
     mod = arch_state.get("designSystemModule")
     if mod:
@@ -615,7 +615,7 @@ def _load_design_system_module(proj: Path, state: dict) -> str | None:
         return None
     try:
         return json.loads(arch_path.read_text(encoding="utf-8")).get("designSystemModule")
-    except (OSError, ValueError):
+    except (OSError, json.JSONDecodeError):
         return None
 
 
@@ -626,8 +626,7 @@ def check_design_system_package_exists(proj: Path, app: str, state: dict) -> lis
             "design_system_package_exists", False,
             "architecture.json.designSystemModule 누락 (architect 가 emit 해야 함)",
         )]
-    pkg_root = proj / "Packages" / module
-    pkg_swift = pkg_root / "Package.swift"
+    pkg_swift = proj / "Packages" / module / "Package.swift"
     if not pkg_swift.is_file():
         return [_ok(
             "design_system_package_exists", False,

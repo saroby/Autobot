@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,8 +31,11 @@ def _write_arch_json(proj: Path, module: str = "InstagramDS") -> None:
 
 class TestDesignSystemPackageExists(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
 
     def test_missing_package_swift_fails(self) -> None:
         _write_arch_json(self.tmp)
@@ -70,16 +72,26 @@ class TestDesignSystemPackageExists(unittest.TestCase):
         self.assertEqual(result[0]["passed"], False)
         self.assertIn("designSystemModule", result[0]["message"])
 
+    def test_malformed_arch_json_fails(self) -> None:
+        (self.tmp / ".autobot").mkdir(parents=True, exist_ok=True)
+        (self.tmp / ".autobot" / "architecture.json").write_text("{INVALID", encoding="utf-8")
+        result = check_design_system_package_exists(self.tmp, "Instagram", {})
+        self.assertEqual(result[0]["passed"], False)
+        self.assertIn("designSystemModule", result[0]["message"])
+
 
 class TestDesignSystemTokensExist(unittest.TestCase):
     REQUIRED = ["Color.swift", "Typography.swift", "Spacing.swift", "Radius.swift"]
 
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
         _write_arch_json(self.tmp)
         self.tokens = self.tmp / "Packages" / "InstagramDS" / "Sources" / "InstagramDS" / "Tokens"
         self.tokens.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
 
     def test_all_tokens_present_and_non_empty_passes(self) -> None:
         for name in self.REQUIRED:
