@@ -46,6 +46,10 @@ REFERENCE_FILES = {
         "references/axiom-distilled/swiftui.md",
     ],
     "ux-designer": ["references/axiom-distilled/design.md"],
+    "design-system": [
+        "references/axiom-distilled/design.md",
+        "references/axiom-distilled/swiftui.md",
+    ],
     "backend-engineer": [],
     "deployer": [],
 }
