@@ -55,7 +55,11 @@ if [ -z "$DESIGN_SYSTEM_MODULE" ]; then
   DESIGN_SYSTEM_MODULE="${APP_NAME}DS"
 fi
 if ! [[ "$DESIGN_SYSTEM_MODULE" =~ ^[A-Z][A-Za-z0-9]+$ ]]; then
-  echo "ERROR: --design-system-module must be PascalCase ASCII (got: $DESIGN_SYSTEM_MODULE)" >&2
+  echo "ERROR: --design-system-module must match ^[A-Z][A-Za-z0-9]+$ (PascalCase ASCII, max 30 chars). Got: $DESIGN_SYSTEM_MODULE" >&2
+  exit 2
+fi
+if [ "${#DESIGN_SYSTEM_MODULE}" -gt 30 ]; then
+  echo "ERROR: --design-system-module must be ≤ 30 characters (got ${#DESIGN_SYSTEM_MODULE}: $DESIGN_SYSTEM_MODULE)" >&2
   exit 2
 fi
 
@@ -342,6 +346,7 @@ PKG_DIR="${PROJECT_DIR}/Packages/${DESIGN_SYSTEM_MODULE}"
 PKG_SRC="${PKG_DIR}/Sources/${DESIGN_SYSTEM_MODULE}"
 mkdir -p "${PKG_SRC}/Tokens" "${PKG_SRC}/Components"
 
+if [ ! -f "${PKG_DIR}/Package.swift" ]; then
 cat > "${PKG_DIR}/Package.swift" << PKG_EOF
 // swift-tools-version: 6.0
 import PackageDescription
@@ -357,29 +362,40 @@ let package = Package(
     ]
 )
 PKG_EOF
+fi
 
 # design-system 에이전트가 채울 때까지 컴파일 가능한 빈 스텁을 둔다.
 # (이 파일은 design-system 에이전트가 덮어쓰며, gate 는 비어있지 않음을 검증한다.)
+# 각 stub 은 개별 `if [ ! -f ]` 로 감싼다 — 재실행 시 실제 토큰을 덮어쓰면 안 되며,
+# 중단된 스캐폴드 후 일부만 존재할 때 누락분만 채울 수 있어야 한다.
+if [ ! -f "${PKG_SRC}/Tokens/Color.swift" ]; then
 cat > "${PKG_SRC}/Tokens/Color.swift" << STUB_EOF
 // Placeholder — design-system agent overwrites this.
 import SwiftUI
 public enum DSColors { public static let placeholder = Color.accentColor }
 STUB_EOF
+fi
+if [ ! -f "${PKG_SRC}/Tokens/Typography.swift" ]; then
 cat > "${PKG_SRC}/Tokens/Typography.swift" << STUB_EOF
 // Placeholder — design-system agent overwrites this.
 import SwiftUI
 public enum DSTypography { public static let body = Font.body }
 STUB_EOF
+fi
+if [ ! -f "${PKG_SRC}/Tokens/Spacing.swift" ]; then
 cat > "${PKG_SRC}/Tokens/Spacing.swift" << STUB_EOF
 // Placeholder — design-system agent overwrites this.
 import Foundation
 public enum DSSpacing { public static let m: CGFloat = 16 }
 STUB_EOF
+fi
+if [ ! -f "${PKG_SRC}/Tokens/Radius.swift" ]; then
 cat > "${PKG_SRC}/Tokens/Radius.swift" << STUB_EOF
 // Placeholder — design-system agent overwrites this.
 import Foundation
 public enum DSRadius { public static let m: CGFloat = 12 }
 STUB_EOF
+fi
 
 # Check if xcodegen is available for project generation
 if command -v xcodegen &>/dev/null; then
