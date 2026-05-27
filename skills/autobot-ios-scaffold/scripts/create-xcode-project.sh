@@ -10,6 +10,7 @@ TEAM_ID="${DEVELOPMENT_TEAM:-AUTO}"
 DEPLOYMENT_TARGET="26.0"
 PROJECT_DIR_OVERRIDE=""
 BACKEND_REQUIRED="false"
+DESIGN_SYSTEM_MODULE="${DESIGN_SYSTEM_MODULE:-}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -19,6 +20,7 @@ while [[ $# -gt 0 ]]; do
     --deployment-target) DEPLOYMENT_TARGET="$2"; shift 2;;
     --project-dir) PROJECT_DIR_OVERRIDE="$2"; shift 2;;
     --backend) BACKEND_REQUIRED="true"; shift;;
+    --design-system-module) DESIGN_SYSTEM_MODULE="$2"; shift 2;;
     *) echo "Unknown option: $1"; exit 1;;
   esac
 done
@@ -47,6 +49,14 @@ APP_NAME="${APP_NAME:0:30}"
 if [ -z "$APP_NAME" ] || ! echo "$APP_NAME" | grep -qE '^[A-Z][a-zA-Z0-9]+$'; then
   echo "Warning: '${APP_NAME}' is not a valid identifier. Using 'MyApp' as fallback."
   APP_NAME="MyApp"
+fi
+
+if [ -z "$DESIGN_SYSTEM_MODULE" ]; then
+  DESIGN_SYSTEM_MODULE="${APP_NAME}DS"
+fi
+if ! [[ "$DESIGN_SYSTEM_MODULE" =~ ^[A-Z][A-Za-z0-9]+$ ]]; then
+  echo "ERROR: --design-system-module must be PascalCase ASCII (got: $DESIGN_SYSTEM_MODULE)" >&2
+  exit 2
 fi
 
 if [ -z "$BUNDLE_ID" ]; then
@@ -327,6 +337,50 @@ struct ${APP_NAME}Tests {
 SWIFT_EOF
 fi
 
+# ── Local Swift Package (Design System) ─────────────────────────────────────
+PKG_DIR="${PROJECT_DIR}/Packages/${DESIGN_SYSTEM_MODULE}"
+PKG_SRC="${PKG_DIR}/Sources/${DESIGN_SYSTEM_MODULE}"
+mkdir -p "${PKG_SRC}/Tokens" "${PKG_SRC}/Components"
+
+cat > "${PKG_DIR}/Package.swift" << PKG_EOF
+// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "${DESIGN_SYSTEM_MODULE}",
+    platforms: [.iOS(.v26)],
+    products: [
+        .library(name: "${DESIGN_SYSTEM_MODULE}", targets: ["${DESIGN_SYSTEM_MODULE}"]),
+    ],
+    targets: [
+        .target(name: "${DESIGN_SYSTEM_MODULE}", path: "Sources/${DESIGN_SYSTEM_MODULE}"),
+    ]
+)
+PKG_EOF
+
+# design-system 에이전트가 채울 때까지 컴파일 가능한 빈 스텁을 둔다.
+# (이 파일은 design-system 에이전트가 덮어쓰며, gate 는 비어있지 않음을 검증한다.)
+cat > "${PKG_SRC}/Tokens/Color.swift" << STUB_EOF
+// Placeholder — design-system agent overwrites this.
+import SwiftUI
+public enum DSColors { public static let placeholder = Color.accentColor }
+STUB_EOF
+cat > "${PKG_SRC}/Tokens/Typography.swift" << STUB_EOF
+// Placeholder — design-system agent overwrites this.
+import SwiftUI
+public enum DSTypography { public static let body = Font.body }
+STUB_EOF
+cat > "${PKG_SRC}/Tokens/Spacing.swift" << STUB_EOF
+// Placeholder — design-system agent overwrites this.
+import Foundation
+public enum DSSpacing { public static let m: CGFloat = 16 }
+STUB_EOF
+cat > "${PKG_SRC}/Tokens/Radius.swift" << STUB_EOF
+// Placeholder — design-system agent overwrites this.
+import Foundation
+public enum DSRadius { public static let m: CGFloat = 12 }
+STUB_EOF
+
 # Check if xcodegen is available for project generation
 if command -v xcodegen &>/dev/null; then
   # Derive bundleIdPrefix safely with a fallback if BUNDLE_ID doesn't end with the lowercase app name
@@ -354,6 +408,10 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     CODE_SIGN_STYLE: Automatic
 
+packages:
+  ${DESIGN_SYSTEM_MODULE}:
+    path: Packages/${DESIGN_SYSTEM_MODULE}
+
 targets:
   ${APP_NAME}:
     type: application
@@ -361,6 +419,8 @@ targets:
     sources:
       - path: ${APP_NAME}
         type: folder
+    dependencies:
+      - package: ${DESIGN_SYSTEM_MODULE}
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}
@@ -400,6 +460,7 @@ else
       --bundle-id "$BUNDLE_ID" \
       --deployment-target "$DEPLOYMENT_TARGET" \
       --sources-dir "$SOURCES_DIR" \
+      --design-system-module "$DESIGN_SYSTEM_MODULE" \
       ${TEAM_ID:+--team-id "$TEAM_ID"}
     echo "Xcode project generated with built-in generator"
   else
