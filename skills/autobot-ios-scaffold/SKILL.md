@@ -43,7 +43,8 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-proje
   --name "AppName" \
   --bundle-id "com.axi.appname" \
   --project-dir "." \
-  --deployment-target "26.0"
+  --deployment-target "26.0" \
+  --design-system-module "AppNameDS"
 
 # backend_required == true일 때 --backend 플래그 추가:
 bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-project.sh" \
@@ -51,14 +52,20 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-proje
   --bundle-id "com.axi.appname" \
   --project-dir "." \
   --deployment-target "26.0" \
-  --backend
+  --backend \
+  --design-system-module "AppNameDS"
 
 # 독립 실행 (새 프로젝트 디렉토리를 자동 생성):
 bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-project.sh" \
   --name "AppName" \
   --bundle-id "com.axi.appname" \
-  --deployment-target "26.0"
+  --deployment-target "26.0" \
+  --design-system-module "AppNameDS"
 ```
+
+### Two-step Phase 3
+
+Phase 3 는 (1) 이 스크립트가 `(self)` 로 프로젝트 + Packages 골격을 생성하고, (2) `design-system` 에이전트가 Tokens/Components 를 채우는 2 단계로 구성된다. (1) 직후 (2) 가 실행되도록 orchestrator 가 dispatch 한다. Gate 3→4 의 `design_system_package_exists` / `design_system_tokens_exist` 가 두 단계 산출물 모두 검증한다.
 
 `--project-dir` 유무에 따른 디렉토리 구조 차이:
 
@@ -112,6 +119,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-ios-scaffold/scripts/create-xcode-proje
 - (조건부) `Debug.xcconfig` — `backend_required == true`일 때 생성. `API_BASE_URL = http:/$()/localhost:8080`
 - (조건부) `Release.xcconfig` — `backend_required == true`일 때 생성. `API_BASE_URL = https:/$()/$(PRODUCTION_HOST)`
 - (조건부) `.gitignore`에 `backend/.env` 라인 추가 — `backend_required == true`일 때
+- `Packages/<DesignSystemModule>/Package.swift` — in-tree 로컬 SPM 골격 (Tokens/ stub 4개 포함). Phase 3 step 2 design-system 에이전트가 토큰·컴포넌트로 덮어쓴다. 모듈 이름은 `architecture.json.designSystemModule`.
 
 ### Backend-Aware Scaffold (backend_required == true)
 
