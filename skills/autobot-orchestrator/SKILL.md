@@ -27,7 +27,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
 | 0 | Pre-flight & 환경 준비 | (self) | No | → 환경/이름 검증 | 1 |
 | 1 | 아키텍처 + 계약 | architect | No | → 산출물 존재/구조 검증 | 2 |
 | 2 | UX Design (필수) | ux-designer | No | → Stitch 성공 필수, 미설치 시 fallback | 1 |
-| 3 | Xcode 프로젝트 | (self) | No | → .xcodeproj 존재 검증 | 1 |
+| 3 | Xcode 프로젝트 + Design System | (self) + design-system | No | → .xcodeproj + Package 존재 + tokens 채워짐 | 1 |
 | 4 | 병렬 코드 생성 | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 + sandbox 위반 0건 | 2 |
 | 5 | 통합 + 빌드 검증 | quality-engineer (`autobot-integration-build` 스킬) | No | → xcodebuild 성공 | 2 |
 | 6 | TestFlight 배포 (수동, /autobot:testflight) | deployer | No | → 배포 결과 기록 (soft) | 1 |
