@@ -85,6 +85,7 @@ CONDITION: build-state.json.environment.stitch == true
         - Interaction Feel
         - Empty, Loading, Error States
       ✓ .autobot/designs/ 디렉토리에 .png 파일 1개 이상 존재
+      ✓ .autobot/app-icon-1024.png 존재 (autobot-app-icon 스킬 출력)
     FAIL → 1회 재시도
     FAIL (재시도 후) → fallback 모드로 전환:
       - architecture.md의 Design Direction으로 최소 design-spec.md 생성
@@ -108,6 +109,8 @@ CHECK:
   ✓ *.xcodeproj/project.pbxproj 존재 & 크기 > 0
   ✓ <AppName>/App/<AppName>App.swift 존재
   ✓ <AppName>/Assets.xcassets 존재
+  ✓ <AppName>/Assets.xcassets/AppIcon.appiconset/ 에 PNG 1개 이상 존재
+    (scripts/app-icon.sh apply 가 source 이미지를 박았는지 확인)
   ✓ <AppName>/PrivacyInfo.xcprivacy 존재
   ✓ <AppName>/<AppName>.entitlements 존재
   ✓ .gitignore 존재

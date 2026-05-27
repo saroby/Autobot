@@ -45,8 +45,8 @@ allowed-tools:
 
 - **Phase 0** — 빌드 잠금, 환경 감지 (`pipeline.sh env-snapshot ensure`), `build-state.json` init, 앱 이름 결정. env_snapshot 은 Xcode/SDK/simulator UDID/ASC 자격증명 상태를 한 번 캡처해 이후 phase 가 simctl 을 다시 조회하지 않도록 한다.
 - **Phase 1** — architect → `architecture.md` + `Models/` + `ServiceProtocols.swift` + peer review 게이트
-- **Phase 2** — ux-designer (Stitch primary, fallback 시 design-spec 만으로 진행)
-- **Phase 3** — Xcode 프로젝트 scaffold + Composition seam + PrivacyInfo + entitlements
+- **Phase 2** — ux-designer (Stitch primary, fallback 시 design-spec 만으로 진행) + `autobot-app-icon` 스킬로 1024 PNG 아이콘 생성 (필수, gate-enforced)
+- **Phase 3** — Xcode 프로젝트 scaffold + Composition seam + PrivacyInfo + entitlements + AppIcon.appiconset apply (gate-enforced)
 - **Phase 4** — ui-builder ∥ data-engineer ∥ (backend-engineer) 병렬 디스패치 + sandbox 사전/사후 검증
 - **Phase 5** — quality-engineer 통합 빌드 + axiom critical audit + peer review + runtime smoke + visual contract
 - **Phase 7** — build-report + learnings 누적 (Phase 6 는 `pending` 으로 남김)
