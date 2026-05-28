@@ -45,6 +45,16 @@ LEARNINGS_FILE="${PROJECT_DIR}/.autobot/learnings.json"
 HAS_LEARNINGS="false"
 ACTIVE_LEARNINGS="false"
 ACTIVE_LEARNINGS_SUMMARY="unavailable"
+
+# Seed from the host-wide store (~/.config/autobot/learnings.json or
+# $XDG_CONFIG_HOME/autobot/learnings.json) so a brand-new project inherits
+# the learnings the previous project already validated. Silent best-effort —
+# never blocks bootstrap if the helper is missing.
+IMPACT_SCRIPT="${PLUGIN_ROOT}/scripts/learning_impact.py"
+if [ -f "$IMPACT_SCRIPT" ]; then
+  python3 "$IMPACT_SCRIPT" merge-global --project-dir "$PROJECT_DIR" >/dev/null 2>&1 || true
+fi
+
 if [ -f "$LEARNINGS_FILE" ]; then
   HAS_LEARNINGS="true"
 fi

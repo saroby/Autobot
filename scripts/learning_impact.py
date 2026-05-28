@@ -30,10 +30,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 QUARANTINE_THRESHOLD = -2  # effect_score <= -2 → quarantined
 LEARNINGS_FILE = ".autobot/learnings.json"
+GLOBAL_LEARNINGS_REL = "autobot/learnings.json"  # under XDG_CONFIG_HOME or ~/.config
+
+
+def _global_learnings_path() -> Path:
+    """Return the host-wide learnings store. Honours XDG_CONFIG_HOME so the
+    location follows the same convention as `~/.config/autobot/.env`."""
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / GLOBAL_LEARNINGS_REL
 
 
 def _learnings_path(project_root: Path) -> Path:
@@ -164,7 +174,20 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
             })
 
     _save(project_root, data)
-    return {"updated": updated, "summaries": summaries}
+
+    # Promote graded learnings to the host-wide store so the next project's
+    # bootstrap inherits the latest effect scores. Best-effort; cannot block
+    # the retrospective if global write fails (e.g. read-only home).
+    publish_summary: dict | None = None
+    try:
+        publish_summary = publish_project_to_global(project_root)
+    except Exception:  # noqa: BLE001 — never crash grade on global publish
+        publish_summary = None
+
+    result: dict = {"updated": updated, "summaries": summaries}
+    if publish_summary:
+        result["global_publish"] = publish_summary
+    return result
 
 
 def active(project_root: Path) -> dict:
@@ -178,6 +201,116 @@ def active(project_root: Path) -> dict:
         "patterns": data.get("patterns", {}),
         "items": active_items,
     }
+
+
+def _merge_items(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    """Merge two `items` lists by id. Incoming wins on id collision (more
+    recent grade typically reflects the latest effect). Items without an id
+    are kept verbatim from existing first, then appended from incoming."""
+    by_id: dict[str, dict] = {}
+    no_id: list[dict] = []
+    for item in existing:
+        if isinstance(item, dict) and item.get("id"):
+            by_id[item["id"]] = item
+        else:
+            no_id.append(item)
+    for item in incoming:
+        if isinstance(item, dict) and item.get("id"):
+            by_id[item["id"]] = item
+        else:
+            no_id.append(item)
+    return list(by_id.values()) + no_id
+
+
+def _merge_patterns(existing: dict, incoming: dict) -> dict:
+    """Deep-merge two `patterns` dicts. For per-key entries with a numeric
+    `frequency`, sum them; otherwise incoming overwrites."""
+    merged = dict(existing) if isinstance(existing, dict) else {}
+    if not isinstance(incoming, dict):
+        return merged
+    for cat, cat_val in incoming.items():
+        if isinstance(cat_val, dict) and isinstance(merged.get(cat), dict):
+            sub_merged = dict(merged[cat])
+            for key, val in cat_val.items():
+                if (isinstance(val, dict) and isinstance(sub_merged.get(key), dict)
+                        and "frequency" in val and "frequency" in sub_merged[key]):
+                    combined = dict(sub_merged[key])
+                    try:
+                        combined["frequency"] = int(sub_merged[key]["frequency"]) + int(val["frequency"])
+                    except (TypeError, ValueError):
+                        combined["frequency"] = val["frequency"]
+                    # Preserve fix_summary etc. from incoming when present
+                    for k, v in val.items():
+                        if k != "frequency":
+                            combined[k] = v
+                    sub_merged[key] = combined
+                else:
+                    sub_merged[key] = val
+            merged[cat] = sub_merged
+        else:
+            merged[cat] = cat_val
+    return merged
+
+
+def load_global() -> dict:
+    """Read the host-wide learnings store. Returns an empty skeleton when
+    absent or malformed — never raises, since cross-project enrichment must
+    never block a build."""
+    path = _global_learnings_path()
+    if not path.is_file():
+        return {"patterns": {}, "items": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"patterns": {}, "items": []}
+    if not isinstance(data, dict):
+        return {"patterns": {}, "items": []}
+    data.setdefault("patterns", {})
+    data.setdefault("items", [])
+    return data
+
+
+def merge_global_into_project(project_root: Path) -> dict:
+    """Bootstrap-time enrichment: when a new project has no `.autobot/learnings.json`
+    yet, seed it from the global store. When the project already has its own
+    file, merge global entries in (project wins on id collisions so per-project
+    grading isn't clobbered)."""
+    glob = load_global()
+    if not glob.get("items") and not glob.get("patterns"):
+        return {"enriched": False, "reason": "no_global_learnings"}
+
+    path = _learnings_path(project_root)
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(glob, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"enriched": True, "mode": "seeded_from_global",
+                "items": len(glob.get("items", []))}
+
+    project = _load(project_root)
+    merged_items = _merge_items(glob.get("items", []), project.get("items", []))
+    merged_patterns = _merge_patterns(glob.get("patterns", {}), project.get("patterns", {}))
+    project["items"] = merged_items
+    project["patterns"] = merged_patterns
+    _save(project_root, project)
+    return {"enriched": True, "mode": "merged_with_existing",
+            "items": len(merged_items)}
+
+
+def publish_project_to_global(project_root: Path) -> dict:
+    """Phase 7 hand-off: push project learnings up to the global store so the
+    next project benefits. Project items overlay global items on id collision
+    (latest grade is the truth)."""
+    project = _load(project_root)
+    glob = load_global()
+    merged_items = _merge_items(glob.get("items", []), project.get("items", []))
+    merged_patterns = _merge_patterns(glob.get("patterns", {}), project.get("patterns", {}))
+
+    path = _global_learnings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"patterns": merged_patterns, "items": merged_items}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"published": True, "global_path": str(path),
+            "items": len(merged_items)}
 
 
 def quarantined(project_root: Path) -> list[dict]:
@@ -207,6 +340,10 @@ def _main() -> int:
     p_a.add_argument("--project-dir", default=".")
     p_q = sub.add_parser("quarantined")
     p_q.add_argument("--project-dir", default=".")
+    p_m = sub.add_parser("merge-global")
+    p_m.add_argument("--project-dir", default=".")
+    p_pub = sub.add_parser("publish-global")
+    p_pub.add_argument("--project-dir", default=".")
     args = parser.parse_args()
 
     proj = Path(args.project_dir).resolve()
@@ -215,6 +352,12 @@ def _main() -> int:
         return 0
     if args.cmd == "active":
         print(json.dumps(active(proj), ensure_ascii=False, indent=2))
+        return 0
+    if args.cmd == "merge-global":
+        print(json.dumps(merge_global_into_project(proj), ensure_ascii=False, indent=2))
+        return 0
+    if args.cmd == "publish-global":
+        print(json.dumps(publish_project_to_global(proj), ensure_ascii=False, indent=2))
         return 0
     print(json.dumps(quarantined(proj), ensure_ascii=False, indent=2))
     return 0
