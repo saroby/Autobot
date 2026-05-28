@@ -358,6 +358,70 @@ def check_intent_anchors_in_ui(proj: Path, app: str, state: dict) -> list[dict]:
     )]
 
 
+def check_primary_cta_visibility(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 4→5 — primary CTAs must remain visible in their disabled state.
+
+    Regression captured in build-20260526-solos: the Onboarding "시작하기" CTA
+    used `.background(canContinue ? Theme.primary : Theme.surface)` and rendered
+    as the page background when no nickname was typed — first-time users
+    couldn't see the only forward path. `app_intent_declared` and
+    `intent_anchors_in_ui` only verify the identifier exists; neither catches
+    the contrast collision.
+
+    Heuristic: locate every `.accessibilityIdentifier("autobot.*primaryCTA…")`
+    in Views/ and reject the surrounding block when its disabled-state
+    background ties to `Theme.surface` / `Theme.background` (page surface
+    colors). The rule lives at file level, not the strict enclosing Button
+    scope, to keep the regex simple while still catching the recurring bug.
+    """
+    views = proj / app / "Views"
+    if not views.is_dir():
+        return [_ok(
+            "primary_cta_visibility", True,
+            "no Views/ dir — skipping",
+            skipped=True,
+        )]
+
+    anchor_pat = re.compile(r'\.accessibilityIdentifier\("autobot\.[a-zA-Z.]*primaryCTA[a-zA-Z.]*"\)')
+    # Conservative disabled-state-collision pattern: a ternary background that
+    # resolves to Theme.surface / Theme.background in the off branch. Use
+    # non-greedy `.*?` (no DOTALL) so we walk only within the line, but still
+    # skip past nested `Color("Theme/Primary")` parens in the truthy branch.
+    surface_collision = re.compile(
+        r'\.background\(.*?:\s*(Theme\.(?:surface|background)|Color\(\s*"Theme/(?:Surface|Background)"\s*\))'
+    )
+
+    offenders: list[str] = []
+    anchors_seen = 0
+    for swift in views.rglob("*.swift"):
+        try:
+            text = swift.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not anchor_pat.search(text):
+            continue
+        anchors_seen += 1
+        if surface_collision.search(text):
+            offenders.append(str(swift.relative_to(proj)))
+
+    if anchors_seen == 0:
+        return [_ok(
+            "primary_cta_visibility", True,
+            "no primary CTA anchor found — skipping",
+            skipped=True,
+        )]
+    if offenders:
+        return [_ok(
+            "primary_cta_visibility", False,
+            "primary CTA disabled-state background ties to page surface (invisible button risk): "
+            + ", ".join(offenders),
+        )]
+    return [_ok(
+        "primary_cta_visibility", True,
+        f"{anchors_seen} primary CTA anchor(s) inspected — no surface-collision pattern detected",
+    )]
+
+
 def check_ios_capability_safe(proj: Path, app: str, state: dict) -> list[dict]:
     """Verify iOS 26+ APIs are either supported by the deployment target or
     properly `#available(iOS 26, *)` guarded.
@@ -1025,6 +1089,97 @@ def check_service_stubs_preserved(proj: Path, app: str, state: dict) -> list[dic
     return [_file_exists(proj / app / "App" / "ServiceStubs.swift", "stubs_for_preview")]
 
 
+# ── Design-system Swift Package (Gate 3→4) ──
+
+
+def _resolve_design_system_module(proj: Path, state: dict) -> tuple[str | None, str | None]:
+    """Return (module_name, error_message). module_name is None when unresolved.
+
+    Resolution order:
+    1. state["architecture"]["designSystemModule"] (test/runtime injection)
+    2. .autobot/architecture.json -> designSystemModule
+
+    The architecture.json read is wrapped in try/except so a malformed file
+    surfaces as an actionable gate failure rather than a stack trace.
+    """
+    arch = (state or {}).get("architecture") or {}
+    module = arch.get("designSystemModule") if isinstance(arch, dict) else None
+    if module:
+        return module, None
+
+    arch_path = proj / ".autobot" / "architecture.json"
+    if not arch_path.is_file():
+        return None, "designSystemModule not set: missing .autobot/architecture.json"
+    try:
+        data = json.loads(arch_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None, "designSystemModule unreadable: .autobot/architecture.json is malformed"
+    module = data.get("designSystemModule") if isinstance(data, dict) else None
+    if not module:
+        return None, "designSystemModule key absent in .autobot/architecture.json"
+    return module, None
+
+
+def check_design_system_package_exists(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify Packages/<Module>/Package.swift exists and declares the expected name."""
+    module, err = _resolve_design_system_module(proj, state)
+    if err is not None:
+        return [_ok("design_system_module_resolved", False, err)]
+
+    pkg_swift = proj / "Packages" / module / "Package.swift"
+    if not pkg_swift.is_file():
+        return [_ok(
+            "design_system_package_exists", False,
+            f"Package.swift not found at {pkg_swift.relative_to(proj) if pkg_swift.is_relative_to(proj) else pkg_swift}",
+        )]
+
+    content = pkg_swift.read_text(encoding="utf-8", errors="replace")
+    # Match `name: "<module>"` exactly; reject sibling DS packages parked at the
+    # same path with a different declared name.
+    if not re.search(rf'name:\s*"{re.escape(module)}"', content):
+        return [_ok(
+            "design_system_package_exists", False,
+            f"Package.swift name does not match expected module '{module}'",
+        )]
+    return [_ok("design_system_package_exists", True, f"Package.swift OK for module '{module}'")]
+
+
+def check_design_system_tokens_exist(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify required token source files exist and are non-empty.
+
+    Tokens live at Packages/<Module>/Sources/<Module>/Tokens/{Color,Typography,
+    Spacing,Radius}.swift. Empty files are treated as missing so a half-written
+    scaffold doesn't slip past the gate.
+    """
+    module, err = _resolve_design_system_module(proj, state)
+    if err is not None:
+        return [_ok("design_system_tokens_module", False, err)]
+
+    tokens_dir = proj / "Packages" / module / "Sources" / module / "Tokens"
+    required = ["Color.swift", "Typography.swift", "Spacing.swift", "Radius.swift"]
+
+    missing: list[str] = []
+    empty: list[str] = []
+    for name in required:
+        f = tokens_dir / name
+        if not f.is_file():
+            missing.append(name)
+        elif f.stat().st_size == 0:
+            empty.append(name)
+
+    if missing:
+        return [_ok(
+            "design_system_tokens_exist", False,
+            f"missing token files: {', '.join(missing)}",
+        )]
+    if empty:
+        return [_ok(
+            "design_system_tokens_exist", False,
+            f"token files are empty: {', '.join(empty)}",
+        )]
+    return [_ok("design_system_tokens_exist", True, f"all {len(required)} token files present")]
+
+
 # ── Gate 6→7 checks ──
 
 
@@ -1208,6 +1363,7 @@ GATE_CHECKS: dict[str, Any] = {
     "models_checksum_matches": check_models_checksum_matches,
     "backend_artifacts_exist_if_required": check_backend_artifacts_exist_if_required,
     "composition_seam_intact": check_composition_seam_intact,
+    "primary_cta_visibility": check_primary_cta_visibility,
     # Gate 5→6
     "build_succeeded": check_build_succeeded,
     "peer_review_acceptable": check_peer_review_acceptable,
@@ -1222,6 +1378,9 @@ GATE_CHECKS: dict[str, Any] = {
     # Gate 4→5 (added with fileOwnership SSOT)
     "sandbox_clean": check_sandbox_clean,
     "no_tabbar_safearea_smells": check_no_tabbar_safearea_smells,
+    # Gate 3→4 (design-system package)
+    "design_system_package_exists": check_design_system_package_exists,
+    "design_system_tokens_exist": check_design_system_tokens_exist,
 }
 
 

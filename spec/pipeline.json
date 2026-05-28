@@ -1122,6 +1122,11 @@
           "label": "intent_anchors_in_ui"
         },
         {
+          "type": "procedural",
+          "name": "primary_cta_visibility",
+          "label": "primary_cta_visibility"
+        },
+        {
           "type": "state_field_contains",
           "label": "phase4_agents_consumed_learnings",
           "field": "phases.4.learningsConsumed",
