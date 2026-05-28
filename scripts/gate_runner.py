@@ -836,8 +836,7 @@ def check_build_succeeded(proj: Path, app: str, state: dict) -> list[dict]:
     The Phase 5 build flow (quality-engineer / autobot-integration-build skill)
     is required to record this via:
       pipeline.sh advance-phase --phase 5 --metadata build_succeeded=true
-    or the equivalent set-phase-status call. build-log.jsonl is audit-only and
-    must not influence gate decisions.
+    build-log.jsonl is audit-only and must not influence gate decisions.
     """
     p5 = state.get("phases", {}).get("5", {})
     meta = p5.get("metadata", {})

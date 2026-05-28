@@ -60,11 +60,10 @@ Minimum Codex-host -> Claude review payload:
 }
 ```
 
-Write it with:
+Include it in the Phase 1 gate transition:
 
 ```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-phase-status \
-  --phase 1 --to in_progress \
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 1 \
   --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"PASS","attempt":1,"blockingFindingsCount":0}'
 ```
 
@@ -95,15 +94,15 @@ Result contract:
 }
 ```
 
-Record it with:
+Record the audit log, then include the review metadata in the Phase 5 gate transition:
 
 ```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-phase-status \
-  --phase 5 --to in_progress \
-  --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}'
-
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event peer_review \
   --detail '{"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}'
+
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 5 \
+  --metadata build_succeeded=true \
+  --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}'
 ```
 
 Gate 5->6 requires `phases.5.metadata.peerReview`:

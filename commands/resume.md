@@ -268,8 +268,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" fail-phase --phase <N> \
   --error "<error>" --increment-retry
 ```
 
-> 레거시 `complete-phase`는 호환을 위해 남아있지만, 새 흐름은 `advance-phase`만 사용한다.
-> `complete-phase`를 직접 호출하면 gate 검증을 우회하므로 권장하지 않는다.
+> Phase 완료는 `advance-phase`만 사용한다. Gate 없는 완료 명령은 공개 CLI에서 제거됐다.
 
 ### Phase 완료 시
 

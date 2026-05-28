@@ -10,7 +10,6 @@
 #   bash pipeline.sh run-gate --gate "4->5"             # run gate, record evidence (no phase mutation)
 #   bash pipeline.sh record-environment --xcodegen true --stitch false
 #   bash pipeline.sh set-flag --key backend_required --value true
-#   bash pipeline.sh complete-phase --phase 1           # legacy; prefer advance-phase
 #
 # Helper subcommands (delegate to focused scripts; same project-dir handling):
 #   bash pipeline.sh env-snapshot         capture|load|ensure|is-stale
@@ -28,7 +27,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${SCRIPT_DIR}/runtime.py"
 
-USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|complete-phase|fail-phase|run-gate|env-snapshot|write-run-summary|grade-learnings|input-hash|context-pack|error-signature|design-spec|sandbox> [options]"
+USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|env-snapshot|write-run-summary|grade-learnings|input-hash|context-pack|error-signature|design-spec|sandbox> [options]"
 
 if [[ -z "$MODE" ]]; then
   echo "$USAGE" >&2
@@ -44,7 +43,18 @@ case "$MODE" in
   set-flag)           exec python3 "$RUNTIME" set-flag           --project-dir "$PROJECT_DIR" "$@" ;;
   start-phase)        exec python3 "$RUNTIME" start-phase        --project-dir "$PROJECT_DIR" "$@" ;;
   advance-phase)      exec python3 "$RUNTIME" advance-phase      --project-dir "$PROJECT_DIR" "$@" ;;
-  complete-phase)     exec python3 "$RUNTIME" complete-phase     --project-dir "$PROJECT_DIR" "$@" ;;
+  complete-phase)
+    cat >&2 <<EOF
+ERROR: pipeline.sh complete-phase was removed because it bypasses gates.
+
+  Use advance-phase for successful/fallback completion:
+    bash pipeline.sh advance-phase --phase <N> [--status completed|fallback] [--metadata KEY=VALUE]
+
+  Use fail-phase for pre-gate failures:
+    bash pipeline.sh fail-phase --phase <N> --error "<error>" --increment-retry
+EOF
+    exit 2
+    ;;
   fail-phase)         exec python3 "$RUNTIME" fail-phase         --project-dir "$PROJECT_DIR" "$@" ;;
   run-gate)           exec python3 "$RUNTIME" run-gate           --project-dir "$PROJECT_DIR" "$@" ;;
 

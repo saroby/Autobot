@@ -185,36 +185,10 @@ def _run_lifecycle_command(
     return 0
 
 
-def set_phase_status(args: argparse.Namespace) -> int:
-    spec = load_spec()
-    phase = str(args.phase)
-    ok, messages, _ = update_phase_status(
-        spec, state_file_from_args(args),
-        phase=phase, target_status=args.to, at=args.at,
-        error=args.error, retry_count=args.retry_count,
-        increment_retry=args.increment_retry,
-        allow_terminal_restart=args.allow_terminal_restart,
-        metadata_items=args.metadata,
-    )
-    for message in messages:
-        print(message)
-    if not ok:
-        return 1
-    print(f"OK: wrote phase {phase} status={args.to}")
-    return 0
-
-
 def start_phase(args: argparse.Namespace) -> int:
     return _run_lifecycle_command(
         args, target_status="in_progress",
         success_message="OK: phase {phase} started",
-    )
-
-
-def complete_phase(args: argparse.Namespace) -> int:
-    return _run_lifecycle_command(
-        args, target_status=args.status,
-        success_message=f"OK: phase {{phase}} marked {args.status}",
     )
 
 
@@ -409,19 +383,6 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=init_state)
 
-    phase = sub.add_parser("set-phase-status", help="Write a validated phase status update")
-    phase.add_argument("--project-dir", default=".")
-    phase.add_argument("--state-file")
-    phase.add_argument("--phase", required=True)
-    phase.add_argument("--to", required=True)
-    phase.add_argument("--at")
-    phase.add_argument("--error")
-    phase.add_argument("--retry-count", type=int)
-    phase.add_argument("--increment-retry", action="store_true")
-    phase.add_argument("--allow-terminal-restart", action="store_true")
-    phase.add_argument("--metadata", action="append", default=[], metavar="KEY=VALUE")
-    phase.set_defaults(func=set_phase_status)
-
     environment = sub.add_parser("record-environment", help="Write environment detection fields")
     environment.add_argument("--project-dir", default=".")
     environment.add_argument("--state-file")
@@ -456,16 +417,6 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--allow-terminal-restart", action="store_true")
     start.add_argument("--metadata", action="append", default=[], metavar="KEY=VALUE")
     start.set_defaults(func=start_phase)
-
-    complete = sub.add_parser("complete-phase", help="Validate, persist, and log phase completion")
-    complete.add_argument("--project-dir", default=".")
-    complete.add_argument("--state-file")
-    complete.add_argument("--phase", required=True)
-    complete.add_argument("--status", choices=["completed", "fallback", "skipped"], default="completed")
-    complete.add_argument("--at")
-    complete.add_argument("--detail")
-    complete.add_argument("--metadata", action="append", default=[], metavar="KEY=VALUE")
-    complete.set_defaults(func=complete_phase)
 
     fail = sub.add_parser("fail-phase", help="Validate, persist, and log a phase failure")
     fail.add_argument("--project-dir", default=".")

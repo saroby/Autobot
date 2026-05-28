@@ -136,9 +136,15 @@ def _advance_phase_core(args: argparse.Namespace) -> AdvanceResult:
     # the still-in_progress state and required PNGs that fallback intentionally
     # omits.
     gate_state = state
-    if args.status == "fallback":
+    if args.status == "fallback" or args.metadata:
         gate_state = copy.deepcopy(state)
+    if args.status == "fallback":
         gate_state.setdefault("phases", {}).setdefault(phase, {"status": "pending"})["status"] = "fallback"
+    if args.metadata:
+        metadata = gate_state.setdefault("phases", {}).setdefault(phase, {"status": "pending"}).setdefault("metadata", {})
+        for raw in args.metadata:
+            key, value = parse_key_value(raw)
+            metadata[key] = value
     gate_result = execute_gate(gate_id, project_dir, app_name, gate_state, spec)
 
     if args.format == "json":

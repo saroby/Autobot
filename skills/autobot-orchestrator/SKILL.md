@@ -39,8 +39,8 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
 ## Dispatcher 결정 로직
 
 1. `.autobot/build-state.json` 을 읽어 다음 실행할 Phase 를 정한다 (`pending` 또는 `failed (retry < maxRetry)` 중 가장 작은 번호).
-2. 해당 Phase 의 owner agent 를 spec 의 `phases.<id>.owner` 에서 확인한다.
-3. owner 가 `(self)` 면 직접 수행. 아니면 `Agent(subagent_type=...)` 로 디스패치.
+2. 해당 Phase 의 agent 목록을 spec 의 `phases.<id>.agents` 에서 확인한다. 배열이 없으면 self 단계다.
+3. self 단계는 직접 수행한다. agent 목록이 있으면 각 항목을 `Agent(subagent_type=...)` 로 디스패치한다.
 4. **Agent 디스패치 직전에 context_pack 을 생성**해 sub-agent 프롬프트의 첫 블록으로 임베드한다 (LOOP 19). 그러면 sub-agent 는 mvp.md / orchestrator 전체 본문을 받지 않고, 자신의 phase 슬라이스 + output contract + allowed paths + top-scored learnings 만 본다:
 
    ```bash
@@ -87,7 +87,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" run-gate     --gate "N->M" # gate
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag     --key backend_required --value true --reason "..."
 ```
 
-`validate-state.sh` 는 read-only 진단. 상태 변경은 모두 `pipeline.sh`. Legacy `complete-phase` 는 호환용으로만 남아 있고 gate 를 우회하므로 사용 금지.
+`validate-state.sh` 는 read-only 진단. 상태 변경은 모두 `pipeline.sh`. Phase 완료는 `advance-phase`만 사용한다.
 
 ## 학습 적용 (Phase 0 + 각 Phase 시작 시)
 

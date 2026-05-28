@@ -223,14 +223,14 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_fix \
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_attempt \
   --detail "{\"attempt\":${N},\"errors\":0,\"succeeded\":true}"
 
-# Gate가 읽는 truth source — 빌드 성공이 확정된 직후 기록 필수
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-phase-status --phase 5 --to in_progress \
-  --metadata build_succeeded=true
+# Gate가 읽는 truth source — 최종 advance-phase 호출에 포함 필수
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 5 \
+  --metadata build_succeeded=true \
+  --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}'
 ```
 
-> `metadata.build_succeeded=true`가 기록되지 않으면 Gate 5→6는 항상 실패한다.
-> `pipeline.sh advance-phase --phase 5 --metadata build_succeeded=true`를 사용하면
-> Gate 실행 + 통과 시 `completed` 마킹까지 한 번에 처리된다.
+> `metadata.build_succeeded=true`와 `metadata.peerReview`가 최종 `advance-phase` 호출에 포함되지 않으면 Gate 5→6는 실패한다.
+> `advance-phase`는 metadata를 gate 평가 전에 반영한 뒤 통과 시 `completed`까지 한 번에 기록한다.
 
 | 반복 횟수 | 전략 |
 |----------|------|

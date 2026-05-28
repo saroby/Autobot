@@ -225,6 +225,53 @@ def check_facade_exports() -> list[str]:
     return errors
 
 
+def _default_prose_docs() -> list[tuple[str, str]]:
+    paths: list[Path] = [PLUGIN_DIR / "README.md"]
+    for root in ("commands", "skills", "agents", "references"):
+        base = PLUGIN_DIR / root
+        if base.is_dir():
+            paths.extend(sorted(base.rglob("*.md")))
+
+    docs: list[tuple[str, str]] = []
+    for path in paths:
+        try:
+            docs.append((str(path.relative_to(PLUGIN_DIR)), path.read_text(encoding="utf-8")))
+        except OSError:
+            continue
+    return docs
+
+
+def check_prose_contract_drift(
+    spec: dict,
+    docs: list[tuple[str, str]] | None = None,
+) -> list[str]:
+    """Catch non-rendered prose that names removed spec/runtime contracts."""
+    docs = _default_prose_docs() if docs is None else docs
+    errors: list[str] = []
+    phases = spec.get("phases", {}) if isinstance(spec, dict) else {}
+    has_agents_contract = any(
+        isinstance(phase, dict) and "agents" in phase for phase in phases.values()
+    )
+    has_owner_contract = any(
+        isinstance(phase, dict) and "owner" in phase for phase in phases.values()
+    )
+
+    for path, content in docs:
+        if has_agents_contract and not has_owner_contract and "phases.<id>.owner" in content:
+            errors.append(
+                f"{path}: references removed spec path phases.<id>.owner; use phases.<id>.agents"
+            )
+        if "pipeline.sh\" complete-phase" in content or "pipeline.sh complete-phase" in content:
+            errors.append(
+                f"{path}: references removed pipeline.sh complete-phase; use advance-phase"
+            )
+        if "pipeline.sh\" set-phase-status" in content or "pipeline.sh set-phase-status" in content:
+            errors.append(
+                f"{path}: references non-public pipeline.sh set-phase-status; use start-phase/advance-phase/fail-phase"
+            )
+    return errors
+
+
 def main() -> int:
     spec = load_spec()
     all_errors: list[str] = []
@@ -261,6 +308,11 @@ def main() -> int:
     errs = check_facade_exports()
     all_errors.extend(errs)
     print(f"  runtime.py facade re-exports: {'PASS' if not errs else f'{len(errs)} issues'}")
+
+    # 7. Non-rendered prose contract drift
+    errs = check_prose_contract_drift(spec)
+    all_errors.extend(errs)
+    print(f"  Prose contract drift: {'PASS' if not errs else f'{len(errs)} issues'}")
 
     if all_errors:
         print(f"\nERRORS ({len(all_errors)}):")

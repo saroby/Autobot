@@ -56,19 +56,6 @@ SCHEMA_FILE="${WORK_DIR}/verdict-schema.json"
 OUT_FILE="${WORK_DIR}/last-message.txt"
 PROMPT_FILE="${WORK_DIR}/prompt.md"
 
-record_review() {
-  # Persist phases.1.metadata.codexReview via runtime CLI.
-  # Args: 1=JSON object string for codexReview
-  local payload="$1"
-  bash "${SCRIPT_DIR}/pipeline.sh" set-phase-status \
-      --phase 1 --to in_progress --metadata "codexReview=${payload}" \
-      2>/dev/null || \
-  python3 - "$payload" <<'PY'
-import json, sys
-sys.path.insert(0, "$(dirname "$0")")
-PY
-}
-
 # Helper: persist via Python (avoids depending on a CLI subcommand we may not have)
 persist_review() {
   local verdict="$1"

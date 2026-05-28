@@ -35,7 +35,7 @@ Save the selected PNG as:
 On success, the orchestrator records Phase 2 metadata in the final Phase 2 completion command:
 
 ```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 2 \
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 2 \
   --metadata app_icon_status=generated \
   --metadata app_icon_path=.autobot/app-icon-1024.png
 ```
@@ -73,7 +73,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-app-icon/scripts/pillow-fallback.sh" \
 
 ```bash
 # Pillow 성공 시
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 2 \
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 2 \
   --metadata app_icon_status=pillow \
   --metadata app_icon_path=.autobot/app-icon-1024.png
 ```
@@ -81,7 +81,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 2 \
 진짜 `fallback` (Pillow 까지 실패) 인 경우에만 다음을 기록한다:
 
 ```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" complete-phase --phase 2 \
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 2 --status fallback \
   --metadata app_icon_status=fallback \
   --metadata app_icon_error="<reason: python3 missing, pip install failed, etc.>"
 ```
