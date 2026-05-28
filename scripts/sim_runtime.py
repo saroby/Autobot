@@ -120,6 +120,37 @@ def _boot(udid: str) -> tuple[bool, str]:
     return False, stderr2.strip() or "boot_failed"
 
 
+def _is_valid_app_bundle(app: Path, app_name: str) -> bool:
+    """Reject .app bundles where `<App>.app/<App>` is a directory, not a
+    Mach-O executable.
+
+    The xcodegen `type: folder` regression (Solos / Murmur build-20260526)
+    produced bundles whose primary binary was itself a directory, so
+    `simctl install` failed with IXUserPresentableErrorDomain code=1 after
+    the smoke gate accepted the path. Validating the Mach-O header at
+    discovery time keeps stale DerivedData artifacts from poisoning the
+    smoke check.
+    """
+    inner = app / app_name
+    if not inner.is_file():
+        return False
+    try:
+        with inner.open("rb") as f:
+            head = f.read(4)
+    except OSError:
+        return False
+    # Mach-O magic numbers (any of these): 32/64-bit, big/little endian, fat.
+    mach_o_magics = {
+        b"\xfe\xed\xfa\xce",  # 32-bit BE
+        b"\xce\xfa\xed\xfe",  # 32-bit LE
+        b"\xfe\xed\xfa\xcf",  # 64-bit BE
+        b"\xcf\xfa\xed\xfe",  # 64-bit LE
+        b"\xca\xfe\xba\xbe",  # universal/fat BE
+        b"\xbe\xba\xfe\xca",  # universal/fat LE
+    }
+    return head in mach_o_magics
+
+
 def _find_built_app(project_root: Path, app_name: str) -> Path | None:
     """Look for the .app produced by xcodebuild.
 
@@ -127,6 +158,9 @@ def _find_built_app(project_root: Path, app_name: str) -> Path | None:
       1. The artifact captured by `phase-5/attempt-*/Build/Products/Debug-iphonesimulator/<App>.app`
          (when we ran with -resultBundlePath)
       2. `~/Library/Developer/Xcode/DerivedData/<App>-*/Build/Products/Debug-iphonesimulator/<App>.app`
+
+    Each candidate is Mach-O verified before being returned so a corrupted
+    cached bundle (folder-typed binary) cannot mask a healthy newer build.
     """
     candidates: list[Path] = []
     phase5 = project_root / ".autobot" / "phase-5"
@@ -140,7 +174,10 @@ def _find_built_app(project_root: Path, app_name: str) -> Path | None:
             app = product_dir / f"{app_name}.app"
             if app.is_dir():
                 candidates.append(app)
-    return candidates[0] if candidates else None
+    for c in candidates:
+        if _is_valid_app_bundle(c, app_name):
+            return c
+    return None
 
 
 def _resolve_bundle_id(project_root: Path, app_name: str, app_path: Path) -> str | None:
