@@ -86,7 +86,9 @@
     },
     "buildFixLoop": {
       "enabled": true,
-      "appliesTo": ["5"],
+      "appliesTo": [
+        "5"
+      ],
       "maxAttempts": 4,
       "checkpoint": {
         "saveBeforeFirstAttempt": true,
@@ -625,7 +627,8 @@
           "{appName}/Views/",
           "{appName}/ViewModels/",
           "{appName}/App/",
-          "{appName}/Assets.xcassets/"
+          "{appName}/Assets.xcassets/",
+          "{appName}/Utilities/Theme.swift"
         ]
       },
       "data-engineer": {
@@ -652,11 +655,6 @@
           "build/",
           ".autobot/deploy-status.json"
         ]
-      },
-      "design-system": {
-        "writes": [
-          "Packages/"
-        ]
       }
     },
     "forbiddenAlways": [
@@ -679,12 +677,11 @@
       "architect"
     ],
     "forbiddenPerAgent": {
-      "ui-builder": [
-        "{appName}/Services/",
-        "Packages/"
+      "data-engineer": [
+        "{appName}/Utilities/Theme.swift"
       ],
-      "design-system": [
-        "{appName}/"
+      "ui-builder": [
+        "{appName}/Services/"
       ]
     }
   },
@@ -748,10 +745,11 @@
         "skillAgent": "ux-designer",
         "outputs": [
           "`.autobot/designs/*.png`",
-          "`.autobot/design-spec.md`"
+          "`.autobot/design-spec.md`",
+          "`.autobot/app-icon-1024.png`"
         ],
         "parallel": false,
-        "gateLabel": "→ Stitch 성공 필수, 미설치 시 fallback"
+        "gateLabel": "→ Stitch 성공 필수(미설치 시 fallback) + app-icon-1024.png 존재"
       }
     },
     "3": {
@@ -762,19 +760,19 @@
       ],
       "gate": "3->4",
       "allowFallback": false,
-      "agents": ["design-system"],
       "docs": {
-        "displayName": "Xcode 프로젝트 + Design System",
-        "readmeAgent": "(self) + design-system",
-        "skillAgent": "(self) + design-system",
+        "displayName": "Xcode 프로젝트",
+        "readmeAgent": "(self)",
+        "skillAgent": "(self)",
         "outputs": [
           "`.xcodeproj`",
-          "`Packages/<Name>DS/`",
+          "`.gitignore`",
           "`PrivacyInfo.xcprivacy`",
-          "`.entitlements`"
+          "`.entitlements`",
+          "`Assets.xcassets/AppIcon.appiconset/AppIcon-*.png`"
         ],
         "parallel": false,
-        "gateLabel": "→ .xcodeproj + Package 존재 + tokens 채워짐"
+        "gateLabel": "→ .xcodeproj + AppIcon.appiconset PNG 존재 검증"
       }
     },
     "4": {
@@ -989,7 +987,7 @@
       "toPhase": "3",
       "soft": false,
       "summary": "The look-and-feel design contract exists; Stitch screenshots are required only on the primary path.",
-      "docsSummary": "Stitch 성공 여부와 무관하게 design-spec 룩앤필 계약이 있고, primary 경로에서는 designs 산출물이 있는지 검증",
+      "docsSummary": "Stitch 성공 여부와 무관하게 design-spec 룩앤필 계약이 있고, primary 경로에서는 designs 산출물이 있는지 검증 · app-icon-1024.png source 이미지 존재 필수",
       "checks": [
         {
           "type": "file_exists",
@@ -1010,6 +1008,11 @@
           "type": "procedural",
           "name": "design_spec_json_valid",
           "label": "design_spec_json_valid"
+        },
+        {
+          "type": "procedural",
+          "name": "app_icon_source_present",
+          "label": "app_icon_source_present"
         }
       ]
     },
@@ -1017,8 +1020,8 @@
       "fromPhase": "3",
       "toPhase": "4",
       "soft": false,
-      "summary": "The scaffolded Xcode project, required configuration files, and Design System package skeleton (with token stubs) exist.",
-      "docsSummary": ".xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 + Design System 패키지 스켈레톤(토큰 스텁 포함) 존재를 검증",
+      "summary": "The scaffolded Xcode project and required configuration files exist.",
+      "docsSummary": ".xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증 · AppIcon.appiconset 에 적용된 PNG 존재 필수",
       "checks": [
         {
           "type": "procedural",
@@ -1047,15 +1050,8 @@
         },
         {
           "type": "procedural",
-          "name": "design_system_package_exists",
-          "label": "design_system_package_exists",
-          "docs": "Packages/<designSystemModule>/Package.swift 존재 + name 필드가 designSystemModule 과 일치"
-        },
-        {
-          "type": "procedural",
-          "name": "design_system_tokens_exist",
-          "label": "design_system_tokens_exist",
-          "docs": "Sources/<designSystemModule>/Tokens/ 아래 Color.swift, Typography.swift, Spacing.swift, Radius.swift 모두 존재 + 비어있지 않음"
+          "name": "app_icon_applied",
+          "label": "app_icon_applied"
         }
       ]
     },

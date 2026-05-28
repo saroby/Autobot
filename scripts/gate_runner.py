@@ -59,8 +59,21 @@ def _dir_exists(path: Path, label: str) -> dict[str, Any]:
     return _ok(label, path.is_dir(), f"{path}/")
 
 
-def _dir_has_swift(directory: Path, label: str, *, min_count: int = 1) -> dict[str, Any]:
-    matches = sorted(directory.glob("*.swift")) if directory.is_dir() else []
+def _dir_has_swift(
+    directory: Path, label: str, *, min_count: int = 1, recursive: bool = False,
+) -> dict[str, Any]:
+    """Count .swift files in *directory*.
+
+    Set *recursive*=True when subdirectories like ``Views/Components/`` are
+    legitimate organization (rather than a sandbox violation). Recursive callers
+    still report the top-level dir name in the message so output stays readable.
+    """
+    if not directory.is_dir():
+        matches: list[Path] = []
+    elif recursive:
+        matches = sorted(directory.rglob("*.swift"))
+    else:
+        matches = sorted(directory.glob("*.swift"))
     return _ok(label, len(matches) >= min_count, f"{len(matches)} .swift in {directory.name}/")
 
 
@@ -492,6 +505,25 @@ def check_design_assets_exist_or_fallback(proj: Path, app: str, state: dict) -> 
     return [_ok("design_png_files", len(matches) > 0, f"{len(matches)} .png in designs/")]
 
 
+def check_app_icon_source_present(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 2 must produce a 1024×1024 app-icon PNG.
+
+    The orchestrator is expected to invoke the ``autobot-app-icon`` skill at
+    the tail of Phase 2 — imagegen → Pillow fallback → placeholder. If even the
+    placeholder is missing, the AppIcon.appiconset will end up empty and the
+    user gets a faceless app. Past incident: BookMemo (2026-05) shipped with no
+    icon because orchestrator skipped this implicit step.
+    """
+    icon = proj / ".autobot" / "app-icon-1024.png"
+    if not icon.is_file():
+        return [_ok(
+            "app_icon_source_present", False,
+            f"MISSING: {icon} — invoke autobot-app-icon skill (imagegen → Pillow fallback)",
+        )]
+    size = icon.stat().st_size
+    return [_ok("app_icon_source_present", size > 0, f"{icon.name} ({size} bytes)")]
+
+
 def check_design_spec_sections_complete(proj: Path, app: str, state: dict) -> list[dict]:
     spec_path = proj / ".autobot" / "design-spec.md"
     if not spec_path.is_file():
@@ -561,6 +593,25 @@ def check_privacy_manifest_exists(proj: Path, app: str, state: dict) -> list[dic
     return [_file_exists(proj / app / "PrivacyInfo.xcprivacy", "privacy_manifest")]
 
 
+def check_app_icon_applied(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 3 must apply the source icon into the AppIcon.appiconset.
+
+    The scaffold creates ``Contents.json`` automatically but it points at zero
+    PNGs unless ``scripts/app-icon.sh apply`` has run. Past incident: BookMemo
+    shipped with a faceless icon because the scaffold step skipped apply.
+    """
+    iconset = proj / app / "Assets.xcassets" / "AppIcon.appiconset"
+    if not iconset.is_dir():
+        return [_ok("app_icon_iconset_dir", False, f"MISSING: {iconset}")]
+    pngs = sorted(iconset.glob("*.png"))
+    if not pngs:
+        return [_ok(
+            "app_icon_applied", False,
+            "AppIcon.appiconset has 0 PNGs — run scripts/app-icon.sh apply",
+        )]
+    return [_ok("app_icon_applied", True, f"{len(pngs)} icon PNG(s) in AppIcon.appiconset/")]
+
+
 def check_entitlements_exists(proj: Path, app: str, state: dict) -> list[dict]:
     return [_file_exists(proj / app / f"{app}.entitlements", "entitlements")]
 
@@ -604,77 +655,6 @@ def check_gitignore_exists(proj: Path, app: str, state: dict) -> list[dict]:
     return results
 
 
-def _load_design_system_module(proj: Path, state: dict) -> str | None:
-    """Resolve designSystemModule from state first, then from architecture.json on disk."""
-    arch_state = (state or {}).get("architecture") or {}
-    mod = arch_state.get("designSystemModule")
-    if mod:
-        return mod
-    arch_path = proj / ".autobot" / "architecture.json"
-    if not arch_path.is_file():
-        return None
-    try:
-        return json.loads(arch_path.read_text(encoding="utf-8")).get("designSystemModule")
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def check_design_system_package_exists(proj: Path, app: str, state: dict) -> list[dict]:
-    module = _load_design_system_module(proj, state)
-    if not module:
-        return [_ok(
-            "design_system_package_exists", False,
-            "architecture.json.designSystemModule 누락 (architect 가 emit 해야 함)",
-        )]
-    pkg_swift = proj / "Packages" / module / "Package.swift"
-    if not pkg_swift.is_file():
-        return [_ok(
-            "design_system_package_exists", False,
-            f"Package.swift 없음: {pkg_swift.relative_to(proj)}",
-        )]
-    content = pkg_swift.read_text(encoding="utf-8", errors="replace")
-    if f'name: "{module}"' not in content:
-        return [_ok(
-            "design_system_package_exists", False,
-            f"Package.swift 의 name 이 '{module}' 가 아님",
-        )]
-    return [_ok("design_system_package_exists", True, str(pkg_swift.relative_to(proj)))]
-
-
-def check_design_system_tokens_exist(proj: Path, app: str, state: dict) -> list[dict]:
-    module = _load_design_system_module(proj, state)
-    if not module:
-        return [_ok(
-            "design_system_tokens_exist", False,
-            "architecture.json.designSystemModule 누락",
-        )]
-    tokens_dir = proj / "Packages" / module / "Sources" / module / "Tokens"
-    required = ["Color.swift", "Typography.swift", "Spacing.swift", "Radius.swift"]
-    missing: list[str] = []
-    empty: list[str] = []
-    for name in required:
-        p = tokens_dir / name
-        if not p.is_file():
-            missing.append(name)
-            continue
-        if p.stat().st_size == 0:
-            empty.append(name)
-    if missing:
-        return [_ok(
-            "design_system_tokens_exist", False,
-            f"missing token files: {', '.join(missing)}",
-        )]
-    if empty:
-        return [_ok(
-            "design_system_tokens_exist", False,
-            f"empty token files: {', '.join(empty)}",
-        )]
-    return [_ok(
-        "design_system_tokens_exist", True,
-        f"{len(required)} tokens present under {tokens_dir.relative_to(proj)}",
-    )]
-
-
 # ── Gate 4→5 checks ──
 
 
@@ -691,7 +671,10 @@ def check_views_exist(proj: Path, app: str, state: dict) -> list[dict]:
     results: list[dict] = []
     for rel in swift_dirs:
         label = rel.split("/")[-2].lower() + "_files"
-        results.append(_dir_has_swift(proj / rel.rstrip("/"), label))
+        # Recursive: Views/Components/, Views/Screens/ etc. are allowed
+        # organization. The Phase 4 sandbox guard ensures the files all land
+        # under the agent's owned root, so recursive .swift counting is safe.
+        results.append(_dir_has_swift(proj / rel.rstrip("/"), label, recursive=True))
     # App entrypoint is part of ui-builder's writes too.
     results.append(_file_grep(proj / app / "App" / f"{app}App.swift",
                               r"\.modelContainer", "app_model_container"))
@@ -1211,14 +1194,14 @@ GATE_CHECKS: dict[str, Any] = {
     "design_spec_sections_complete": check_design_spec_sections_complete,
     "design_assets_exist_or_fallback": check_design_assets_exist_or_fallback,
     "design_spec_json_valid": check_design_spec_json_valid,
+    "app_icon_source_present": check_app_icon_source_present,
     # Gate 3→4
     "xcodeproj_exists": check_xcodeproj_exists,
     "privacy_manifest_exists": check_privacy_manifest_exists,
     "entitlements_exists": check_entitlements_exists,
     "gitignore_exists": check_gitignore_exists,
     "scaffold_build_succeeded": check_scaffold_build_succeeded,
-    "design_system_package_exists": check_design_system_package_exists,
-    "design_system_tokens_exist": check_design_system_tokens_exist,
+    "app_icon_applied": check_app_icon_applied,
     # Gate 4→5
     "views_exist": check_views_exist,
     "services_exist": check_services_exist,
