@@ -29,8 +29,8 @@ from spec_loader import phase_ids, schema_keys
 __all__ = [
     "load_json", "write_json", "utc_now",
     "parse_json_value", "parse_key_value",
-    "state_file_from_args",
-    "load_state", "save_state",
+    "state_file_from_args", "state_file_for",
+    "load_state", "try_load_state", "save_state",
     "default_phases", "collect_schema_issues",
     "mutate_state_with_validation",
 ]
@@ -76,6 +76,15 @@ def state_file_from_args(args: argparse.Namespace) -> Path:
     return Path(args.project_dir) / ".autobot" / "build-state.json"
 
 
+def state_file_for(project_root: Path) -> Path:
+    """Canonical .autobot/build-state.json path for a given project root.
+
+    Companion to state_file_from_args() for callers that don't have an
+    argparse.Namespace (learning_impact, sandbox_guard, ad-hoc tools).
+    """
+    return Path(project_root) / ".autobot" / "build-state.json"
+
+
 # Historical alias — kept because cli.py and phase_advance.py reach in via the
 # facade. New call sites should use state_file_from_args directly.
 state_path_for_args = state_file_from_args
@@ -90,6 +99,24 @@ def load_state(path: Path) -> dict[str, Any]:
         raise SystemExit(f"FATAL: Invalid JSON — {exc}") from exc
     if not isinstance(data, dict):
         raise SystemExit("FATAL: build-state.json root must be an object")
+    return data
+
+
+def try_load_state(path: Path) -> dict[str, Any] | None:
+    """Soft variant of load_state: returns None on any read/parse failure.
+
+    Used by tools (learning_impact, sandbox_guard) that must function before
+    the pipeline has initialised state. Production gate paths should use
+    load_state() so missing/corrupt state fails loudly.
+    """
+    if not path.is_file():
+        return None
+    try:
+        data = load_json(path)
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
     return data
 
 

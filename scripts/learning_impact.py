@@ -31,7 +31,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from state_store import state_file_for, try_load_state  # noqa: E402
 
 QUARANTINE_THRESHOLD = -2  # effect_score <= -2 → quarantined
 LEARNINGS_FILE = ".autobot/learnings.json"
@@ -76,20 +83,6 @@ def stable_id(phase: str, rule_body: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def _state_path(project_root: Path) -> Path:
-    return project_root / ".autobot" / "build-state.json"
-
-
-def _load_state(project_root: Path) -> dict:
-    p = _state_path(project_root)
-    if not p.is_file():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
 def grade_build(project_root: Path, build_id: str | None = None) -> dict:
     """Inspect the just-finished build state and update learning effect scores.
 
@@ -102,7 +95,7 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
     All updates are applied to learnings.json items in-place. Returns a summary.
     """
     data = _load(project_root)
-    state = _load_state(project_root)
+    state = try_load_state(state_file_for(project_root))
     if not state:
         return {"updated": 0, "reason": "no_build_state"}
 

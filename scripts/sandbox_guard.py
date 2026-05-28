@@ -42,20 +42,15 @@ PLUGIN_DIR = SCRIPT_DIR.parent
 SPEC_PATH = PLUGIN_DIR / "spec" / "pipeline.json"
 GUARD_MARKER = ".autobot/.guard-active"
 
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from state_store import state_file_for, try_load_state  # noqa: E402
+
 
 def _load_spec() -> dict:
     with SPEC_PATH.open(encoding="utf-8") as f:
         return json.load(f)
-
-
-def _load_state(project_root: Path) -> dict | None:
-    state = project_root / ".autobot" / "build-state.json"
-    if not state.is_file():
-        return None
-    try:
-        return json.loads(state.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
 
 
 def _active_agent(project_root: Path, explicit: str | None) -> str:
@@ -123,7 +118,7 @@ def check(project_root: Path, target: Path, agent: str | None = None) -> tuple[b
     if agent_block.get("broadAccess"):
         return True, f"agent '{active}' has broadAccess"
 
-    state = _load_state(project_root) or {}
+    state = try_load_state(state_file_for(project_root)) or {}
     app_name = state.get("appName") or os.environ.get("AUTOBOT_APP_NAME") or ""
 
     # Always-shared paths (e.g. .autobot/build-log.jsonl) are allowed for any agent.
