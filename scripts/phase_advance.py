@@ -23,6 +23,7 @@ Soft-gate semantics:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -126,7 +127,19 @@ def _advance_phase_core(args: argparse.Namespace) -> AdvanceResult:
         return out
 
     # ── Run the gate ──
-    gate_result = execute_gate(gate_id, project_dir, app_name, state, spec)
+    # When the caller has signalled an intentional fallback (`--status fallback`),
+    # gate checks that branch on the phase status (`_is_fallback`) must see the
+    # fallback context BEFORE evaluation — otherwise they relax their requirement
+    # only after the gate has already rejected the build. Build-20260526-solos
+    # Phase 2 was trapped here: ux-designer produced a text-only spec, --status
+    # fallback was passed, but design_assets_exist_or_fallback evaluated against
+    # the still-in_progress state and required PNGs that fallback intentionally
+    # omits.
+    gate_state = state
+    if args.status == "fallback":
+        gate_state = copy.deepcopy(state)
+        gate_state.setdefault("phases", {}).setdefault(phase, {"status": "pending"})["status"] = "fallback"
+    gate_result = execute_gate(gate_id, project_dir, app_name, gate_state, spec)
 
     if args.format == "json":
         out.gate_json = gate_result
