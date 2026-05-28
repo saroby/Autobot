@@ -1,0 +1,202 @@
+"""Design spec, design assets, app-icon source, design-system tokens.
+
+Carved out of scripts/gate_runner.py during the gate_checks package split.
+All check signatures: ``(project_dir: Path, app: str, state: dict) -> list[dict]``.
+"""
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent.parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from spec_loader import resolve_app_template  # noqa: E402
+
+from ._helpers import (
+    load_json,
+    load_spec,
+    _ok,
+    _file_exists,
+    _dir_exists,
+    _dir_has_swift,
+    _file_nonempty,
+    _file_grep,
+    _run_cmd,
+    _markdown_heading_present,
+    _agent_writes_dirs
+)
+
+
+def _is_fallback(state: dict, phase: str) -> bool:
+    return state.get("phases", {}).get(phase, {}).get("status") == "fallback"
+
+
+def check_design_assets_exist_or_fallback(proj: Path, app: str, state: dict) -> list[dict]:
+    if _is_fallback(state, "2"):
+        return [_ok("design_assets_fallback", True, "Phase 2 fallback", skipped=True)]
+    designs = proj / ".autobot" / "designs"
+    matches = sorted(designs.glob("*.png")) if designs.is_dir() else []
+    return [_ok("design_png_files", len(matches) > 0, f"{len(matches)} .png in designs/")]
+
+
+def check_app_icon_source_present(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 2 must produce a 1024×1024 app-icon PNG.
+
+    The orchestrator is expected to invoke the ``autobot-app-icon`` skill at
+    the tail of Phase 2 — imagegen → Pillow fallback → placeholder. If even the
+    placeholder is missing, the AppIcon.appiconset will end up empty and the
+    user gets a faceless app. Past incident: BookMemo (2026-05) shipped with no
+    icon because orchestrator skipped this implicit step.
+    """
+    icon = proj / ".autobot" / "app-icon-1024.png"
+    if not icon.is_file():
+        return [_ok(
+            "app_icon_source_present", False,
+            f"MISSING: {icon} — invoke autobot-app-icon skill (imagegen → Pillow fallback)",
+        )]
+    size = icon.stat().st_size
+    return [_ok("app_icon_source_present", size > 0, f"{icon.name} ({size} bytes)")]
+
+
+def check_design_spec_sections_complete(proj: Path, app: str, state: dict) -> list[dict]:
+    spec_path = proj / ".autobot" / "design-spec.md"
+    if not spec_path.is_file():
+        return [_ok("design_spec_file", False, f"{spec_path}")]
+    content = spec_path.read_text(encoding="utf-8", errors="replace")
+    required = [
+        ("visual_concept_section", r"Visual Concept"),
+        ("color_tokens_section", r"Color Tokens|Design Tokens.*Colors|Colors"),
+        ("typography_section", r"Typography"),
+        ("spacing_radius_section", r"Spacing\s*(?:&|and|/)?\s*(?:Radius|Layout)"),
+        ("screen_layout_section", r"Screen[- ]by[- ]Screen Layout|Screen Designs|Screen Details"),
+        ("interaction_feel_section", r"Interaction Feel|Interactions"),
+        ("states_section", r"Empty(?:\s*[,/·&]\s*|\s+)Loading(?:\s*[,/·&]\s*|\s+)Error States|Empty States"),
+    ]
+    return [
+        _ok(label, _markdown_heading_present(content, pattern), pattern)
+        for label, pattern in required
+    ]
+
+
+def check_design_spec_json_valid(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 2→3 — the schema'd design-spec.json must be present (synthesized
+    on the fly when absent) and pass validation.
+
+    Synthesis path means the gate self-heals: if Phase 2 only produced prose
+    (Stitch unavailable, no manual JSON), this check derives a deterministic
+    palette + typography from architecture.md and writes design-spec.json so
+    visual_contract / ui-builder have a reliable contract.
+    """
+    from design_spec_validator import ensure
+
+    _path, payload, problems = ensure(proj, app_name=app, idea=state.get("idea", ""))
+    if problems:
+        return [_ok(
+            "design_spec_json_valid", False,
+            f"design-spec.json invalid: {'; '.join(problems[:3])}",
+        )]
+    info = (payload.get("_synthesizedFrom") or {}) if isinstance(payload, dict) else {}
+    notes = []
+    if info.get("fallbackPalette"):
+        notes.append("fallback-palette")
+    if info.get("architecture_md") or info.get("design_spec_md"):
+        notes.append("derived-from-text")
+    label = f" ({', '.join(notes)})" if notes else ""
+    return [_ok(
+        "design_spec_json_valid", True,
+        f"category={payload.get('appCategory')} primary={payload.get('colorTokens',{}).get('primary')}{label}",
+    )]
+
+
+def _resolve_design_system_module(proj: Path, state: dict) -> tuple[str | None, str | None]:
+    """Return (module_name, error_message). module_name is None when unresolved.
+
+    Resolution order:
+    1. state["architecture"]["designSystemModule"] (test/runtime injection)
+    2. .autobot/architecture.json -> designSystemModule
+
+    The architecture.json read is wrapped in try/except so a malformed file
+    surfaces as an actionable gate failure rather than a stack trace.
+    """
+    arch = (state or {}).get("architecture") or {}
+    module = arch.get("designSystemModule") if isinstance(arch, dict) else None
+    if module:
+        return module, None
+
+    arch_path = proj / ".autobot" / "architecture.json"
+    if not arch_path.is_file():
+        return None, "designSystemModule not set: missing .autobot/architecture.json"
+    try:
+        data = json.loads(arch_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None, "designSystemModule unreadable: .autobot/architecture.json is malformed"
+    module = data.get("designSystemModule") if isinstance(data, dict) else None
+    if not module:
+        return None, "designSystemModule key absent in .autobot/architecture.json"
+    return module, None
+
+
+def check_design_system_package_exists(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify Packages/<Module>/Package.swift exists and declares the expected name."""
+    module, err = _resolve_design_system_module(proj, state)
+    if err is not None:
+        return [_ok("design_system_module_resolved", False, err)]
+
+    pkg_swift = proj / "Packages" / module / "Package.swift"
+    if not pkg_swift.is_file():
+        return [_ok(
+            "design_system_package_exists", False,
+            f"Package.swift not found at {pkg_swift.relative_to(proj) if pkg_swift.is_relative_to(proj) else pkg_swift}",
+        )]
+
+    content = pkg_swift.read_text(encoding="utf-8", errors="replace")
+    # Match `name: "<module>"` exactly; reject sibling DS packages parked at the
+    # same path with a different declared name.
+    if not re.search(rf'name:\s*"{re.escape(module)}"', content):
+        return [_ok(
+            "design_system_package_exists", False,
+            f"Package.swift name does not match expected module '{module}'",
+        )]
+    return [_ok("design_system_package_exists", True, f"Package.swift OK for module '{module}'")]
+
+
+def check_design_system_tokens_exist(proj: Path, app: str, state: dict) -> list[dict]:
+    """Verify required token source files exist and are non-empty.
+
+    Tokens live at Packages/<Module>/Sources/<Module>/Tokens/{Color,Typography,
+    Spacing,Radius}.swift. Empty files are treated as missing so a half-written
+    scaffold doesn't slip past the gate.
+    """
+    module, err = _resolve_design_system_module(proj, state)
+    if err is not None:
+        return [_ok("design_system_tokens_module", False, err)]
+
+    tokens_dir = proj / "Packages" / module / "Sources" / module / "Tokens"
+    required = ["Color.swift", "Typography.swift", "Spacing.swift", "Radius.swift"]
+
+    missing: list[str] = []
+    empty: list[str] = []
+    for name in required:
+        f = tokens_dir / name
+        if not f.is_file():
+            missing.append(name)
+        elif f.stat().st_size == 0:
+            empty.append(name)
+
+    if missing:
+        return [_ok(
+            "design_system_tokens_exist", False,
+            f"missing token files: {', '.join(missing)}",
+        )]
+    if empty:
+        return [_ok(
+            "design_system_tokens_exist", False,
+            f"token files are empty: {', '.join(empty)}",
+        )]
+    return [_ok("design_system_tokens_exist", True, f"all {len(required)} token files present")]

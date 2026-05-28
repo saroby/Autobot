@@ -8,6 +8,7 @@ spin up an isolated build directory under tmp_path.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -24,30 +25,50 @@ def import_runtime_modules():
         sys.path.insert(0, str(SCRIPTS_DIR))
 
 
-def run_pipeline(*args, project_dir: Path, **kwargs) -> subprocess.CompletedProcess:
+def _scoped_env(project_dir: Path, extra: dict | None = None) -> dict:
+    """Return an env that pins CLAUDE_PROJECT_DIR/AUTOBOT_* to the temp project.
+
+    pipeline.sh resolves PROJECT_DIR from CLAUDE_PROJECT_DIR. If the harness
+    that runs the tests (e.g. Claude Code) sets it to the real Autobot repo,
+    every subprocess would write into the real .autobot/ — leaking state
+    across tests and clobbering the developer's working tree. Pin the env
+    explicitly so cwd= and the env agree.
+    """
+    env = os.environ.copy()
+    env["CLAUDE_PROJECT_DIR"] = str(project_dir)
+    env.pop("AUTOBOT_ACTIVE_AGENT", None)
+    env.pop("AUTOBOT_APP_NAME", None)
+    if extra:
+        env.update(extra)
+    return env
+
+
+def run_pipeline(*args, project_dir: Path, env: dict | None = None, **kwargs) -> subprocess.CompletedProcess:
     """Execute pipeline.sh in a project directory.
 
     Inherits the current process environment so the same python interpreter
     that ran the test is used by the subprocess (avoids picking up an older
-    system python via /usr/bin first).
+    system python via /usr/bin first), but rebinds CLAUDE_PROJECT_DIR to the
+    temp project so harness-injected values don't leak.
     """
     cmd = ["bash", str(SCRIPTS_DIR / "pipeline.sh"), *args]
+    kwargs.setdefault("env", _scoped_env(project_dir, env))
     return subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, **kwargs)
 
 
-def run_runtime(*args, project_dir: Path) -> subprocess.CompletedProcess:
+def run_runtime(*args, project_dir: Path, env: dict | None = None) -> subprocess.CompletedProcess:
     cmd = ["python3", str(SCRIPTS_DIR / "runtime.py"), *args]
-    return subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True)
+    return subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, env=_scoped_env(project_dir, env))
 
 
-def run_sandbox(*args, project_dir: Path) -> subprocess.CompletedProcess:
+def run_sandbox(*args, project_dir: Path, env: dict | None = None) -> subprocess.CompletedProcess:
     cmd = ["bash", str(SCRIPTS_DIR / "agent-sandbox.sh"), *args]
-    return subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True)
+    return subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, env=_scoped_env(project_dir, env))
 
 
-def run_build_log(*args, project_dir: Path) -> subprocess.CompletedProcess:
+def run_build_log(*args, project_dir: Path, env: dict | None = None) -> subprocess.CompletedProcess:
     cmd = ["bash", str(SCRIPTS_DIR / "build-log.sh"), *args]
-    return subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True)
+    return subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, env=_scoped_env(project_dir, env))
 
 
 class IsolatedProjectCase(unittest.TestCase):
