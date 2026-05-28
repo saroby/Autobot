@@ -30,7 +30,6 @@ targets:
     platform: iOS
     sources:
       - path: ${APP_NAME}
-        type: folder
     dependencies:
       - package: ${DESIGN_SYSTEM_MODULE}
     settings:
@@ -50,7 +49,6 @@ targets:
     platform: iOS
     sources:
       - path: ${APP_NAME}Tests
-        type: folder
     dependencies:
       - target: ${APP_NAME}
     settings:
@@ -60,8 +58,11 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
 ```
 
-> **`type: folder`** 를 사용하면 XcodeGen이 `PBXFileSystemSynchronizedRootGroup`을 생성합니다.
-> 개별 파일을 `sources`/`resources` 섹션에 나열할 필요가 없습니다.
+> **Group sources (default, no `type: folder`).** xcodegen 2.45.4 + Xcode 26.5 의
+> `type: folder` (PBXFileSystemSynchronizedRootGroup) 형식은 Solos / Murmur 빌드에서
+> `<App>.app/<App>` 바이너리가 디렉토리로 빌드되는 회귀를 일으켰다. 그룹 모드는
+> 신규 파일 추가 시 `xcodegen generate` 재실행이 필요하지만 — Autobot 오케스트레이터가
+> 각 phase 경계에서 어차피 재생성하므로 자동 동기화의 이점은 미미하고, 빌드 신뢰성이 더 중요.
 
 ## Minimal App Entry Point
 
