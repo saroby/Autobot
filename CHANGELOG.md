@@ -4,7 +4,21 @@
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-28
+
+자기개선 루프를 App Store 심사 제출까지 확장. TestFlight 이후의 마지막 마디 — ASO 최적화 메타데이터, 모든 iPhone 사이즈 스크린샷, AXI-Homepage 제품 등록, 빌드 processing 폴링 + 자동 리뷰 제출 — 을 단일 슬래시 커맨드로 묶었다. 동시에 Design System SPM 분리가 합쳐졌다.
+
 ### Added
+- **`/autobot:app-review` — App Store 심사 제출 일괄 자동화** — 신규 슬래시 커맨드 + `autobot-app-review` 스킬:
+  - **Phase A — Marketing context**: `architecture.md` + `build-state.json` 에서 `app-marketing-context.md` 를 프로젝트 루트에 작성 (aso-skills lookup 위치 요구).
+  - **Phase B — Metadata**: ASO 원칙 inline 적용 (Q&A 발동 막기 위해 aso-skills 는 Skill-invoke 안 함). `marketing_url` / `support_url` 은 slug 기반 `https://axi.dev/products/<slug>` prefill. `autobot-generate-metadata` + `autobot-upload-metadata` 체인.
+  - **Phase C — Screenshot narrative**: 5-슬롯 narrative (Hook / Feature×3 / Closing) 를 `.autobot/screenshot-plan.md` 로.
+  - **Phase D-1 — Raw capture**: `ParthJadhav/ios-marketing-capture` 스킬 위임 (자동 git clone fallback). 시뮬레이터 in-app 캡쳐로 `marketing/<locale>/*.png` 생성.
+  - **Phase D-2 — Composite**: `app-store-screenshots:app-store-screenshots` 위임. 4개 iPhone 사이즈 (6.9"/6.5"/6.3"/6.1") × 모든 locale 합성 → `fastlane/screenshots/<locale>/*.png`.
+  - **Phase H — Homepage 등록 (신규 앱만)**: `scripts/register-on-homepage.sh` 가 AXI-Homepage 레포 clone → `src/data/products.ts` 에 TS-aware 삽입 → 아이콘 + 스크린샷을 `public/` 에 복사 → `git push origin main`. 멱등 (slug 존재 시 no-op, `--force` 로 덮어쓰기). Dirty worktree 거부, atomic write.
+  - **Phase E — Screenshots upload**: `scripts/upload-screenshots.sh` (fastlane deliver `--skip_binary_upload --skip_metadata --overwrite_screenshots`).
+  - **Phase F — Build upload**: 기존 `deployer` 에이전트 위임 (register → archive → upload, idempotent).
+  - **Phase G — Submit for review**: `scripts/submit-for-review.sh` 가 `fastlane pilot builds` 폴링으로 빌드가 PROCESSING → VALID 전이 대기 (최대 30분, transient error 5회 tolerance) 후 `fastlane deliver --submit_for_review` 호출. Submission JSON 기본값은 Autobot 스캐폴드 가정 (encryption=false, IDFA=false, has_rights=true, automatic_release=true) 과 일치.
 - **Design System SPM**: 매 MVP 빌드마다 in-tree 로컬 패키지 `Packages/<Name>DS/` 를 자동 생성. architect 가 `architecture.json.designSystemModule` 로 이름 결정 (관례: `<AppName>DS`), Phase 3 scaffold 가 골격 + project.yml wiring, 새 `design-system` 서브 에이전트가 Tokens/Components 채움.
 - 새 게이트: `design_system_package_exists`, `design_system_tokens_exist` (Gate 3→4).
 - `create-xcode-project.sh --design-system-module` 플래그.
@@ -13,6 +27,13 @@
 - ui-builder 는 더 이상 `Utilities/Theme.swift` 를 생성하지 않는다. 대신 `import <Name>DS` 후 패키지 토큰을 사용한다.
 - Phase 3 가 (self scaffold → design-system 에이전트) 2 단계 dispatch 로 변경.
 - `fileOwnership.agents` 에 `design-system` 추가, `ui-builder.writes` 에서 `Theme.swift` 제거.
+- plugin.json `description` 갱신: "App idea to TestFlight" → "App idea to App Store review" — `/autobot:app-review` 추가를 반영.
+
+### Notes
+- `aso-skills:*` 와 `app-store-screenshots:app-store-screenshots` 는 cross-plugin skill. orchestrator 는 Q&A 발동을 피하기 위해 `app-marketing-context.md` 를 프로젝트 루트에 사전 작성 + reference 로만 inline 적용.
+- Phase H 의 git push 이후 배포는 AXI-Homepage 레포가 외부에서 처리 — Autobot 의 책임은 push 까지.
+- iPad 자산은 생성하지 않는다 (iPhone App Store 전용).
+- Apple 신규 앱 제출 시 연령 등급 / App Privacy 질문지는 ASC 웹에서 1회만 수동 처리 필요 — fastlane API 영역 밖.
 
 ## [0.5.0] — 2026-05-26
 
