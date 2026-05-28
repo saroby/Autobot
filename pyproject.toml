@@ -1,0 +1,15 @@
+[project]
+name = "autobot"
+version = "0.5.0"
+description = "App idea to TestFlight in one command. Enterprise-grade iOS 26+ app builder with parallel agent orchestration."
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+# Required by scripts/visual_contract.py and the design_system gate.
+# Without it, visual_contract gates degrade to skip.
+visual = ["Pillow>=10.0"]
+
+[tool.autobot]
+# Test runner: stdlib unittest. No third-party dependency required.
+# Run: python3 -m unittest discover -s tests -p 'test_*.py'
+test-command = "python3 -m unittest discover -s tests -p 'test_*.py'"

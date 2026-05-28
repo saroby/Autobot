@@ -321,6 +321,17 @@ Autobot은 위험도 기준으로 동작합니다:
 
 기본 build/resume 파이프라인은 원격 저장소 생성/푸시를 포함하지 않습니다.
 
+## 기여 / 테스트
+
+테스트는 stdlib `unittest`만 사용하므로 추가 의존성 설치 없이 실행할 수 있습니다.
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'   # 185 tests
+python3 scripts/verify_spec_docs.py                     # spec ↔ docs 드리프트 검증
+```
+
+선택 의존성 (`pyproject.toml` 의 `[visual]` extra): `Pillow` — visual contract gate 활성화. 없으면 해당 게이트는 skip 됩니다.
+
 ## 트러블슈팅
 
 자세한 증상별 진단은 `skills/autobot-orchestrator/references/troubleshooting.md` 참조.
