@@ -2,6 +2,18 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [Unreleased]
+
+### Added
+- **Design System SPM**: 매 MVP 빌드마다 in-tree 로컬 패키지 `Packages/<Name>DS/` 를 자동 생성. architect 가 `architecture.json.designSystemModule` 로 이름 결정 (관례: `<AppName>DS`), Phase 3 scaffold 가 골격 + project.yml wiring, 새 `design-system` 서브 에이전트가 Tokens/Components 채움.
+- 새 게이트: `design_system_package_exists`, `design_system_tokens_exist` (Gate 3→4).
+- `create-xcode-project.sh --design-system-module` 플래그.
+
+### Changed
+- ui-builder 는 더 이상 `Utilities/Theme.swift` 를 생성하지 않는다. 대신 `import <Name>DS` 후 패키지 토큰을 사용한다.
+- Phase 3 가 (self scaffold → design-system 에이전트) 2 단계 dispatch 로 변경.
+- `fileOwnership.agents` 에 `design-system` 추가, `ui-builder.writes` 에서 `Theme.swift` 제거.
+
 ## [0.5.0] — 2026-05-26
 
 자기개선 루프의 마지막 마디를 닫고, Phase 5/Gate 5→6 에서 빌드는 통과하지만 런타임에서 깨지는 결함을 차단하는 릴리스. 신규 헬퍼 모듈 14개 + 회귀 테스트 11종 + declarative gate 확장 + agent/command/orchestrator 거대 리팩토링.
