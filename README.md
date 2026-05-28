@@ -76,7 +76,7 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 | 0 | Pre-flight & 환경 준비 | (self) | `build-state.json`, 환경 검증 |
 | 1 | 아키텍처 + 계약 | architect | `architecture.md`, `Models/*.swift`, `ServiceProtocols.swift` |
 | 2 | UX Design (필수) | ux-designer (Stitch) | `.autobot/designs/*.png`, `.autobot/design-spec.md`, `.autobot/app-icon-1024.png` |
-| 3 | Xcode 프로젝트 | (self) | `.xcodeproj`, `.gitignore`, `PrivacyInfo.xcprivacy`, `.entitlements`, `Assets.xcassets/AppIcon.appiconset/AppIcon-*.png` |
+| 3 | Xcode 프로젝트 + Design System | (self) + design-system | `.xcodeproj`, `Packages/<Name>DS/`, `PrivacyInfo.xcprivacy`, `.entitlements` |
 | 4 | 병렬 코드 생성 | ui-builder + data-engineer (+ backend-engineer) | `Views/`, `ViewModels/`, `Services/`, `App/`, `backend/` |
 | 5 | 통합 + 빌드 검증 | quality-engineer | 빌드 성공, 테스트, Integration Wiring |
 | 6 | TestFlight 배포 (수동, /autobot:testflight) | deployer (manual) | 앱 등록 (자동, 멱등), 아카이브, 업로드, 테스터 초대 |
@@ -91,7 +91,7 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 - **Gate 0→1**: 환경, 앱 이름, 초기 build state 준비가 끝났는지 검증
 - **Gate 1→2**: architecture.md 구조, Design Direction, Models/*.swift, ServiceProtocols.swift, 계약 snapshot이 준비됐는지 검증
 - **Gate 2→3**: Stitch 성공 여부와 무관하게 design-spec 룩앤필 계약이 있고, primary 경로에서는 designs 산출물이 있는지 검증 · app-icon-1024.png source 이미지 존재 필수
-- **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증 · AppIcon.appiconset 에 적용된 PNG 존재 필수
+- **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 + Design System 패키지 스켈레톤(토큰 스텁 포함) 존재를 검증 · AppIcon.appiconset 에 적용된 PNG 존재 필수
 - **Gate 4→5**: Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건
 - **Gate 5→6**: 빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)
 - **Gate 6→7**: 배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행 (soft gate)
