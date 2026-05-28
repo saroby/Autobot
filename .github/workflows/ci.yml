@@ -1,0 +1,30 @@
+name: ci
+
+# Per-PR + push-to-main checks. Fast, no Xcode required.
+# Hardware-dependent regression (Xcode/simulator) is in smoke-e2e.yml (nightly).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  unit-and-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate pipeline.json schema
+        run: |
+          python3 -c "from scripts import spec_loader; spec_loader.validate_spec(spec_loader.load_spec())"
+
+      - name: Verify spec ↔ docs consistency
+        run: python3 scripts/verify_spec_docs.py
+
+      - name: Unit regression (stdlib unittest, 185 tests)
+        run: bash tests/run_tests.sh
