@@ -627,8 +627,7 @@
           "{appName}/Views/",
           "{appName}/ViewModels/",
           "{appName}/App/",
-          "{appName}/Assets.xcassets/",
-          "{appName}/Utilities/Theme.swift"
+          "{appName}/Assets.xcassets/"
         ]
       },
       "data-engineer": {
@@ -655,6 +654,11 @@
           "build/",
           ".autobot/deploy-status.json"
         ]
+      },
+      "design-system": {
+        "writes": [
+          "Packages/"
+        ]
       }
     },
     "forbiddenAlways": [
@@ -677,11 +681,12 @@
       "architect"
     ],
     "forbiddenPerAgent": {
-      "data-engineer": [
-        "{appName}/Utilities/Theme.swift"
-      ],
       "ui-builder": [
-        "{appName}/Services/"
+        "{appName}/Services/",
+        "Packages/"
+      ],
+      "design-system": [
+        "{appName}/"
       ]
     }
   },
@@ -760,19 +765,21 @@
       ],
       "gate": "3->4",
       "allowFallback": false,
+      "agents": [
+        "design-system"
+      ],
       "docs": {
-        "displayName": "Xcode 프로젝트",
-        "readmeAgent": "(self)",
-        "skillAgent": "(self)",
+        "displayName": "Xcode 프로젝트 + Design System",
+        "readmeAgent": "(self) + design-system",
+        "skillAgent": "(self) + design-system",
         "outputs": [
           "`.xcodeproj`",
-          "`.gitignore`",
+          "`Packages/<Name>DS/`",
           "`PrivacyInfo.xcprivacy`",
-          "`.entitlements`",
-          "`Assets.xcassets/AppIcon.appiconset/AppIcon-*.png`"
+          "`.entitlements`"
         ],
         "parallel": false,
-        "gateLabel": "→ .xcodeproj + AppIcon.appiconset PNG 존재 검증"
+        "gateLabel": "→ .xcodeproj + Package 존재 + tokens 채워짐"
       }
     },
     "4": {
@@ -1020,8 +1027,8 @@
       "fromPhase": "3",
       "toPhase": "4",
       "soft": false,
-      "summary": "The scaffolded Xcode project and required configuration files exist.",
-      "docsSummary": ".xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 존재를 검증 · AppIcon.appiconset 에 적용된 PNG 존재 필수",
+      "summary": "The scaffolded Xcode project, required configuration files, and Design System package skeleton (with token stubs) exist.",
+      "docsSummary": ".xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 + Design System 패키지 스켈레톤(토큰 스텁 포함) 존재를 검증 · AppIcon.appiconset 에 적용된 PNG 존재 필수",
       "checks": [
         {
           "type": "procedural",
@@ -1052,6 +1059,18 @@
           "type": "procedural",
           "name": "app_icon_applied",
           "label": "app_icon_applied"
+        },
+        {
+          "type": "procedural",
+          "name": "design_system_package_exists",
+          "label": "design_system_package_exists",
+          "docs": "Packages/<designSystemModule>/Package.swift 존재 + name 필드가 designSystemModule 과 일치"
+        },
+        {
+          "type": "procedural",
+          "name": "design_system_tokens_exist",
+          "label": "design_system_tokens_exist",
+          "docs": "Sources/<designSystemModule>/Tokens/ 아래 Color.swift, Typography.swift, Spacing.swift, Radius.swift 모두 존재 + 비어있지 않음"
         }
       ]
     },
