@@ -282,13 +282,36 @@ rm -f "$OUT_FILE"
 echo "Running codex review (attempt ${ATTEMPT}, timeout ${TIMEOUT_SECS}s)…" >&2
 
 set +e
-timeout --kill-after=10 "$TIMEOUT_SECS" codex exec \
-  --skip-git-repo-check \
-  -C "$PROJECT_DIR" \
-  --output-schema "$SCHEMA_FILE" \
-  --output-last-message "$OUT_FILE" \
-  --sandbox read-only \
-  - < "$PROMPT_FILE" >/dev/null 2>&1
+# `timeout` (GNU coreutils) is not present by default on macOS; the bare
+# `timeout … codex …` form exited 127 before codex was reached, masking every
+# peer review as "codex failed". Prefer gtimeout (brew coreutils), then
+# timeout, otherwise run codex without OS-level timeout — codex bounds its
+# own work and silent skip is worse than a missing kill-switch.
+if command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="gtimeout"
+elif command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="timeout"
+else
+  TIMEOUT_BIN=""
+fi
+if [[ -n "$TIMEOUT_BIN" ]]; then
+  "$TIMEOUT_BIN" --kill-after=10 "$TIMEOUT_SECS" codex exec \
+    --skip-git-repo-check \
+    -C "$PROJECT_DIR" \
+    --output-schema "$SCHEMA_FILE" \
+    --output-last-message "$OUT_FILE" \
+    --sandbox read-only \
+    - < "$PROMPT_FILE" >/dev/null 2>&1
+else
+  echo "WARN: no GNU timeout binary (install coreutils for gtimeout); running codex without OS-level timeout" >&2
+  codex exec \
+    --skip-git-repo-check \
+    -C "$PROJECT_DIR" \
+    --output-schema "$SCHEMA_FILE" \
+    --output-last-message "$OUT_FILE" \
+    --sandbox read-only \
+    - < "$PROMPT_FILE" >/dev/null 2>&1
+fi
 codex_rc=$?
 set -e
 
