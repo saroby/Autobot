@@ -16,11 +16,13 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 **CRITICAL RULES:**
 1. The `<AppName>/Models/` directory contains the authoritative type definitions (the "type contract"). You MUST use the exact class names, property names, initializer signatures, and enum cases as defined there. Do NOT guess or improvise type names — READ the files first.
 2. **All source files MUST be written inside the `<AppName>/` subdirectory** (Xcode 소스 그룹). 프로젝트 루트에 직접 쓰면 Xcode 빌드에 포함되지 않는다.
-3. **Accessibility identifiers from `.autobot/app-intent.json` 는 반드시 부착**한다. Phase 5 의 `intent_anchors_in_ui` 게이트가 정확한 문자열을 grep 한다:
-   - root NavigationStack 컨테이너에 `.accessibilityIdentifier("autobot.root")`
-   - primary 화면 (architect 가 `primaryScreenTitle` 로 지정한 화면) 의 `navigationTitle` 직속 element 에 `.accessibilityIdentifier("autobot.primaryTitle")`
-   - primary CTA 버튼에 `.accessibilityIdentifier("autobot.primaryCTA")`
-   - app-intent.json 에 `autobot.primaryList` 가 있으면 해당 List/ScrollView 에도 부착
+3. **Accessibility identifiers 는 반드시 부착**한다. Phase 5 의 `intent_anchors_in_ui` 게이트가 정확한 문자열을 grep 한다. 두 출처를 모두 만족시켜라:
+   - `.autobot/app-intent.json` (기본 골격):
+     - root NavigationStack 컨테이너에 `.accessibilityIdentifier("autobot.root")`
+     - primary 화면 (architect 가 `primaryScreenTitle` 로 지정한 화면) 의 `navigationTitle` 직속 element 에 `.accessibilityIdentifier("autobot.primaryTitle")`
+     - primary CTA 버튼에 `.accessibilityIdentifier("autobot.primaryCTA")`
+     - app-intent.json 에 `autobot.primaryList` 가 있으면 해당 List/ScrollView 에도 부착
+   - **`.autobot/feature-spec.json` (per-feature spine — 반드시 부착)**: `features[]` 배열의 **모든 feature 마다 `anchor` 필드 문자열**을, 그 feature 를 트리거하는 인터랙티브 element (보통 acceptance.steps[0].anchor 와 동일한 버튼/탭/셀) 에 `.accessibilityIdentifier("<feature.anchor>")` 로 부착한다. primaryCTA 만으로는 부족하다 — Phase 5 의 `functional_flows_pass` 가 각 feature 의 anchor 를 AXe 로 탭하므로, feature 하나라도 anchor 가 UI 에 없으면 `intent_anchors_in_ui` 가 **그 feature id 를 지목하며 FAIL** 한다.
 4. **Composition seam 존중**: `@main`, `<AppName>/App/CompositionRoot.swift`, `<AppName>/App/AppEntry.swift` 는 Phase 3 scaffold 가 생성한 그대로 둔다 — DI 주입 코드 외에는 수정 금지. 동일 파일에 두 번째 `@main` 을 만들지 않는다 (Gate 4→5 의 `composition_seam_intact` 가 차단).
 5. **ServiceStubs.swift 보존**: `<AppName>/App/ServiceStubs.swift` 는 Preview 전용 mock 의 SSOT 이다. 삭제하지 않는다. Phase 5 quality-engineer 가 production wiring 을 CompositionRoot 로 옮기더라도 ServiceStubs.swift 자체는 남는다.
 

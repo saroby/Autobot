@@ -51,6 +51,8 @@ Follow the skill's Step 0~6 in exact order. The skill contains:
 - Zero force unwraps in production code
 - At least one test per data model
 - All warnings addressed (not just errors)
+- **Authored tests MUST compile AND pass.** Phase 5→6 의 `logic_tests_pass` 가 `xcodebuild ... test` 결과(.xcresult)를 파싱한다. 컴파일만 되고 실패하는 테스트, 또는 `#expect(true)` 같은 빈 테스트는 게이트를 통과시키지 못한다.
+- **모든 P0 feature 마다 최소 1개의 functional acceptance 테스트를 작성한다.** `.autobot/feature-spec.json` 의 각 P0 feature 에 대해, 해당 feature 의 `acceptance[].postcondition` (예: `count_increased`, `value_persisted_after_relaunch`) 을 실제로 검증하는 테스트를 만든다 — anchor 가 화면에 존재한다는 사실만 단언하는 테스트는 functional acceptance 로 인정되지 않는다. flow 종류의 acceptance 는 Phase 5→6 의 `functional_flows_pass` 가 AXe 로 구동하고, logic 종류는 이 단계에서 작성한 단위/통합 테스트가 검증한다.
 
 **Output:**
 Report build status (success/failure with details) and test results.
