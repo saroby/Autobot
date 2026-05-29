@@ -1227,6 +1227,11 @@
       "checks": [
         {
           "type": "procedural",
+          "name": "functional_verification_passed",
+          "label": "functional_verification_passed"
+        },
+        {
+          "type": "procedural",
           "name": "deployment_attempt_recorded",
           "label": "deployment_attempt_recorded"
         }
