@@ -6,7 +6,7 @@
 
 ## [0.7.1] — 2026-05-29
 
-`/autobot:mvp` 진입점 문서(`commands/mvp.md`)의 SSOT drift·문서 간 불일치 5건 교정. 동작 변화 없음 — 진입점 문서가 실제 스크립트·스킬·sibling 커맨드와 어긋나 사용자를 오인시키던 지점을, 다중 렌즈 감사 + 적대적 검증(라운드별 ground-truth 대조)으로 찾아 고쳤다.
+`/autobot:mvp` 진입점 문서(`commands/mvp.md`)의 SSOT drift·문서 간 불일치 5건 교정. 동작 변화 없음 — 진입점 문서가 실제 스크립트·스킬·sibling 커맨드와 어긋나 사용자를 오인시키던 지점을, 다중 렌즈 감사 + 적대적 검증(라운드별 ground-truth 대조)으로 찾아 고치고, 이어 같은 문서를 정보·가드레일 100% 보존 하에 가독성 중심으로 재구성했다(형태만 변경).
 
 ### Fixed
 - **env_snapshot 동작 오기재** — Phase 0 설명이 env_snapshot 이 "Xcode/SDK/simulator UDID/ASC 자격증명"을 캡처한다고 했으나, `env_snapshot.py` 는 선택된 simulator UDID(+axe 가용성)만 기록한다(Xcode/SDK 는 staleness 회피로 의도적 비캐싱, ASC 는 비대상). 문서가 자신의 "충돌 시 spec/script 우선" 원칙과 모순되던 drift.
@@ -16,6 +16,9 @@
 
 ### Added
 - `/autobot:mvp 가 트리거하지 않는 것` 라우팅 목록에 `/autobot:app-review`(App Store 심사 제출) 포인터 추가 — 출시 경로 안내 누락 보완.
+
+### Changed
+- **mvp.md 가독성 폴리싱 (정보·가드레일·얇은 진입점 설계 100% 보존, 형태만 변경)** — Safety Policy 와 "트리거하지 않는 것"을 표로, 완료 보고를 "기능 검증 배지" / "Capability Coverage" 두 `###` 섹션으로 분리, 진입점 계약을 인용구로, frontmatter description 에 범위(Phase 0–5 + 7) 명시, 입력/결과물 오리엔테이션 추가. judge-panel 4안 생성 → 합성 → 적대적 드리프트/가드레일 검증을 거쳐 명백한 스캔성 이득만 채택하고 길이·중복은 배제(4052→4502자).
 
 ## [0.7.0] — 2026-05-29
 
