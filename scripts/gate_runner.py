@@ -305,18 +305,51 @@ def run_gate(
     soft = gate_spec.get("soft", False)
 
     all_results: list[dict] = []
-    all_passed = True
+    any_hard_fail = False
+    any_degraded = False
 
     for raw in raw_checks:
         descriptor = _normalize_check(raw)
         label = descriptor.get("label") or descriptor.get("name") or descriptor.get("type", "unnamed")
         sub_checks = _evaluate_descriptor(descriptor, project_dir, app_name, state)
-        group_passed = all(r["passed"] or r.get("skipped", False) for r in sub_checks)
-        if not group_passed:
-            all_passed = False
-        all_results.append({"check": label, "passed": group_passed, "sub_checks": sub_checks})
 
-    return {"gate": gate_id, "passed": all_passed, "soft": soft, "checks": all_results}
+        # Three-valued group rollup:
+        #   hard_fail = a sub-check ran and truly failed (not a skip)
+        #   degraded  = a sub-check skipped *because* a degradable resource was
+        #               missing (skipped AND degraded). A benign skip (skipped
+        #               only, no degraded flag) still counts as green so
+        #               backend_required N/A skips never lower the gate.
+        group_hard_fail = any(
+            (not r["passed"]) and (not r.get("skipped", False))
+            for r in sub_checks
+        )
+        group_degraded = any(
+            r.get("skipped", False) and r.get("degraded", False)
+            for r in sub_checks
+        )
+        group_passed = not group_hard_fail and not group_degraded
+
+        if group_hard_fail:
+            any_hard_fail = True
+        if group_degraded and not group_hard_fail:
+            any_degraded = True
+
+        all_results.append({
+            "check": label,
+            "passed": group_passed,
+            "degraded": (group_degraded and not group_hard_fail),
+            "sub_checks": sub_checks,
+        })
+
+    passed = not any_hard_fail
+    degraded = passed and any_degraded
+    return {
+        "gate": gate_id,
+        "passed": passed,
+        "degraded": degraded,
+        "soft": soft,
+        "checks": all_results,
+    }
 
 
 def format_text(result: dict) -> str:
