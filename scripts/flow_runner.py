@@ -149,9 +149,19 @@ def _frame_inside(frame: dict, screen: dict) -> bool:
     return (sx <= x <= sx + sw) and (sy <= y <= sy + sh)
 
 
+def _anchor_id(e: dict) -> str:
+    """Accessibility identifier of an AXe element.
+
+    Real AXe (≥1.7) carries the accessibilityIdentifier in `AXUniqueId`; we keep
+    `identifier` as a tolerant fallback. SwiftUI `.accessibilityIdentifier("x")`
+    surfaces as AXUniqueId in `axe describe-ui`.
+    """
+    return str(e.get("AXUniqueId") or e.get("identifier") or "")
+
+
 def _anchor_ready(elements: list[dict], anchor: str, screen: dict) -> bool:
     for e in elements:
-        if e.get("identifier") != anchor:
+        if _anchor_id(e) != anchor:
             continue
         if not e.get("enabled", True):
             return False
@@ -179,11 +189,11 @@ def _wait_for_anchor(udid: str, anchor: str, screen: dict,
 
 
 def _count_anchor(elements: list[dict], anchor: str) -> int:
-    return sum(1 for e in elements if e.get("identifier") == anchor)
+    return sum(1 for e in elements if _anchor_id(e) == anchor)
 
 
 def _present(elements: list[dict], anchor: str) -> bool:
-    return any(e.get("identifier") == anchor for e in elements)
+    return any(_anchor_id(e) == anchor for e in elements)
 
 
 def _evaluate_postcondition(

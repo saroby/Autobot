@@ -26,9 +26,12 @@ SCREEN = {"x": 0, "y": 0, "width": 393, "height": 852}
 
 
 def _el(identifier, *, label="", enabled=True, x=20, y=100, w=200, h=44, typ="Button"):
+    # Mirror the REAL AXe 1.7.0 describe-ui schema: the accessibility identifier
+    # is carried in "AXUniqueId" (NOT "identifier"), alongside AXLabel/frame/enabled.
     return {
         "type": typ,
-        "identifier": identifier,
+        "AXUniqueId": identifier,
+        "AXLabel": label,
         "label": label,
         "enabled": enabled,
         "frame": {"x": x, "y": y, "width": w, "height": h},
@@ -51,6 +54,19 @@ class TestAnchorReady(unittest.TestCase):
     def test_offscreen_frame_is_not_ready(self):
         els = [_el("autobot.primaryCTA", x=5000, y=9000)]
         self.assertFalse(flow_runner._anchor_ready(els, "autobot.primaryCTA", SCREEN))
+
+    def test_legacy_identifier_key_still_matches(self):
+        # back-compat: an element using the legacy "identifier" key (no AXUniqueId)
+        # must still match, so flow_runner tolerates both real AXe + older shapes.
+        el = {"type": "Button", "identifier": "autobot.primaryCTA",
+              "enabled": True, "frame": {"x": 20, "y": 100, "width": 200, "height": 44}}
+        self.assertTrue(flow_runner._anchor_ready([el], "autobot.primaryCTA", SCREEN))
+
+    def test_axuniqueid_is_the_real_key(self):
+        # real AXe carries the identifier in AXUniqueId; matching must key off it.
+        el = {"type": "Button", "AXUniqueId": "autobot.primaryCTA",
+              "enabled": True, "frame": {"x": 20, "y": 100, "width": 200, "height": 44}}
+        self.assertTrue(flow_runner._anchor_ready([el], "autobot.primaryCTA", SCREEN))
 
 
 class TestEvaluatePostcondition(unittest.TestCase):
