@@ -1,6 +1,6 @@
 ---
 name: autobot-upload-build
-description: Use when uploading an iOS `.xcarchive` to App Store Connect for TestFlight. Single-responsibility skill — runs `xcodebuild -exportArchive` with `destination: upload` so export+upload happen in one official Apple step (`xcrun altool` is deprecated). Requires the app to already be registered on ASC (`autobot-register-app`) and the archive to already exist (`autobot-archive-build`). Also use when troubleshooting "Authentication failed", "The bundle identifier is not available", export/upload failures, or when picking between ASC API Key and Xcode-stored credentials.
+description: 'Use when uploading an iOS `.xcarchive` to App Store Connect for TestFlight. Single-responsibility skill — runs `xcodebuild -exportArchive` with `destination: upload` so export+upload happen in one official Apple step (`xcrun altool` is deprecated). Requires the app to already be registered on ASC (`autobot-register-app`) and the archive to already exist (`autobot-archive-build`). Also use when troubleshooting "Authentication failed", "The bundle identifier is not available", export/upload failures, or when picking between ASC API Key and Xcode-stored credentials.'
 ---
 
 # Export + Upload to App Store Connect

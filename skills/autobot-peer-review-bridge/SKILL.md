@@ -1,6 +1,6 @@
 ---
 name: autobot-peer-review-bridge
-description: Use when Autobot needs the opposite AI runtime to review generated artifacts: Codex-hosted runs ask Claude, Claude-hosted runs ask Codex. Soft-skips when the peer tool is unavailable.
+description: "Use when Autobot needs the opposite AI runtime to review generated artifacts: Codex-hosted runs ask Claude, Claude-hosted runs ask Codex. Soft-skips when the peer tool is unavailable."
 ---
 
 # Autobot Peer Review Bridge
