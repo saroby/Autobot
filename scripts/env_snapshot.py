@@ -60,6 +60,22 @@ def _pick_simulator() -> dict | None:
     return fallback
 
 
+def _detect_axe() -> tuple[bool, str | None]:
+    """Phase-0 preflight: is the AXe UI-automation CLI installed?
+
+    AXe (https://github.com/cameroncooke/AXe) is what flow_runner uses to drive
+    functional flows. When it is absent, functional_flows_pass degrades rather
+    than hard-fails, so recording availability here lets the operator see *why*
+    the gate degraded without re-shelling out at gate time.
+    """
+    if shutil.which("axe") is None:
+        return False, None
+    rc, out = _run(["axe", "--version"], timeout=10)
+    if rc != 0:
+        return True, None
+    return True, (out.strip() or None)
+
+
 def _udid_still_available(udid: str) -> bool:
     if shutil.which("xcrun") is None:
         return False
@@ -78,9 +94,14 @@ def load(project_root: Path) -> dict | None:
 
 
 def capture(project_root: Path) -> dict:
+    axe_present, axe_version = _detect_axe()
     snapshot = {
         "capturedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "simulator": _pick_simulator(),
+        "environment": {
+            "axe": axe_present,
+            "axeVersion": axe_version,
+        },
     }
     path = project_root / SNAPSHOT_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
