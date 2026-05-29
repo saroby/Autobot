@@ -100,7 +100,8 @@ from gate_checks.deploy import (  # noqa: E402,F401
 )
 from gate_checks.functional import (  # noqa: E402,F401
     check_logic_tests_pass,
-    check_functional_flows_pass
+    check_functional_flows_pass,
+    check_functional_verification_passed
 )
 
 
@@ -157,6 +158,7 @@ GATE_CHECKS: dict[str, Any] = {
     "functional_flows_pass": check_functional_flows_pass,
     # Gate 6→7
     "deployment_attempt_recorded": check_deployment_attempt_recorded,
+    "functional_verification_passed": check_functional_verification_passed,
     # Gate 4→5 (added with fileOwnership SSOT)
     "sandbox_clean": check_sandbox_clean,
     "no_tabbar_safearea_smells": check_no_tabbar_safearea_smells,

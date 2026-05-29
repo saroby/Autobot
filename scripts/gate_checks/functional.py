@@ -273,3 +273,39 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
         "functional_flows_pass", True,
         f"{passed_count}/{len(results)} flow acceptances passed{note}",
     )]
+
+
+def check_functional_verification_passed(proj: Path, app: str, state: dict) -> list[dict]:
+    """Anti-laundering shipping block.
+
+    Reads the recorded verdict of gate 5->6 (state.gates['5->6'].status).
+    Shipping is permitted ONLY when that verdict is a full 'passed'.
+
+    A 'degraded' 5->6 means the functional flows could not be verified
+    (no simulator / no axe / no xcodebuild). Allowing such a build to ship
+    would launder an unverified app past the gate, so this is a HARD fail
+    (passed=False, NOT a benign skip). 'soft_failed', 'failed', and a missing
+    gate are likewise hard fails — there is no fresh proof the app works.
+    """
+    gate = state.get("gates", {}).get("5->6")
+    if not isinstance(gate, dict) or "status" not in gate:
+        return [_ok(
+            "functional_verification_passed", False,
+            "gate 5->6 status missing — no functional verification on record; "
+            "re-run gate 5->6 before shipping",
+        )]
+    status = gate.get("status")
+    if status == "passed":
+        return [_ok("functional_verification_passed", True,
+                    "gate 5->6 status=passed (functional verification on record)")]
+    if status == "degraded":
+        return [_ok(
+            "functional_verification_passed", False,
+            "gate 5->6 status=degraded — functional flows UNVERIFIED "
+            "(simulator/axe/xcodebuild unavailable). Refusing to ship an "
+            "unverified build (anti-laundering).",
+        )]
+    return [_ok(
+        "functional_verification_passed", False,
+        f"gate 5->6 status={status!r} — not a clean pass; refusing to ship.",
+    )]
