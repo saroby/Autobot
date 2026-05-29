@@ -297,6 +297,48 @@ def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
     return (not problems), problems
 
 
+def find_missing_feature_anchors(
+    project_root: Path, app_name: str
+) -> list[tuple[str, str]]:
+    """Return [(featureId, anchor), ...] for every feature whose anchor does NOT
+    appear in the Phase 4 UI source tree. Empty list = all anchors present.
+
+    Searches Views/, App/, and ViewModels/ — the same scope as
+    find_unused_anchors — so anchors declared in the root composition count.
+    """
+    features = load_feature_spec(project_root)
+    if not features:
+        return []
+
+    app_root = project_root / app_name
+    files: list[Path] = []
+    if app_root.is_dir():
+        for sub in ("Views", "App", "ViewModels"):
+            path = app_root / sub
+            if path.is_dir():
+                files.extend(path.rglob("*.swift"))
+
+    combined = "\n".join(
+        f.read_text(encoding="utf-8", errors="replace") for f in files
+    )
+
+    missing: list[tuple[str, str]] = []
+    for feat in features:
+        anchor = feat.anchor.strip()
+        if not anchor:
+            # empty anchor is a validate_feature_spec problem, not an anchor-in-UI
+            # problem; skip here so the message stays about UI wiring.
+            continue
+        pattern = re.compile(
+            rf'accessibilityIdentifier\(\s*"{re.escape(anchor)}"\s*\)'
+            rf'|"{re.escape(anchor)}"\s*as\s+AccessibilityIdentifier'
+            rf'|accessibilityIdentifier:\s*"{re.escape(anchor)}"'
+        )
+        if not pattern.search(combined):
+            missing.append((feat.id, anchor))
+    return missing
+
+
 def _main() -> int:
     import argparse
     parser = argparse.ArgumentParser()

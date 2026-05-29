@@ -146,28 +146,53 @@ def check_feature_spec_quality(proj: Path, app: str, state: dict) -> list[dict]:
 def check_intent_anchors_in_ui(proj: Path, app: str, state: dict) -> list[dict]:
     """Phase 4→5 — every anchor the architect promised must appear in the UI tree.
 
+    When `feature-spec.json` is present, assert EACH feature's `anchor` (the
+    check the new spine is built around) and name the FEATURE that is missing
+    its UI. When only legacy `app-intent.json` exists, fall back to the flat
+    `requiredAnchors` set. Without either manifest, skip (benign).
+
     Without this, the UI test target launched at Phase 5 cannot find the views
     it is supposed to assert against, and runtime-smoke can pass while the
     actual happy path is broken.
     """
-    from intent_spec import find_unused_anchors, load_app_intent
+    from intent_spec import (
+        find_missing_feature_anchors,
+        find_unused_anchors,
+        load_app_intent,
+        load_feature_spec,
+    )
 
+    features = load_feature_spec(proj)
+    if features:
+        missing = find_missing_feature_anchors(proj, app)
+        if not missing:
+            return [_ok(
+                "intent_anchors_in_ui", True,
+                f"all {len(features)} feature anchor(s) present in UI tree",
+            )]
+        detail = ", ".join(f"{fid} ({anchor})" for fid, anchor in missing)
+        return [_ok(
+            "intent_anchors_in_ui", False,
+            f"feature(s) missing UI anchors: {detail}",
+        )]
+
+    # Legacy fallback: flat app-intent requiredAnchors.
     intent = load_app_intent(proj)
     if intent is None:
         return [_ok(
             "intent_anchors_in_ui", True,
-            "app-intent.json absent — skipping",
+            "feature-spec.json and app-intent.json both absent — skipping",
             skipped=True,
         )]
-    missing, present = find_unused_anchors(proj, app)
-    if not missing:
+    missing_a, present = find_unused_anchors(proj, app)
+    if not missing_a:
         return [_ok(
             "intent_anchors_in_ui", True,
-            f"all {len(present)} required anchors present in UI tree",
+            f"all {len(present)} required anchors present in UI tree (app-intent fallback)",
         )]
     return [_ok(
         "intent_anchors_in_ui", False,
-        f"missing accessibility identifiers in UI: {', '.join(missing)} "
+        f"missing accessibility identifiers in UI: {', '.join(missing_a)} "
         f"(present: {', '.join(present) or 'none'})",
     )]
 
