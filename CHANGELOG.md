@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-05-29
+
+`/autobot:mvp` 진입점 문서(`commands/mvp.md`)의 SSOT drift·문서 간 불일치 5건 교정. 동작 변화 없음 — 진입점 문서가 실제 스크립트·스킬·sibling 커맨드와 어긋나 사용자를 오인시키던 지점을, 다중 렌즈 감사 + 적대적 검증(라운드별 ground-truth 대조)으로 찾아 고쳤다.
+
+### Fixed
+- **env_snapshot 동작 오기재** — Phase 0 설명이 env_snapshot 이 "Xcode/SDK/simulator UDID/ASC 자격증명"을 캡처한다고 했으나, `env_snapshot.py` 는 선택된 simulator UDID(+axe 가용성)만 기록한다(Xcode/SDK 는 staleness 회피로 의도적 비캐싱, ASC 는 비대상). 문서가 자신의 "충돌 시 spec/script 우선" 원칙과 모순되던 drift.
+- **coverage JSON 경로 base 불일치** — Capability Coverage 안내가 `scope.*`(coverage 상대)와 `coverage.iteration`(절대)을 혼용. 실제 `run-summary.json` 구조에 맞춰 `coverage.scope.*` 로 통일 — 최상위 `scope` 키를 찾으려다 실패하던 오독 방지.
+- **잘못된 섹션명 인용** — `autobot-orchestrator` 의 "완료 보고" 섹션을 가리켰으나 실제 헤더는 "보고 / 회고".
+- **DEGRADED 배지 문구가 차단 커맨드를 누락** — anti-laundering preflight 는 `/autobot:testflight`·`/autobot:app-review` 둘 다 적용하는데 배지 문구가 testflight 만 언급. 둘 다 명시하도록 교정.
+
+### Added
+- `/autobot:mvp 가 트리거하지 않는 것` 라우팅 목록에 `/autobot:app-review`(App Store 심사 제출) 포인터 추가 — 출시 경로 안내 누락 보완.
+
 ## [0.7.0] — 2026-05-29
 
 검증을 "형태"에서 "실제 동작"으로. 초록불이 *"앱이 아이디어대로 실제로 동작한다"* 를 의미하도록 기능 검증 척추를 넣고(cycle 1), 그 검증기를 실 iOS 26 시뮬레이터에서 실제로 돌려 증명했다(cycle 2). 증명 과정에서 검증기가 실 하드웨어에선 작동하지 않던 버그 3개를 찾아 고쳤다 — 전부 mock 이 숨기고 있던 것.

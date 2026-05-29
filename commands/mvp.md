@@ -43,7 +43,7 @@ allowed-tools:
 
 스킬이 책임지는 단계 요약 (상세는 SSOT 와 스킬 참조):
 
-- **Phase 0** — 빌드 잠금, 환경 감지 (`pipeline.sh env-snapshot ensure`), `build-state.json` init, 앱 이름 결정. env_snapshot 은 Xcode/SDK/simulator UDID/ASC 자격증명 상태를 한 번 캡처해 이후 phase 가 simctl 을 다시 조회하지 않도록 한다.
+- **Phase 0** — 빌드 잠금, 환경 감지 (`pipeline.sh env-snapshot ensure`), `build-state.json` init, 앱 이름 결정. env_snapshot 은 선택된 simulator UDID (와 axe 가용성) 를 한 번 캡처해 이후 phase 가 simctl 을 다시 조회하지 않도록 한다.
 - **Phase 1** — architect → `architecture.md` + `Models/` + `ServiceProtocols.swift` + peer review 게이트
 - **Phase 2** — ux-designer (Stitch primary, fallback 시 design-spec 만으로 진행) + `autobot-app-icon` 스킬로 1024 PNG 아이콘 생성 (필수, gate-enforced)
 - **Phase 3** — Xcode 프로젝트 scaffold + Composition seam + PrivacyInfo + entitlements + AppIcon.appiconset apply (gate-enforced)
@@ -57,6 +57,7 @@ allowed-tools:
 
 - Phase 6 (TestFlight archive/upload/invite) — `/autobot:testflight`
 - App Store 메타데이터 — `/autobot:meta`
+- App Store 심사 제출 (메타·스크린샷·빌드·심사 일괄) — `/autobot:app-review`
 - 원격 git 저장소 생성/푸시
 - ASC 자격증명 수정
 
@@ -75,13 +76,13 @@ allowed-tools:
 - TestFlight 업로드 옵션 안내 (`/autobot:testflight`)
 - **기능 검증 배지 (필수, 크게 표시)**: `artifacts/latest/run-summary.json` 의 `functionalVerification.badge` 를 읽어 완료 화면 최상단에 출력한다:
   - `VERIFIED` → `✅ 기능 검증 통과 (functional flows passed)`
-  - `DEGRADED` → `⚠️ DEGRADED — 기능 검증 미완료 (functional unverified). 시뮬레이터/axe/xcodebuild 부재로 flow 를 실행하지 못함. /autobot:testflight 는 이 상태에서 업로드를 거부합니다.`
+  - `DEGRADED` → `⚠️ DEGRADED — 기능 검증 미완료 (functional unverified). 시뮬레이터/axe/xcodebuild 부재로 flow 를 실행하지 못함. /autobot:testflight·/autobot:app-review 는 이 상태에서 업로드를 거부합니다.`
   - `UNVERIFIED` → `❌ 기능 미검증 — /autobot:resume 5 로 Phase 5 를 재실행하세요.`
 
   `DEGRADED`/`UNVERIFIED` 는 초록색 완료 메시지에 묻히지 않도록 **별도 줄에 경고 아이콘과 함께** 크게 출력한다. 사용자가 미검증 빌드를 검증된 것으로 오인하지 않게 하는 것이 목적이다.
 - **Capability Coverage (필수, 침묵 금지)**: `run-summary.json` 의 `coverage` (또는 `run-summary.md` 의 `## Capability Coverage` 섹션) 를 완료 화면에 그대로 요약한다. 특히 다음이 있으면 **반드시 화면에 출력**한다 — 빌드가 조용히 좁혀진 부분을 사용자가 모르고 넘어가지 않게 하는 것이 목적이다:
   - 누락된 검증 prereq + 설치 명령 (예: `brew install cameroncooke/axe/axe`) — DEGRADED 의 실제 원인.
-  - `scope.unsupportedRequested` (아이디어에 있었지만 빌드되지 않은 iOS 카테고리), `scope.downgradedFeatures` (P2 stub), `scope.backend` (백엔드 미배포·localhost), `scope.deviceDeployment` (기기 설치 시 서명 필요).
+  - `coverage.scope.unsupportedRequested` (아이디어에 있었지만 빌드되지 않은 iOS 카테고리), `coverage.scope.downgradedFeatures` (P2 stub), `coverage.scope.backend` (백엔드 미배포·localhost), `coverage.scope.deviceDeployment` (기기 설치 시 서명 필요).
   - "앱을 바꾸려면" 안내 (`coverage.iteration`).
 
-자세한 출력 포맷은 `autobot-build-report` 스킬과 `autobot-orchestrator` 의 "완료 보고" 섹션이 관리한다.
+자세한 출력 포맷은 `autobot-build-report` 스킬과 `autobot-orchestrator` 의 "보고 / 회고" 섹션이 관리한다.

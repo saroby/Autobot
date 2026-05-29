@@ -1,6 +1,6 @@
 [project]
 name = "autobot"
-version = "0.7.0"
+version = "0.7.1"
 description = "App idea to TestFlight in one command. Enterprise-grade iOS 26+ app builder with parallel agent orchestration."
 requires-python = ">=3.10"
 
