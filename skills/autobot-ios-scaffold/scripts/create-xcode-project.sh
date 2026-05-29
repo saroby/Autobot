@@ -348,7 +348,7 @@ mkdir -p "${PKG_SRC}/Tokens" "${PKG_SRC}/Components"
 
 if [ ! -f "${PKG_DIR}/Package.swift" ]; then
 cat > "${PKG_DIR}/Package.swift" << PKG_EOF
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(

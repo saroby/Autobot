@@ -107,13 +107,15 @@ fi
 [[ -d "$WORKDIR/$APP_NAME.xcodeproj" ]] || { err "xcodeproj 생성 안 됨"; exit 2; }
 
 log "design system package 골격 검증"
-PKG="$WORKDIR/$APP_NAME/Packages/${APP_NAME}DS"
+# Packages/ 와 project.yml 은 프로젝트 루트(=--project-dir, 여기선 $WORKDIR)에 생성된다.
+# 앱 소스만 $WORKDIR/$APP_NAME/ 서브트리에 있다 (create-xcode-project.sh SOURCES_DIR).
+PKG="$WORKDIR/Packages/${APP_NAME}DS"
 [[ -f "$PKG/Package.swift" ]] || { err "Package.swift 없음: $PKG"; exit 2; }
 grep -q "name: \"${APP_NAME}DS\"" "$PKG/Package.swift" || { err "Package.swift name 불일치"; exit 2; }
 for f in Color.swift Typography.swift Spacing.swift Radius.swift; do
   [[ -s "$PKG/Sources/${APP_NAME}DS/Tokens/$f" ]] || { err "Token stub 누락 또는 빈 파일: $f"; exit 2; }
 done
-grep -q "package: ${APP_NAME}DS" "$WORKDIR/$APP_NAME/project.yml" || { err "project.yml 에 package dependency 누락"; exit 2; }
+grep -q "package: ${APP_NAME}DS" "$WORKDIR/project.yml" || { err "project.yml 에 package dependency 누락"; exit 2; }
 log "design system package 골격 OK"
 
 # ---- 3. env_snapshot --------------------------------------------------------

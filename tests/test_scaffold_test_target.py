@@ -7,6 +7,7 @@ directly and inspect the xcodegen project.yml that create-xcode-project.sh write
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 import unittest
@@ -68,6 +69,51 @@ class TestXcodegenProjectYmlScheme(unittest.TestCase):
             self.assertIn("schemes:", yml)
             self.assertIn("Demo:", yml.split("schemes:", 1)[1])
             self.assertIn("test:", yml.split("schemes:", 1)[1])
+
+
+class TestDesignSystemPackageManifest(unittest.TestCase):
+    """Regression for build-20260529 dogfood: the generated design-system
+    Package.swift declared `// swift-tools-version: 6.0` while using
+    `platforms: [.iOS(.v26)]`. `.v26` requires PackageDescription 6.2+, so
+    `xcodebuild` failed package resolution with `'v26' is unavailable` and every
+    real Phase 5 build broke. The slow smoke-e2e was the only guard (and it was
+    itself broken), so assert tools-version vs platform in the fast unit suite."""
+
+    def _scaffold(self, tmp: str) -> Path:
+        fake_bin = Path(tmp) / "bin"
+        fake_bin.mkdir()
+        (fake_bin / "xcodegen").write_text("#!/bin/bash\nexit 0\n")
+        (fake_bin / "xcodegen").chmod(0o755)
+        env = {"PATH": f"{fake_bin}:/usr/bin:/bin", "HOME": tmp}
+        proj = Path(tmp) / "out"
+        proc = subprocess.run(
+            ["bash", str(CREATE_SH),
+             "--name", "Demo", "--bundle-id", "com.axi.demo",
+             "--project-dir", str(proj),
+             "--design-system-module", "DemoDS"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proj
+
+    def test_tools_version_supports_declared_ios_platform(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = (self._scaffold(tmp) / "Packages" / "DemoDS" / "Package.swift").read_text()
+            m = re.search(r"swift-tools-version:\s*([0-9]+)\.([0-9]+)", pkg)
+            self.assertIsNotNone(m, "Package.swift missing a swift-tools-version line")
+            tools = (int(m.group(1)), int(m.group(2)))
+            if ".v26" in pkg:
+                # .iOS(.v26) was introduced in PackageDescription 6.2.
+                self.assertGreaterEqual(
+                    tools, (6, 2),
+                    f"Package.swift uses .iOS(.v26) but swift-tools-version is "
+                    f"{tools[0]}.{tools[1]} (< 6.2) — 'v26' is unavailable at build time",
+                )
+
+    def test_design_system_package_targets_ios26(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = (self._scaffold(tmp) / "Packages" / "DemoDS" / "Package.swift").read_text()
+            self.assertIn(".iOS(.v26)", pkg)
 
 
 if __name__ == "__main__":
