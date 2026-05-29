@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-29
+
+검증을 "형태"에서 "실제 동작"으로. 초록불이 *"앱이 아이디어대로 실제로 동작한다"* 를 의미하도록 기능 검증 척추를 넣고(cycle 1), 그 검증기를 실 iOS 26 시뮬레이터에서 실제로 돌려 증명했다(cycle 2). 증명 과정에서 검증기가 실 하드웨어에선 작동하지 않던 버그 3개를 찾아 고쳤다 — 전부 mock 이 숨기고 있던 것.
+
+### Added
+- **기능 검증 척추 (Gate 5→6 의 "초록불 = 실제 동작")**:
+  - **`feature-spec.json`** — architect 가 한 줄 아이디어를 기계검증 가능한 feature 단위로 분해(`{id,title,priority,screen,anchor,acceptance[]}`). 자율 emit (질문 없이). `scripts/intent_spec.py` 에 `FeatureSpec`/`Acceptance`/`Postcondition` + `load/validate/assess` 검증기.
+  - **Gate 1→2**: `feature_spec_declared` (P0/P1 마다 acceptance + anchor) + `feature_spec_quality` (모든 P0/P1 acceptance 에 "anchor 존재" 이상의 관찰가능한 상태변화 postcondition 강제 — Goodhart 방어). postcondition kinds: `count_increased/decreased`, `value_persisted_after_relaunch`, `navigated_to`, `artifact_generated`, `setting_stored`.
+  - **Gate 5→6 `logic_tests_pass`** — 작성된 Swift Testing 유닛/통합 테스트를 `xcodebuild test` 로 실제 실행하고 `.xcresult` 를 파싱(기존 죽은 코드 `integration_build(test=True)` 배선). 빌드를 하니스가 독립 재검증.
+  - **Gate 5→6 `functional_flows_pass`** — `scripts/flow_runner.py` 가 AXe(`describe-ui`/`tap`)로 P0 happy-path 를 실제 구동하고 postcondition 을 단언. P0 실패 = hard-fail, P1 실패 = 경고, 시뮬레이터/axe 부재 = degraded-skip.
+  - **DEGRADED 3값 게이트 판정** — `run_gate` 가 passed/degraded/failed 를 구분. 검증을 *돌릴 수 있는데* 안 돈 경우는 조용한 PASS 가 아니라 DEGRADED. `build_gate_evidence` status 4값화.
+  - **anti-laundering 출시 차단** — `functional_verification_passed` + `/autobot:testflight`·`/autobot:app-review` 의 archive 전 preflight `run-gate 5->6` 재실행. degraded/미검증 빌드의 출시를 거부(과거 플래그 불신뢰).
+  - **검증기 불변성** — `.autobot/feature-spec.json` 을 `forbiddenInfra` 로 (architect 만 수정 가능). fix loop 이 스펙을 약화시켜 통과하는 것을 차단.
+  - **run-summary 배지** — `VERIFIED / DEGRADED / UNVERIFIED` 를 `run-summary.{json,md}` + mvp/testflight 완료 출력에 표기. axe preflight 를 Phase 0 env_snapshot 에 기록.
+  - Phase 0 axe preflight (`environment.axe`/`axeVersion`).
+- **E2E 검증 증명 (실 Mac)** — `scripts/e2e_verify.py` 하니스 + `tests/e2e/fixtures/GreenApp`(정상)·`RedApp`(깨진 UI) fixture. GreenApp → VERIFIED, RedApp → flow 가 0→0 으로 hard-fail (로직 테스트는 통과하므로 "로직만으론 못 잡는 깨진 UI 를 flow 가 잡는다" 를 증명). `.github/workflows/e2e-verify.yml` (macos-26, PR path-filtered) 이 실 iOS 26 시뮬레이터에서 두 fixture 를 게이트.
+
+### Fixed
+- **flow_runner 가 실 AXe 출력에서 anchor 를 못 찾던 버그** — AXe 는 접근성 식별자를 `AXUniqueId` 에 담는데 `identifier` 를 읽고 있었음. 모든 flow 가 "anchor never ready" 로 실패. cycle-1 mock 이 가짜 키를 써서 숨김. (`_anchor_id` = AXUniqueId∥identifier)
+- **`xcodebuild test` 가 generic destination 으로 항상 실패하던 버그** — `integration_build` 가 `generic/platform=iOS Simulator` 를 써서 test 액션이 거부됨("Tests must be run on a concrete device"). 이제 concrete sim UDID 를 해석해 전달(없으면 degraded-skip).
+- **describe-ui 트리 미평탄화** — flow_runner 가 top-level 노드만 검사하고 중첩 `children` 을 재귀하지 않아, children 안의 anchor 를 못 찾음. `_flatten` 으로 전체 트리 평탄화.
+- `smoke-e2e.yml` 러너 `macos-15` → `macos-26` (iOS 26 빌드가 한 번도 성공하지 못하던 원인). `ci.yml` 의 stale "185 tests" 라벨 제거. `integration_build` 가 stale `.xcresult` 를 제거(재실행 안정).
+
 ## [0.6.0] — 2026-05-28
 
 자기개선 루프를 App Store 심사 제출까지 확장. TestFlight 이후의 마지막 마디 — ASO 최적화 메타데이터, 모든 iPhone 사이즈 스크린샷, AXI-Homepage 제품 등록, 빌드 processing 폴링 + 자동 리뷰 제출 — 을 단일 슬래시 커맨드로 묶었다. 동시에 Design System SPM 분리가 합쳐졌다.
