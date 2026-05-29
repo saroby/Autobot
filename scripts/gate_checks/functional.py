@@ -24,6 +24,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from xcodebuild_runner import integration_build  # noqa: E402
+from intent_spec import load_feature_spec  # noqa: E402
+from flow_runner import run_flows  # noqa: E402
 
 from ._helpers import _ok  # noqa: E402
 
@@ -213,3 +215,61 @@ def check_logic_tests_pass(
         )
     primary = _ok("logic_tests_pass", False, msg)
     return [primary, _completeness_subcheck(project_dir, bundle, features)]
+
+
+def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 5→6 — drive declared P0/P1 feature flows through AXe and assert
+    postconditions.
+
+    - feature-spec absent          -> benign skip (passed=True, skipped=True)
+    - axe/sim missing / boot fails -> degraded skip (passed=False, skipped+degraded)
+    - no flow-kind acceptances      -> benign skip
+    - a P0 acceptance fails         -> hard fail (passed=False)
+    - only P1 acceptances fail      -> suite passes, message carries the warning
+    """
+    features = load_feature_spec(proj)
+    if not features:
+        return [_ok(
+            "functional_flows_pass", True,
+            ".autobot/feature-spec.json absent — skipping (no declared flows)",
+            skipped=True,
+        )]
+
+    result = run_flows(proj, app, features)
+    status = result.get("status")
+    results = result.get("results", [])
+
+    if status == "skipped":
+        reason = result.get("skipReason", "unavailable")
+        if result.get("degraded"):
+            return [_ok(
+                "functional_flows_pass", False,
+                f"functional flows not run: {reason}",
+                skipped=True, degraded=True,
+            )]
+        # benign skip (e.g. no_features)
+        return [_ok(
+            "functional_flows_pass", True,
+            f"functional flows skipped: {reason}",
+            skipped=True,
+        )]
+
+    failed = [r for r in results if not r["passed"]]
+    p0_failed = [r for r in failed if r.get("priority") == "P0"]
+    p1_warned = [r for r in failed if r.get("priority") != "P0"]
+
+    if status == "failed" or p0_failed:
+        detail = "; ".join(f"{r['featureId']}/{r['acceptanceId']}: {r['message']}"
+                           for r in p0_failed) or "P0 flow failed"
+        return [_ok("functional_flows_pass", False, f"P0 flow failure: {detail}")]
+
+    note = ""
+    if p1_warned:
+        note = " | warnings: " + "; ".join(
+            f"{r['featureId']}/{r['acceptanceId']}" for r in p1_warned
+        )
+    passed_count = sum(1 for r in results if r["passed"])
+    return [_ok(
+        "functional_flows_pass", True,
+        f"{passed_count}/{len(results)} flow acceptances passed{note}",
+    )]
