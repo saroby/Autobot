@@ -180,7 +180,44 @@ class TestFormatTextDegraded(unittest.TestCase):
         self.assertIn("⚠", txt)
 
 
-# ── Task 4: build_gate_evidence status minting (filled in Task 4) ────────────
+class TestBuildGateEvidenceStatus(unittest.TestCase):
+    """All four statuses must round-trip from gate_result → evidence.status."""
+
+    SPEC = {
+        "gates": {
+            "5->6": {"fromPhase": "5", "toPhase": "6"},
+            "6->7": {"fromPhase": "6", "toPhase": "7"},
+        }
+    }
+
+    def _evidence(self, gate_result, gate_id="5->6"):
+        return build_gate_evidence(self.SPEC, gate_id, gate_result, "2026-05-29T00:00:00Z")
+
+    def test_passed(self):
+        gr = {"gate": "5->6", "passed": True, "degraded": False, "soft": False, "checks": []}
+        self.assertEqual(self._evidence(gr)["status"], "passed")
+
+    def test_degraded(self):
+        gr = {"gate": "5->6", "passed": True, "degraded": True, "soft": False, "checks": []}
+        self.assertEqual(self._evidence(gr)["status"], "degraded")
+
+    def test_failed(self):
+        gr = {"gate": "5->6", "passed": False, "degraded": False, "soft": False, "checks": []}
+        self.assertEqual(self._evidence(gr)["status"], "failed")
+
+    def test_soft_failed(self):
+        gr = {"gate": "6->7", "passed": False, "degraded": False, "soft": True, "checks": []}
+        self.assertEqual(self._evidence(gr, gate_id="6->7")["status"], "soft_failed")
+
+    def test_degraded_only_applies_when_passed(self):
+        # a failed gate that somehow also flagged degraded is still failed (hard wins).
+        gr = {"gate": "5->6", "passed": False, "degraded": True, "soft": False, "checks": []}
+        self.assertEqual(self._evidence(gr)["status"], "failed")
+
+    def test_soft_passed_with_degraded_is_degraded(self):
+        # soft gate that passed-with-degradation records degraded, not passed.
+        gr = {"gate": "6->7", "passed": True, "degraded": True, "soft": True, "checks": []}
+        self.assertEqual(self._evidence(gr, gate_id="6->7")["status"], "degraded")
 
 
 # ── Task 5: phase advances on degraded (filled in Task 5, IsolatedProjectCase)
