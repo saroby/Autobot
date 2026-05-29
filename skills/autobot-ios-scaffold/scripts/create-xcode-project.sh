@@ -433,10 +433,10 @@ targets:
     type: application
     platform: iOS
     sources:
-      # Default group sources (no `type: folder`). The
-      # PBXFileSystemSynchronizedRootGroup form (xcodegen `type: folder` →
+      # Default group sources (no "type: folder"). The
+      # PBXFileSystemSynchronizedRootGroup form (xcodegen "type: folder" ->
       # Xcode synchronized folder reference) was producing a directory-typed
-      # `<App>.app/<App>` binary under xcodegen 2.45.4 + Xcode 26.5 in both
+      # AppName.app/AppName binary under xcodegen 2.45.4 + Xcode 26.5 in both
       # Solos and Murmur builds, requiring a manual switch to group sources.
       # The Autobot orchestrator regenerates the project at each phase
       # boundary so the lack of auto-sync is fine; eliminating the broken

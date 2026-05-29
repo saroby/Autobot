@@ -116,5 +116,47 @@ class TestDesignSystemPackageManifest(unittest.TestCase):
             self.assertIn(".iOS(.v26)", pkg)
 
 
+class TestScaffoldShellSafety(unittest.TestCase):
+    """Regression for build-20260529 dogfood: create-xcode-project.sh writes
+    project.yml via an UNQUOTED heredoc (<< YAML_EOF). A comment block used
+    markdown backticks (`type: folder`, `<App>.app/<App>`) which bash evaluated
+    as command substitution — emitting 'syntax error near unexpected token' on
+    every run and corrupting those comment lines in the generated project.yml."""
+
+    def _scaffold(self, tmp: str) -> Path:
+        fake_bin = Path(tmp) / "bin"
+        fake_bin.mkdir()
+        (fake_bin / "xcodegen").write_text("#!/bin/bash\nexit 0\n")
+        (fake_bin / "xcodegen").chmod(0o755)
+        env = {"PATH": f"{fake_bin}:/usr/bin:/bin", "HOME": tmp}
+        proj = Path(tmp) / "out"
+        self._proc = subprocess.run(
+            ["bash", str(CREATE_SH),
+             "--name", "Demo", "--bundle-id", "com.axi.demo",
+             "--project-dir", str(proj), "--design-system-module", "DemoDS"],
+            capture_output=True, text=True, env=env,
+        )
+        return proj
+
+    def test_no_shell_substitution_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = self._scaffold(tmp)
+            self.assertEqual(self._proc.returncode, 0, self._proc.stderr)
+            combined = self._proc.stdout + self._proc.stderr
+            self.assertNotIn("command substitution", combined,
+                             f"scaffold emitted a shell substitution error:\n{self._proc.stderr}")
+            self.assertNotIn("syntax error", combined,
+                             f"scaffold emitted a shell syntax error:\n{self._proc.stderr}")
+
+    def test_generated_project_yml_has_no_raw_backticks(self):
+        # Unquoted-heredoc backticks get shell-evaluated; none must reach the
+        # emitted project.yml, and the comment prose must survive verbatim.
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = self._scaffold(tmp)
+            yml = (proj / "project.yml").read_text()
+            self.assertIn("Default group sources", yml)
+            self.assertNotIn("`", yml)
+
+
 if __name__ == "__main__":
     unittest.main()
