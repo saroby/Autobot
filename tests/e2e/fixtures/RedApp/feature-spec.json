@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "features": [
+    {
+      "id": "add-item",
+      "title": "Add an item to the list",
+      "priority": "P0",
+      "screen": "ContentView",
+      "anchor": "autobot.add",
+      "acceptance": [
+        {
+          "id": "addItem_flow",
+          "kind": "flow",
+          "steps": [
+            {"action": "tap", "anchor": "autobot.add"}
+          ],
+          "postcondition": {
+            "kind": "count_increased",
+            "params": {"anchor": "autobot.row"}
+          }
+        },
+        {
+          "id": "addItem_increasesCount",
+          "kind": "logic",
+          "steps": [],
+          "postcondition": {
+            "kind": "count_increased",
+            "params": {"anchor": "autobot.row"}
+          }
+        }
+      ]
+    }
+  ]
+}
