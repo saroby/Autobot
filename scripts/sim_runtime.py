@@ -28,7 +28,8 @@ import subprocess
 import time
 from pathlib import Path
 
-DEFAULT_DEVICE_NAME = "iPhone 16 Pro"
+import env_snapshot
+
 DEFAULT_LAUNCH_WAIT_SECONDS = 4
 DEFAULT_SIMCTL_TIMEOUT = 120
 MAX_BOOT_RETRY = 1
@@ -89,21 +90,14 @@ def _pick_simulator_udid(project_root: Path) -> tuple[str | None, str]:
     except json.JSONDecodeError:
         return None, "simctl_list_unparseable"
 
-    # Prefer the default device name on the most recent iOS runtime.
-    preferred = None
-    for runtime, devices in (data.get("devices") or {}).items():
-        if "iOS" not in runtime:
-            continue
-        for device in devices:
-            if not device.get("isAvailable", False):
-                continue
-            name = device.get("name", "")
-            if name == DEFAULT_DEVICE_NAME:
-                return device["udid"], f"matched-{name}-{runtime}"
-            if preferred is None and name.startswith("iPhone"):
-                preferred = (device["udid"], f"fallback-{name}-{runtime}")
-    if preferred:
-        return preferred
+    # Pick the highest iOS runtime (>= deployment target) — see
+    # env_snapshot.select_simulator_from_listing. Version dominates the device
+    # name so an iOS-26 build never lands on a stale iOS-18 sim.
+    chosen = env_snapshot.select_simulator_from_listing(
+        data, min_runtime=env_snapshot.deployment_floor(project_root)
+    )
+    if chosen and chosen.get("udid"):
+        return chosen["udid"], f"picked-{chosen['name']}-{chosen['runtime']}"
     return None, "no_ios_simulator_available"
 
 
