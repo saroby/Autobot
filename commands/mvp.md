@@ -97,7 +97,7 @@ allowed-tools:
 - `DEGRADED` → `⚠️ DEGRADED — 기능 검증 미완료 (functional unverified). 시뮬레이터/axe/xcodebuild 부재로 flow 를 실행하지 못함. /autobot:testflight·/autobot:app-review 는 이 상태에서 업로드를 거부합니다.`
 - `UNVERIFIED` → `❌ 기능 미검증 — /autobot:resume 5 로 Phase 5 를 재실행하세요.`
 
-`DEGRADED` / `UNVERIFIED` 는 초록색 완료 메시지에 묻히지 않도록 **별도 줄에 경고 아이콘과 함께 크게** 출력한다. 사용자가 미검증 빌드를 검증된 것으로 오인하지 않게 하는 것이 목적이다.
+`DEGRADED` / `UNVERIFIED` 는 초록색 완료 메시지에 묻히지 않도록 **별도 줄에 경고 아이콘과 함께 크게** 출력한다.
 
 ### Capability Coverage (필수 · 침묵 금지)
 
