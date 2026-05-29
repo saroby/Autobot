@@ -10,7 +10,10 @@ on:
 
 jobs:
   smoke:
-    runs-on: macos-15
+    # macos-26 ships Xcode 26 + iOS 26 sims; macos-15 defaults to Xcode 16 and
+    # was the reason this job never built an iOS 26 app. (Functional gate proof
+    # lives in e2e-verify.yml; this stays a basic scaffold→build→launch smoke.)
+    runs-on: macos-26
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4

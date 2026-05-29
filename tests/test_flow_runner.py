@@ -26,9 +26,12 @@ SCREEN = {"x": 0, "y": 0, "width": 393, "height": 852}
 
 
 def _el(identifier, *, label="", enabled=True, x=20, y=100, w=200, h=44, typ="Button"):
+    # Mirror the REAL AXe 1.7.0 describe-ui schema: the accessibility identifier
+    # is carried in "AXUniqueId" (NOT "identifier"), alongside AXLabel/frame/enabled.
     return {
         "type": typ,
-        "identifier": identifier,
+        "AXUniqueId": identifier,
+        "AXLabel": label,
         "label": label,
         "enabled": enabled,
         "frame": {"x": x, "y": y, "width": w, "height": h},
@@ -51,6 +54,44 @@ class TestAnchorReady(unittest.TestCase):
     def test_offscreen_frame_is_not_ready(self):
         els = [_el("autobot.primaryCTA", x=5000, y=9000)]
         self.assertFalse(flow_runner._anchor_ready(els, "autobot.primaryCTA", SCREEN))
+
+    def test_legacy_identifier_key_still_matches(self):
+        # back-compat: an element using the legacy "identifier" key (no AXUniqueId)
+        # must still match, so flow_runner tolerates both real AXe + older shapes.
+        el = {"type": "Button", "identifier": "autobot.primaryCTA",
+              "enabled": True, "frame": {"x": 20, "y": 100, "width": 200, "height": 44}}
+        self.assertTrue(flow_runner._anchor_ready([el], "autobot.primaryCTA", SCREEN))
+
+    def test_axuniqueid_is_the_real_key(self):
+        # real AXe carries the identifier in AXUniqueId; matching must key off it.
+        el = {"type": "Button", "AXUniqueId": "autobot.primaryCTA",
+              "enabled": True, "frame": {"x": 20, "y": 100, "width": 200, "height": 44}}
+        self.assertTrue(flow_runner._anchor_ready([el], "autobot.primaryCTA", SCREEN))
+
+
+class TestFlatten(unittest.TestCase):
+    """AXe describe-ui returns a nested tree (root + children); the matchers
+    need every node. _flatten must surface deeply-nested anchors."""
+
+    def _nested(self):
+        return [{
+            "type": "Application", "AXUniqueId": "root", "children": [
+                {"type": "Group", "children": [
+                    {"type": "Button", "AXUniqueId": "autobot.add", "enabled": True,
+                     "frame": {"x": 20, "y": 80, "width": 100, "height": 44}},
+                ]},
+            ],
+        }]
+
+    def test_flattens_nested_tree_so_anchor_is_found(self):
+        flat = flow_runner._flatten(self._nested())
+        self.assertTrue(any(flow_runner._anchor_id(e) == "autobot.add" for e in flat))
+        self.assertTrue(flow_runner._anchor_ready(flat, "autobot.add", SCREEN))
+
+    def test_single_root_dict_flattens(self):
+        root = self._nested()[0]
+        flat = flow_runner._flatten(root)
+        self.assertTrue(flow_runner._present(flat, "autobot.add"))
 
 
 class TestEvaluatePostcondition(unittest.TestCase):

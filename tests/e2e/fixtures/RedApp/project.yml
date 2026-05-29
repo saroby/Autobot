@@ -1,0 +1,41 @@
+name: RedApp
+options:
+  bundleIdPrefix: com.autobot.e2e
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  RedApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: RedApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.autobot.e2e.RedApp
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+  RedAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: RedAppTests
+    dependencies:
+      - target: RedApp
+schemes:
+  RedApp:
+    build:
+      targets:
+        RedApp: all
+        RedAppTests: [test]
+    test:
+      targets:
+        - RedAppTests
+    run:
+      config: Debug
+    archive:
+      config: Release

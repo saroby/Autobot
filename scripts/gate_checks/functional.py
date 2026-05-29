@@ -170,7 +170,18 @@ def check_logic_tests_pass(
       - anything else (Failed / unparseable / build status failed) → HARD FAIL
     Plus a non-blocking completeness WARNING sub-check.
     """
-    build = integration_build(project_dir, app, test=True)
+    # `xcodebuild test` needs a CONCRETE simulator destination (the generic
+    # "platform=iOS Simulator" is rejected for the test action). Resolve a sim
+    # UDID; if none is available, integration_build degrades-skips.
+    destination = None
+    try:
+        import sim_runtime
+        udid, _ = sim_runtime._pick_simulator_udid(project_dir)
+        if udid:
+            destination = f"id={udid}"
+    except Exception:
+        destination = None
+    build = integration_build(project_dir, app, test=True, destination=destination)
     status = build.get("status")
 
     if status == "skipped":
