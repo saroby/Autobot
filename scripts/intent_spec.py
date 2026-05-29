@@ -136,6 +136,209 @@ def find_unused_anchors(project_root: Path, app_name: str) -> tuple[list[str], l
     return missing, present
 
 
+# ---------------------------------------------------------------------------
+# Feature spec — the per-feature behavioral contract (.autobot/feature-spec.json)
+#
+# Where app-intent.json captures ONE primary anchor/CTA, feature-spec.json
+# decomposes the architect's promise into testable features. Each feature owns
+# acceptance criteria whose postconditions are checkable at runtime (Phase 5
+# flow_runner) rather than merely "the anchor rendered". This is the SSOT for
+# functional verification; gate 1->2 validates it and gate 5->6 executes it.
+# ---------------------------------------------------------------------------
+
+POSTCONDITION_KINDS = (
+    "count_increased",
+    "count_decreased",
+    "value_persisted_after_relaunch",
+    "navigated_to",
+    "artifact_generated",
+    "setting_stored",
+)
+
+_POLICED_PRIORITIES = ("P0", "P1")
+
+
+@dataclass
+class Postcondition:
+    kind: str
+    params: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Postcondition":
+        if not isinstance(data, dict):
+            return cls(kind="", params={})
+        params = data.get("params")
+        if not isinstance(params, dict):
+            params = {}
+        return cls(kind=str(data.get("kind") or ""), params=params)
+
+
+@dataclass
+class Acceptance:
+    id: str
+    kind: str
+    steps: tuple[dict, ...]
+    postcondition: Postcondition
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Acceptance":
+        if not isinstance(data, dict):
+            data = {}
+        raw_steps = data.get("steps") or ()
+        if not isinstance(raw_steps, (list, tuple)):
+            raw_steps = ()
+        steps = tuple(s for s in raw_steps if isinstance(s, dict))
+        return cls(
+            id=str(data.get("id") or ""),
+            kind=str(data.get("kind") or ""),
+            steps=steps,
+            postcondition=Postcondition.from_dict(data.get("postcondition") or {}),
+        )
+
+
+@dataclass
+class FeatureSpec:
+    id: str
+    title: str
+    priority: str
+    screen: str
+    anchor: str
+    acceptance: tuple[Acceptance, ...]
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FeatureSpec":
+        if not isinstance(data, dict):
+            data = {}
+        raw_acc = data.get("acceptance") or ()
+        if not isinstance(raw_acc, (list, tuple)):
+            raw_acc = ()
+        acceptance = tuple(
+            Acceptance.from_dict(a) for a in raw_acc if isinstance(a, dict)
+        )
+        return cls(
+            id=str(data.get("id") or ""),
+            title=str(data.get("title") or ""),
+            priority=str(data.get("priority") or ""),
+            screen=str(data.get("screen") or ""),
+            anchor=str(data.get("anchor") or ""),
+            acceptance=acceptance,
+        )
+
+
+def load_feature_spec(project_root: Path) -> list[FeatureSpec] | None:
+    """Return the parsed feature list, or None if the manifest is absent /
+    unparseable / not a JSON object. Parsing tolerates missing & extra fields."""
+    path = project_root / ".autobot" / "feature-spec.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw_features = data.get("features")
+    if not isinstance(raw_features, list):
+        return None
+    return [FeatureSpec.from_dict(f) for f in raw_features if isinstance(f, dict)]
+
+
+def validate_feature_spec(project_root: Path) -> tuple[bool, list[str]]:
+    """Structural validation for Gate 1->2 — returns (ok, problems).
+
+    Every P0/P1 feature must declare >=1 acceptance criterion AND a non-empty
+    anchor. P2 features are not policed (they may be aspirational stubs).
+    """
+    features = load_feature_spec(project_root)
+    if features is None:
+        return False, ["feature-spec.json absent or unparseable"]
+
+    problems: list[str] = []
+    for feat in features:
+        if feat.priority not in _POLICED_PRIORITIES:
+            continue
+        label = feat.id or "<unnamed feature>"
+        if not feat.acceptance:
+            problems.append(f"{label} ({feat.priority}): no acceptance criteria")
+        if not feat.anchor:
+            problems.append(f"{label} ({feat.priority}): empty anchor")
+    return (not problems), problems
+
+
+def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
+    """Quality assessment for Gate 1->2 — returns (ok, problems).
+
+    Every P0/P1 acceptance postcondition.kind must be one of
+    POSTCONDITION_KINDS. An empty kind ("anchor-only" acceptance — it only
+    asserts the anchor rendered, never that behavior occurred) is invalid: a
+    postcondition is what makes the flow checkable at runtime.
+    """
+    features = load_feature_spec(project_root)
+    if features is None:
+        return False, ["feature-spec.json absent or unparseable"]
+
+    problems: list[str] = []
+    for feat in features:
+        if feat.priority not in _POLICED_PRIORITIES:
+            continue
+        label = feat.id or "<unnamed feature>"
+        for acc in feat.acceptance:
+            kind = acc.postcondition.kind
+            if not kind:
+                problems.append(
+                    f"{label}/{acc.id or '<unnamed>'}: anchor-only acceptance "
+                    f"(no postcondition.kind) is not runtime-checkable"
+                )
+            elif kind not in POSTCONDITION_KINDS:
+                problems.append(
+                    f"{label}/{acc.id or '<unnamed>'}: invalid postcondition.kind "
+                    f"'{kind}' (allowed: {', '.join(POSTCONDITION_KINDS)})"
+                )
+    return (not problems), problems
+
+
+def find_missing_feature_anchors(
+    project_root: Path, app_name: str
+) -> list[tuple[str, str]]:
+    """Return [(featureId, anchor), ...] for every feature whose anchor does NOT
+    appear in the Phase 4 UI source tree. Empty list = all anchors present.
+
+    Searches Views/, App/, and ViewModels/ — the same scope as
+    find_unused_anchors — so anchors declared in the root composition count.
+    """
+    features = load_feature_spec(project_root)
+    if not features:
+        return []
+
+    app_root = project_root / app_name
+    files: list[Path] = []
+    if app_root.is_dir():
+        for sub in ("Views", "App", "ViewModels"):
+            path = app_root / sub
+            if path.is_dir():
+                files.extend(path.rglob("*.swift"))
+
+    combined = "\n".join(
+        f.read_text(encoding="utf-8", errors="replace") for f in files
+    )
+
+    missing: list[tuple[str, str]] = []
+    for feat in features:
+        anchor = feat.anchor.strip()
+        if not anchor:
+            # empty anchor is a validate_feature_spec problem, not an anchor-in-UI
+            # problem; skip here so the message stays about UI wiring.
+            continue
+        pattern = re.compile(
+            rf'accessibilityIdentifier\(\s*"{re.escape(anchor)}"\s*\)'
+            rf'|"{re.escape(anchor)}"\s*as\s+AccessibilityIdentifier'
+            rf'|accessibilityIdentifier:\s*"{re.escape(anchor)}"'
+        )
+        if not pattern.search(combined):
+            missing.append((feat.id, anchor))
+    return missing
+
+
 def _main() -> int:
     import argparse
     parser = argparse.ArgumentParser()

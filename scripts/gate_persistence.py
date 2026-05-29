@@ -40,7 +40,12 @@ def build_gate_evidence(
     """
     passed = gate_result.get("passed", False)
     soft = gate_result.get("soft", False)
-    status = "passed" if passed else ("soft_failed" if soft else "failed")
+    status = (
+        "failed" if (not passed and not soft)
+        else "soft_failed" if (not passed)
+        else "degraded" if gate_result.get("degraded")
+        else "passed"
+    )
     checks = {group["check"]: group["passed"] for group in gate_result.get("checks", [])}
     return {
         "status": status,

@@ -32,10 +32,15 @@ def load_spec() -> dict[str, Any]:
         raise SystemExit(f"FATAL: cannot load pipeline spec: {exc}") from exc
 
 
-def _ok(check: str, passed: bool, message: str, *, skipped: bool = False) -> dict[str, Any]:
+def _ok(
+    check: str, passed: bool, message: str, *,
+    skipped: bool = False, degraded: bool = False,
+) -> dict[str, Any]:
     r: dict[str, Any] = {"check": check, "passed": passed, "message": message}
     if skipped:
         r["skipped"] = True
+    if degraded:
+        r["degraded"] = True
     return r
 
 

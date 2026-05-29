@@ -73,5 +73,11 @@ allowed-tools:
 - 시뮬레이터 실행 안내 (`open <AppName>.xcodeproj` → Run)
 - 실패한 Phase 가 있으면 `/autobot:resume` 안내
 - TestFlight 업로드 옵션 안내 (`/autobot:testflight`)
+- **기능 검증 배지 (필수, 크게 표시)**: `artifacts/latest/run-summary.json` 의 `functionalVerification.badge` 를 읽어 완료 화면 최상단에 출력한다:
+  - `VERIFIED` → `✅ 기능 검증 통과 (functional flows passed)`
+  - `DEGRADED` → `⚠️ DEGRADED — 기능 검증 미완료 (functional unverified). 시뮬레이터/axe/xcodebuild 부재로 flow 를 실행하지 못함. /autobot:testflight 는 이 상태에서 업로드를 거부합니다.`
+  - `UNVERIFIED` → `❌ 기능 미검증 — /autobot:resume 5 로 Phase 5 를 재실행하세요.`
+
+  `DEGRADED`/`UNVERIFIED` 는 초록색 완료 메시지에 묻히지 않도록 **별도 줄에 경고 아이콘과 함께** 크게 출력한다. 사용자가 미검증 빌드를 검증된 것으로 오인하지 않게 하는 것이 목적이다.
 
 자세한 출력 포맷은 `autobot-build-report` 스킬과 `autobot-orchestrator` 의 "완료 보고" 섹션이 관리한다.

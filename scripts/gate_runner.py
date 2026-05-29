@@ -50,6 +50,8 @@ from gate_checks.setup import (  # noqa: E402,F401
 )
 from gate_checks.capability import (  # noqa: E402,F401
     check_app_intent_declared,
+    check_feature_spec_declared,
+    check_feature_spec_quality,
     check_intent_anchors_in_ui,
     check_primary_cta_visibility,
     check_ios_capability_safe
@@ -96,6 +98,11 @@ from gate_checks.build import (  # noqa: E402,F401
 from gate_checks.deploy import (  # noqa: E402,F401
     check_deployment_attempt_recorded
 )
+from gate_checks.functional import (  # noqa: E402,F401
+    check_logic_tests_pass,
+    check_functional_flows_pass,
+    check_functional_verification_passed
+)
 
 
 # ── Registry: spec name → procedural check function ──
@@ -116,6 +123,8 @@ GATE_CHECKS: dict[str, Any] = {
     "architecture_peer_review_acceptable": check_architecture_peer_review_acceptable,
     "ios_capability_safe": check_ios_capability_safe,
     "app_intent_declared": check_app_intent_declared,
+    "feature_spec_declared": check_feature_spec_declared,
+    "feature_spec_quality": check_feature_spec_quality,
     "intent_anchors_in_ui": check_intent_anchors_in_ui,
     # Gate 2→3
     "design_spec_sections_complete": check_design_spec_sections_complete,
@@ -145,8 +154,11 @@ GATE_CHECKS: dict[str, Any] = {
     "visual_contract": check_visual_contract,
     "metadata_readiness": check_metadata_readiness,
     "service_stubs_preserved": check_service_stubs_preserved,
+    "logic_tests_pass": check_logic_tests_pass,
+    "functional_flows_pass": check_functional_flows_pass,
     # Gate 6→7
     "deployment_attempt_recorded": check_deployment_attempt_recorded,
+    "functional_verification_passed": check_functional_verification_passed,
     # Gate 4→5 (added with fileOwnership SSOT)
     "sandbox_clean": check_sandbox_clean,
     "no_tabbar_safearea_smells": check_no_tabbar_safearea_smells,
@@ -305,31 +317,74 @@ def run_gate(
     soft = gate_spec.get("soft", False)
 
     all_results: list[dict] = []
-    all_passed = True
+    any_hard_fail = False
+    any_degraded = False
 
     for raw in raw_checks:
         descriptor = _normalize_check(raw)
         label = descriptor.get("label") or descriptor.get("name") or descriptor.get("type", "unnamed")
         sub_checks = _evaluate_descriptor(descriptor, project_dir, app_name, state)
-        group_passed = all(r["passed"] or r.get("skipped", False) for r in sub_checks)
-        if not group_passed:
-            all_passed = False
-        all_results.append({"check": label, "passed": group_passed, "sub_checks": sub_checks})
 
-    return {"gate": gate_id, "passed": all_passed, "soft": soft, "checks": all_results}
+        # Three-valued group rollup:
+        #   hard_fail = a sub-check ran and truly failed (not a skip)
+        #   degraded  = a sub-check skipped *because* a degradable resource was
+        #               missing (skipped AND degraded). A benign skip (skipped
+        #               only, no degraded flag) still counts as green so
+        #               backend_required N/A skips never lower the gate.
+        group_hard_fail = any(
+            (not r["passed"]) and (not r.get("skipped", False))
+            for r in sub_checks
+        )
+        group_degraded = any(
+            r.get("skipped", False) and r.get("degraded", False)
+            for r in sub_checks
+        )
+        group_passed = not group_hard_fail and not group_degraded
+
+        if group_hard_fail:
+            any_hard_fail = True
+        if group_degraded and not group_hard_fail:
+            any_degraded = True
+
+        all_results.append({
+            "check": label,
+            "passed": group_passed,
+            "degraded": (group_degraded and not group_hard_fail),
+            "sub_checks": sub_checks,
+        })
+
+    passed = not any_hard_fail
+    degraded = passed and any_degraded
+    return {
+        "gate": gate_id,
+        "passed": passed,
+        "degraded": degraded,
+        "soft": soft,
+        "checks": all_results,
+    }
 
 
 def format_text(result: dict) -> str:
     lines: list[str] = []
-    status = "PASS" if result["passed"] else ("SOFT FAIL" if result.get("soft") else "FAIL")
+    if result["passed"]:
+        status = "DEGRADED" if result.get("degraded") else "PASS"
+    else:
+        status = "SOFT FAIL" if result.get("soft") else "FAIL"
     lines.append(f"Gate {result['gate']}: {status}")
     lines.append("")
 
     for group in result.get("checks", []):
-        mark = "PASS" if group["passed"] else "FAIL"
+        if group["passed"]:
+            mark = "PASS"
+        elif group.get("degraded"):
+            mark = "DEGRADED"
+        else:
+            mark = "FAIL"
         lines.append(f"  [{mark}] {group['check']}")
         for sub in group.get("sub_checks", []):
-            if sub.get("skipped"):
+            if sub.get("skipped") and sub.get("degraded"):
+                icon = "⚠"
+            elif sub.get("skipped"):
                 icon = "⊘"
             elif sub["passed"]:
                 icon = "✓"

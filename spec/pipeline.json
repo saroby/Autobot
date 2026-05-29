@@ -670,6 +670,7 @@
     "forbiddenInfra": [
       ".autobot/build-state.json",
       ".autobot/architecture.md",
+      ".autobot/feature-spec.json",
       ".autobot/contracts/",
       ".autobot/build-log.jsonl",
       ".autobot/build.lock",
@@ -979,6 +980,16 @@
           "label": "app_intent_declared"
         },
         {
+          "type": "procedural",
+          "name": "feature_spec_declared",
+          "label": "feature_spec_declared"
+        },
+        {
+          "type": "procedural",
+          "name": "feature_spec_quality",
+          "label": "feature_spec_quality"
+        },
+        {
           "type": "state_field_contains",
           "label": "architect_consumed_learnings",
           "field": "phases.1.learningsConsumed",
@@ -1188,6 +1199,16 @@
           "label": "metadata_readiness"
         },
         {
+          "type": "procedural",
+          "name": "logic_tests_pass",
+          "label": "logic_tests_pass"
+        },
+        {
+          "type": "procedural",
+          "name": "functional_flows_pass",
+          "label": "functional_flows_pass"
+        },
+        {
           "type": "state_field_contains",
           "label": "quality_engineer_consumed_learnings",
           "field": "phases.5.learningsConsumed",
@@ -1205,6 +1226,11 @@
       "summary": "Deployment result is recorded, but retrospective proceeds even on failure.",
       "docsSummary": "배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행",
       "checks": [
+        {
+          "type": "procedural",
+          "name": "functional_verification_passed",
+          "label": "functional_verification_passed"
+        },
         {
           "type": "procedural",
           "name": "deployment_attempt_recorded",

@@ -244,6 +244,22 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-app-review/scripts/upload-screenshots.s
 
 ### Phase F — 빌드가 ASC 에 없으면 deployer 에이전트 디스패치
 
+### Phase F-0 — 기능 검증 사전 차단 (anti-laundering)
+
+deployer 디스패치 **전에** gate 5→6 을 신선하게 재실행하고 verdict 를 확인한다. `degraded`(시뮬레이터/axe/xcodebuild 부재로 functional flow 미검증)면 archive/upload 와 review 제출을 **모두 중단**한다 — 미검증 빌드 세탁 방지. 과거 `build_succeeded` 플래그를 신뢰하지 않고 매 제출마다 신선한 PASS 를 다시 요구한다.
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" run-gate --gate "5->6" || true
+
+FUNC_STATUS=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('gates',{}).get('5->6',{}).get('status','missing'))")
+if [ "$FUNC_STATUS" != "passed" ]; then
+  echo "ERROR: functional verification not passed (gate 5->6 status: $FUNC_STATUS). Refusing to submit for review."
+  [ "$FUNC_STATUS" = "degraded" ] && echo "       Functional flows UNVERIFIED — re-run /autobot:resume 5 on a host with simulator + axe + xcodebuild."
+  exit 1
+fi
+echo "INFO: functional verification passed — proceeding with Phase F"
+```
+
 `/autobot:testflight` 와 동일한 패턴. **`deployer`** 에이전트 (`agents/deployer.md`) 가 `autobot-register-app` → `autobot-archive-build` → `autobot-upload-build` (→ optional `autobot-invite-testers`) 를 chain 한다. register 는 멱등이며 archive/upload 도 status 파일로 중복 작업을 방지한다.
 
 ```bash

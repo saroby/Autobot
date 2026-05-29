@@ -98,6 +98,33 @@ case "$PHASE_6_STATUS" in
 esac
 ```
 
+## Step 1.5: 기능 검증 사전 차단 (anti-laundering)
+
+archive/upload 시작 **전에** gate 5→6 을 신선하게 재실행하고 그 verdict 를 확인한다. 이는 `phases.5.metadata.build_succeeded` 같은 과거 플래그를 신뢰하지 않고, 빌드가 실제로 기능 검증(logic tests + functional flows)을 통과했는지 매 배포마다 다시 요구한다. verdict 가 `degraded`(시뮬레이터/axe/xcodebuild 부재로 flow 미검증)이면 **업로드를 거부**한다 — 미검증 빌드를 게이트 너머로 세탁(laundering)하지 않는다.
+
+```bash
+# 5→6 게이트를 신선하게 재실행 (evidence 를 state.gates["5->6"] 에 갱신 기록)
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" run-gate --gate "5->6" || true
+
+FUNC_STATUS=$(python3 -c "
+import json
+s = json.load(open('.autobot/build-state.json'))
+print(s.get('gates', {}).get('5->6', {}).get('status', 'missing'))
+")
+if [ "$FUNC_STATUS" != "passed" ]; then
+  echo "ERROR: functional verification not passed (gate 5->6 status: $FUNC_STATUS)."
+  if [ "$FUNC_STATUS" = "degraded" ]; then
+    echo "       Functional flows were UNVERIFIED (simulator/axe/xcodebuild unavailable)."
+    echo "       Refusing to ship an unverified build. Re-run /autobot:resume 5 on a host"
+    echo "       with a booted simulator + axe + xcodebuild, then retry /autobot:testflight."
+  else
+    echo "       Re-run /autobot:resume to fix Phase 5 before shipping."
+  fi
+  exit 1
+fi
+echo "INFO: functional verification passed (gate 5->6 = passed) — proceeding to deploy"
+```
+
 ## Step 2: deployer 에이전트 디스패치
 
 Agent 도구로 deployer 에이전트를 호출한다. deployer 는 다음을 수행한다:
@@ -138,6 +165,7 @@ Register:     created (App Store Connect 에 신규 등록)
 Archive:      build/MyApp.xcarchive
 IPA:          build/export/MyApp.ipa
 Build status: uploaded (upload_success: true)
+Verification: ✅ VERIFIED (gate 5->6 passed)   ← 업로드는 functional_verification_passed 통과 시에만 도달
 Testers:      alice@x.com (invited), bob@x.com (already in group)
 
 ⏳ ASC processing: 5분~1시간 후 TestFlight 에서 빌드 확인 가능

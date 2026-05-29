@@ -179,6 +179,29 @@ def _overall_status(state: dict) -> str:
     return "in_progress"
 
 
+def _functional_verification(state: dict) -> dict:
+    """Derive the shipping-verification badge from gate 5->6's recorded verdict.
+
+    badge:
+      VERIFIED   — gate 5->6 status == 'passed' (functional flows ran + passed)
+      DEGRADED   — gate 5->6 status == 'degraded' (flows unverified: no sim/axe)
+      UNVERIFIED — gate 5->6 status is soft_failed/failed/absent
+    Only VERIFIED is shippable. This mirrors check_functional_verification_passed.
+    """
+    status = (state.get("gates", {}).get("5->6") or {}).get("status")
+    if status == "passed":
+        badge = "VERIFIED"
+    elif status == "degraded":
+        badge = "DEGRADED"
+    else:
+        badge = "UNVERIFIED"
+    return {
+        "badge": badge,
+        "gate56Status": status,
+        "shippable": badge == "VERIFIED",
+    }
+
+
 def build_summary(project_root: Path) -> dict:
     state = _load_json(project_root / ".autobot" / "build-state.json")
     events = _load_jsonl(project_root / ".autobot" / "build-log.jsonl")
@@ -191,6 +214,7 @@ def build_summary(project_root: Path) -> dict:
         "startedAt": state.get("startedAt"),
         "environment": state.get("environment"),
         "status": _overall_status(state),
+        "functionalVerification": _functional_verification(state),
         "phases": _phase_durations(events),
         "gateLedger": _gate_ledger(events),
         "buildAttempts": _build_attempts(events),
@@ -213,6 +237,22 @@ def render_markdown(summary: dict) -> str:
     if env:
         envline = ", ".join(f"{k}={v}" for k, v in sorted(env.items()) if not k.startswith("_"))
         lines.append(f"- **environment**: {envline}")
+    lines.append("")
+
+    fv = summary.get("functionalVerification") or {}
+    badge = fv.get("badge", "UNVERIFIED")
+    lines.append("## Verification")
+    lines.append("")
+    if badge == "VERIFIED":
+        lines.append("- **functional verification**: ✅ VERIFIED "
+                     f"(gate 5->6 = `{fv.get('gate56Status')}`) — shippable")
+    elif badge == "DEGRADED":
+        lines.append("- **functional verification**: ⚠️ **DEGRADED (functional unverified)** "
+                     f"(gate 5->6 = `{fv.get('gate56Status')}`) — NOT shippable: "
+                     "flows could not run (simulator/axe/xcodebuild unavailable)")
+    else:
+        lines.append("- **functional verification**: ❌ **UNVERIFIED** "
+                     f"(gate 5->6 = `{fv.get('gate56Status')}`) — NOT shippable")
     lines.append("")
 
     lines.append("## Phase Ledger")
