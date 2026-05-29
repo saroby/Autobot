@@ -225,13 +225,38 @@ def build_summary(project_root: Path) -> dict:
     return summary
 
 
+_BADGE_BANNER = {
+    "VERIFIED": "> ✅ **VERIFIED** — functional flows passed. Shippable.",
+    "DEGRADED": "> ⚠️ **DEGRADED — functional UNVERIFIED.** Phases completed but the "
+                "flows could not run (simulator/axe/xcodebuild unavailable). "
+                "**NOT shippable** — `/autobot:testflight` will refuse this build.",
+    "UNVERIFIED": "> ❌ **UNVERIFIED** — no clean functional verification on record. "
+                  "**NOT shippable** — re-run Phase 5 (`/autobot:resume 5`).",
+}
+
+
 def render_markdown(summary: dict) -> str:
+    fv = summary.get("functionalVerification") or {}
+    badge = fv.get("badge", "UNVERIFIED")
+    phase_status = summary.get("status")
+
     lines: list[str] = []
     lines.append(f"# {summary.get('displayName') or summary.get('appName') or 'Autobot Build'} — Run Summary")
     lines.append("")
+    # Lead with the shipping-verification verdict so the first thing a reader
+    # sees reflects shippability — never let a bare phase-rollup "completed"
+    # stand in for "verified". (A DEGRADED build has completed phases but is
+    # not shippable; surfacing only the phase status here would mislead.)
+    lines.append(_BADGE_BANNER.get(badge, _BADGE_BANNER["UNVERIFIED"]))
+    lines.append("")
     lines.append(f"- **buildId**: `{summary.get('buildId')}`")
     lines.append(f"- **bundleId**: `{summary.get('bundleId') or '(none)'}`")
-    lines.append(f"- **status**: `{summary.get('status')}`")
+    # The status line carries BOTH the phase rollup and the verification badge,
+    # so "completed" is never shown without its shippability qualifier.
+    if badge == "VERIFIED":
+        lines.append(f"- **status**: `{phase_status}` · ✅ VERIFIED (shippable)")
+    else:
+        lines.append(f"- **status**: `{phase_status}` · {badge} — **NOT shippable** (see Verification)")
     lines.append(f"- **startedAt**: {summary.get('startedAt') or '(unknown)'}")
     env = summary.get("environment") or {}
     if env:
@@ -239,8 +264,6 @@ def render_markdown(summary: dict) -> str:
         lines.append(f"- **environment**: {envline}")
     lines.append("")
 
-    fv = summary.get("functionalVerification") or {}
-    badge = fv.get("badge", "UNVERIFIED")
     lines.append("## Verification")
     lines.append("")
     if badge == "VERIFIED":
@@ -357,6 +380,18 @@ def write_summary(project_root: Path) -> dict:
         latest.write_text(build_id, encoding="utf-8")
 
     summary["_paths"] = {"json": str(json_path), "md": str(md_path), "latest": str(latest)}
+
+    # The run summary is the last artifact of Phase 7 for every run (success or
+    # failure), so it is the reliable point to release the build lock on a clean
+    # shutdown. Best-effort: a missing build_lock module or a lock held by
+    # another live build must never break summary writing. (Stale locks are
+    # reclaimed at the next acquire regardless, so this is a courtesy.)
+    try:
+        import build_lock
+        build_lock.release(project_root, build_id)
+    except Exception:
+        pass
+
     return summary
 
 

@@ -1,6 +1,11 @@
 #!/bin/bash
-# PreToolUse hook — block Write/Edit/Bash file-mutation calls that fall
-# outside the active agent's `spec/pipeline.json.fileOwnership` allow list.
+# PreToolUse hook — block Write/Edit/NotebookEdit file-mutation calls that fall
+# outside the active agent's `spec/pipeline.json.fileOwnership` rules.
+#
+# Scope: structured file editors only. `Bash` writes (mv/cp/sed -i/redirection)
+# are NOT seen here — they are caught post-hoc by sandbox_runner.py at Gate 4→5.
+# The forbidden floor (Models/ + .autobot control files) is enforced for every
+# agent, including broadAccess, via sandbox_guard.py → evaluate_violations.
 #
 # Trigger contract (Claude Code hook spec):
 #   stdin → JSON: { "tool_name": "Write|Edit|...", "tool_input": { ... } }

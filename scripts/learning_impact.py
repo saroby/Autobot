@@ -83,12 +83,51 @@ def stable_id(phase: str, rule_body: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
+def _norm_text(value: str) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+def _propagate_to_common_errors(data: dict, rule_text: str, delta: int) -> int:
+    """Apply ``delta`` to the effect_score of any ``patterns.common_build_errors``
+    entry whose pattern/fix/prevention text matches ``rule_text``.
+
+    This is the bridge that makes the RENDERED ``## Prevention Rules`` honor
+    quarantine: render-active-learnings.py drops entries whose effect_score has
+    fallen to QUARANTINE_THRESHOLD. Without it a prevention rule graded "hurt"
+    in items[] kept being rendered into every future build's prompt — the
+    primary prompt channel ignored quarantine entirely (the W2 defect). The
+    match is best-effort text equality/containment: when an agent logs the exact
+    prevention rule it applied via ``--rule`` the link is exact, and a miss is
+    harmless (the items[]/context_pack channel still honors quarantine on its
+    own). Returns the number of entries updated.
+    """
+    rule_n = _norm_text(rule_text)
+    if not rule_n:
+        return 0
+    errors = data.get("patterns", {}).get("common_build_errors")
+    if not isinstance(errors, list):
+        return 0
+    touched = 0
+    for entry in errors:
+        if not isinstance(entry, dict):
+            continue
+        prevention_n = _norm_text(entry.get("prevention", ""))
+        fix_n = _norm_text(entry.get("fix", ""))
+        haystack = " ".join((prevention_n, fix_n, _norm_text(entry.get("pattern", ""))))
+        if rule_n == prevention_n or rule_n == fix_n or rule_n in haystack:
+            entry["effect_score"] = int(entry.get("effect_score", 0) or 0) + delta
+            touched += 1
+    return touched
+
+
 def grade_build(project_root: Path, build_id: str | None = None) -> dict:
     """Inspect the just-finished build state and update learning effect scores.
 
     Heuristic per learning consumed in phase N:
-      - phase N's outgoing gate passed AND no fix attempts were needed → "helped" (+1)
-      - phase N's outgoing gate passed AFTER ≥1 build_fix_attempt → "neutral" (0)
+      - gate passed AND no fix attempts were needed (errorSignatureHistory
+        empty) → "helped" (+1)
+      - gate passed AFTER ≥1 build-fix attempt (errorSignatureHistory
+        non-empty) → "neutral" (0)
       - phase N's outgoing gate failed → "hurt" (−1)
       - circuit breaker tripped in phase N where this learning was applied → "hurt" (−2)
 
@@ -114,27 +153,43 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
         # Aggregate phase-level signals.
         status = phase_block.get("status")
         breaker = (phase_block.get("circuitBreaker") or {}).get("tripped") is True
-        build_attempts = sum(
-            1 for entry in (phase_block.get("buildFixAttempts") or [])
-        ) if isinstance(phase_block.get("buildFixAttempts"), list) else 0
+        # Number of build-fix attempts in this phase = entries appended to
+        # errorSignatureHistory (error_signature.record appends one per recorded
+        # compile-error signature). The previous code read `buildFixAttempts`,
+        # a key NO code ever writes — so the count was always 0, every completed
+        # phase graded "helped" (+1), and the "neutral" branch was dead. This
+        # uses the real signal so a phase that passed only after fix loops is
+        # graded neutral, not credited as a clean win.
+        history = phase_block.get("errorSignatureHistory")
+        fix_attempts = len(history) if isinstance(history, list) else 0
 
         if breaker:
             outcome, delta = "hurt", -2
         elif status in ("failed", "skipped"):
             outcome, delta = "hurt", -1
-        elif status in ("completed", "fallback") and build_attempts == 0:
+        elif status in ("completed", "fallback") and fix_attempts == 0:
             outcome, delta = "helped", 1
         elif status in ("completed", "fallback"):
             outcome, delta = "neutral", 0
         else:
             continue
 
-        for rec in consumed_records:
+        # Prefer structured per-rule records when present so grading is
+        # per-rule, not per-agent (the W4 defect was collapsing every rule an
+        # agent applied into one stable_id(phase, agent) bucket). The bare
+        # agent-name string is kept in state for the *_consumed_learnings gate,
+        # but we don't also grade it when richer per-rule records exist — that
+        # would double-count the phase outcome.
+        records_to_grade = [r for r in consumed_records if isinstance(r, dict)] or consumed_records
+
+        for rec in records_to_grade:
             # Accept both legacy (str = agent name) and structured records.
             if isinstance(rec, str):
                 learning_id = stable_id(phase_id, rec)
+                rule_text = ""
             elif isinstance(rec, dict):
-                learning_id = rec.get("id") or stable_id(phase_id, rec.get("rule", rec.get("agent", "")))
+                rule_text = rec.get("rule", "")
+                learning_id = rec.get("id") or stable_id(phase_id, rule_text or rec.get("agent", ""))
             else:
                 continue
 
@@ -157,6 +212,11 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
             if build_id and build_id not in runs:
                 runs.append(build_id)
                 runs[:] = runs[-10:]  # cap history
+            # Mirror the outcome onto the rendered prevention-rule store so a
+            # hurtful rule also drops out of active-learnings.md / phase files,
+            # not only the items[]/context_pack channel (W2).
+            if rule_text:
+                _propagate_to_common_errors(data, rule_text, delta)
             updated += 1
             summaries.append({
                 "id": learning_id,

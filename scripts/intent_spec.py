@@ -268,10 +268,18 @@ def validate_feature_spec(project_root: Path) -> tuple[bool, list[str]]:
 def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
     """Quality assessment for Gate 1->2 — returns (ok, problems).
 
-    Every P0/P1 acceptance postcondition.kind must be one of
-    POSTCONDITION_KINDS. An empty kind ("anchor-only" acceptance — it only
-    asserts the anchor rendered, never that behavior occurred) is invalid: a
-    postcondition is what makes the flow checkable at runtime.
+    Two rules:
+
+    1. Every P0/P1 acceptance postcondition.kind must be one of
+       POSTCONDITION_KINDS. An empty kind ("anchor-only" acceptance — it only
+       asserts the anchor rendered, never that behavior occurred) is invalid: a
+       postcondition is what makes the flow checkable at runtime.
+    2. Every P0 feature must declare at least one ``kind == "flow"`` acceptance.
+       Gate 5->6 only drives ``flow`` acceptances on a simulator via AXe; a
+       logic-only P0 feature would let a build earn the VERIFIED badge while no
+       UI flow ever runs — the "intact logic alone is enough" hole that makes a
+       broken-UI app look verified. P1 is exempt because P1 flow failures only
+       warn, never block, so requiring a P1 flow would add no enforced coverage.
     """
     features = load_feature_spec(project_root)
     if features is None:
@@ -294,6 +302,13 @@ def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
                     f"{label}/{acc.id or '<unnamed>'}: invalid postcondition.kind "
                     f"'{kind}' (allowed: {', '.join(POSTCONDITION_KINDS)})"
                 )
+        if feat.priority == "P0" and not any(a.kind == "flow" for a in feat.acceptance):
+            problems.append(
+                f"{label} (P0): no 'flow' acceptance — a P0 feature MUST declare "
+                f"at least one kind:'flow' acceptance so its UI is driven on a "
+                f"simulator at Gate 5->6 (logic-only acceptances are never clicked "
+                f"at runtime, so the VERIFIED badge would not actually exercise the UI)"
+            )
     return (not problems), problems
 
 

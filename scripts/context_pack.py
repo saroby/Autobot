@@ -79,8 +79,33 @@ def _writes_for(spec: dict, agent: str, app_name: str) -> list[str]:
     return [raw.replace("{appName}", app_name) for raw in (block.get("writes") or [])]
 
 
+def _transitive_upstream(phases: dict, start: str) -> list[str]:
+    """All phases reachable from `start` via the `dependencies` edges
+    (TRANSITIVE, not just the immediate parents).
+
+    The pipeline is a single-edge chain (4→3→2→1→0), so the immediate
+    dependency of Phase 4 is only Phase 3 (design-system / Packages/). Walking
+    just the immediate parent omitted the Phase-1 `{appName}/Models/` +
+    ServiceProtocols.swift type contract — the very thing every phase-4 coder's
+    prompt is written against. Traversing the full closure surfaces it (and the
+    Phase-2 design-spec) as read-only inputs. Inputs are path+sha+size
+    references, not file contents, so a wider closure costs only a few lines.
+
+    Returned ascending by phase id for stable, deterministic pack output.
+    """
+    seen: set[str] = set()
+    stack = list((phases.get(start) or {}).get("dependencies") or [])
+    while stack:
+        pid = str(stack.pop())
+        if pid in seen or pid not in phases:
+            continue
+        seen.add(pid)
+        stack.extend(str(d) for d in ((phases.get(pid) or {}).get("dependencies") or []))
+    return sorted(seen, key=lambda p: (len(p), p))
+
+
 def _required_inputs(spec: dict, agent: str, app_name: str, project_root: Path) -> list[dict]:
-    """Owned files from upstream phases (read-only inputs for this agent)."""
+    """Owned files from ALL transitive-upstream phases (read-only inputs)."""
     phases = spec.get("phases") or {}
     my_phase = next(
         (pid for pid, b in phases.items() if agent in (b.get("agents") or [])),
@@ -88,29 +113,32 @@ def _required_inputs(spec: dict, agent: str, app_name: str, project_root: Path) 
     )
     if my_phase is None:
         return []
-    deps = (phases.get(my_phase) or {}).get("dependencies") or []
     ownership = (spec.get("fileOwnership") or {}).get("agents") or {}
 
     inputs: list[dict] = []
-    for upstream in deps:
-        upstream_agents = (phases.get(upstream) or {}).get("agents") or []
-        for ag in upstream_agents:
+    seen_paths: set[str] = set()
+
+    def _add(full: Path) -> None:
+        rel = str(full.relative_to(project_root))
+        if rel in seen_paths:
+            return
+        seen_paths.add(rel)
+        inputs.append({
+            "path": rel,
+            "sha": hashlib.sha256(full.read_bytes()).hexdigest()[:12],
+            "size": full.stat().st_size,
+        })
+
+    for upstream in _transitive_upstream(phases, my_phase):
+        for ag in (phases.get(upstream) or {}).get("agents") or []:
             for raw in (ownership.get(ag, {}).get("writes") or []):
                 path_str = raw.replace("{appName}", app_name)
                 full = project_root / path_str
                 if path_str.endswith("/") and full.is_dir():
                     for f in sorted(full.rglob("*.swift")):
-                        inputs.append({
-                            "path": str(f.relative_to(project_root)),
-                            "sha": hashlib.sha256(f.read_bytes()).hexdigest()[:12],
-                            "size": f.stat().st_size,
-                        })
+                        _add(f)
                 elif full.is_file():
-                    inputs.append({
-                        "path": str(full.relative_to(project_root)),
-                        "sha": hashlib.sha256(full.read_bytes()).hexdigest()[:12],
-                        "size": full.stat().st_size,
-                    })
+                    _add(full)
     return inputs
 
 

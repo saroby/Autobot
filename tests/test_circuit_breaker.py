@@ -49,8 +49,10 @@ class TestCircuitBreaker(IsolatedProjectCase):
                              msg=f"phase {pid} expected skipped, got {s['phases'][pid]['status']}")
             self.assertIn("circuit breaker", s["phases"][pid].get("skipReason", ""))
 
-    def test_global_threshold_blocks_in_progress(self):
-        # threshold=3 in spec; force retryCount sum to 3 across phases.
+    def _trip_global_threshold(self) -> None:
+        # threshold=3 in spec; force retryCount sum to 3 across phases, with the
+        # trip-causing phase 4 left `failed` (retry 1 < maxRetry 2) and phase 3
+        # completed so phase 4's dependency is satisfied.
         s = json.loads((self.project_dir / ".autobot" / "build-state.json").read_text())
         s["phases"]["1"] = {"status": "completed", "retryCount": 0, "completedAt": "t"}
         s["phases"]["2"] = {"status": "completed", "retryCount": 1, "completedAt": "t"}
@@ -60,9 +62,30 @@ class TestCircuitBreaker(IsolatedProjectCase):
             json.dumps(s, ensure_ascii=False, indent=2)
         )
 
+    def test_global_threshold_blocks_in_progress(self):
+        self._trip_global_threshold()
         result = run_pipeline("start-phase", "--phase", "4", project_dir=self.project_dir)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("circuit breaker tripped", result.stdout + result.stderr)
+
+    def test_explicit_restart_overrides_tripped_breaker(self):
+        # The documented `/autobot:resume <N> --allow-terminal-restart` recovery
+        # must survive a tripped breaker; otherwise the only escape is
+        # `rm -rf build-state.json` (losing all completed work).
+        self._trip_global_threshold()
+
+        # No flag → breaker still guards the autonomous path (regression guard).
+        blocked = run_pipeline("start-phase", "--phase", "4", project_dir=self.project_dir)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn("circuit breaker tripped", blocked.stdout + blocked.stderr)
+
+        # --allow-terminal-restart = operator override → breaker is cleared.
+        forced = run_pipeline(
+            "start-phase", "--phase", "4", "--allow-terminal-restart",
+            project_dir=self.project_dir,
+        )
+        self.assertEqual(forced.returncode, 0, msg=forced.stdout + forced.stderr)
+        self.assertEqual(self.state()["phases"]["4"]["status"], "in_progress")
 
 
 if __name__ == "__main__":

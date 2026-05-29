@@ -25,8 +25,9 @@ Read the architecture document to understand app screens and navigation, then us
 
 3. **Generate Designs via Stitch**: 모든 화면을 생성한다.
 
-   a. 먼저 `mcp__stitch__batch_generate_screens`로 일괄 생성을 시도한다 (더 효율적).
-      실패 시 `mcp__stitch__generate_screen_from_text`로 화면별 개별 생성으로 전환.
+   a. 화면 목록을 순회하며 **화면마다 `mcp__stitch__generate_screen_from_text` 를 1회씩** 호출해 생성한다. Stitch 는 일괄 생성 도구를 제공하지 않으므로 per-screen 루프가 정상 경로다.
+      - 이 도구는 수 분이 걸릴 수 있고 **timeout 이 나도 재시도하지 않는다**. timeout/연결 오류 시에도 생성은 백그라운드에서 완료될 수 있으므로, 30초 간격으로 `mcp__stitch__get_screen` 을 최대 10회 polling 해 완료를 확인한 뒤 다음 화면으로 넘어간다.
+      - 모든 화면은 동일한 design system 으로 생성해 일관성을 유지한다 (`mcp__stitch__get_project` 로 design system id 를 확인하고 `designSystem` 인자로 전달).
 
    b. 각 화면의 디자인 프롬프트 — architecture.md의 `## Design Direction`을 반드시 반영:
    ```
@@ -50,15 +51,15 @@ Read the architecture document to understand app screens and navigation, then us
    c. `mcp__stitch__list_screens`로 생성된 화면 ID 목록 확인
 
    d. 각 화면의 스크린샷 저장:
-      - `mcp__stitch__fetch_screen_image`로 이미지 데이터 가져오기
-      - base64 → PNG 변환: `echo "<base64_data>" | base64 -d > .autobot/designs/<ScreenName>.png`
+      - `mcp__stitch__list_screens` 로 얻은 screen id 로 `mcp__stitch__get_screen` (resource name `projects/<projectId>/screens/<screenId>`) 을 호출해 화면 상세를 가져온다 — 반환에 렌더 이미지가 포함된다.
+      - 반환된 이미지(base64)를 PNG 로 저장: `echo "<base64_data>" | base64 -d > .autobot/designs/<ScreenName>.png`
 
    e. **부분 실패 처리**: 일부 화면 생성이 실패하면:
       - 성공한 화면은 즉시 저장
       - 실패한 화면은 `generate_screen_from_text`로 개별 재시도 (1회)
       - 최종 실패 화면은 design-spec.md에 기록 (ui-builder가 architecture.md 기반으로 구현)
 
-4. **Extract Design Tokens**: 각 화면에 대해 `mcp__stitch__fetch_screen_code`로 HTML/CSS를 가져온다.
+4. **Extract Design Tokens**: 각 화면의 `mcp__stitch__get_screen` 반환에 포함된 HTML/CSS(코드)를 사용한다 (3d 에서 이미 가져왔다면 그 결과를 재사용).
    Map web design tokens to iOS equivalents:
    - `font-size: 34px; font-weight: bold` → `.font(.largeTitle)`
    - `font-size: 17px` → `.font(.body)`

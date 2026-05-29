@@ -45,6 +45,42 @@ class TestLearningApplied(IsolatedProjectCase):
         consumed = self.state()["phases"]["4"].get("learningsConsumed", [])
         self.assertEqual(consumed, ["backend-engineer", "data-engineer", "ui-builder"])
 
+    def test_rule_records_structured_entry_plus_agent_name(self):
+        # --rule records a per-rule structured entry (for rule-granular grading)
+        # WITHOUT dropping the bare agent name the *_consumed_learnings gate
+        # asserts via state_field_contains.
+        result = run_build_log(
+            "--event", "learning_applied",
+            "--phase", "4", "--agent", "ui-builder",
+            "--rule", "pin the design-system module import",
+            "--rule", "attach feature anchors to every P0 cta",
+            project_dir=self.project_dir,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        consumed = self.state()["phases"]["4"].get("learningsConsumed", [])
+        # Gate-visible agent name still present.
+        self.assertIn("ui-builder", consumed)
+        # One structured record per rule, each with id + rule + agent.
+        rule_recs = [c for c in consumed if isinstance(c, dict)]
+        self.assertEqual(len(rule_recs), 2)
+        self.assertEqual({r["agent"] for r in rule_recs}, {"ui-builder"})
+        rules = {r["rule"] for r in rule_recs}
+        self.assertIn("pin the design-system module import", rules)
+        self.assertTrue(all(r.get("id") for r in rule_recs))
+
+    def test_rule_records_dedupe_by_id(self):
+        for _ in range(3):
+            run_build_log(
+                "--event", "learning_applied",
+                "--phase", "4", "--agent", "ui-builder",
+                "--rule", "same rule twice",
+                project_dir=self.project_dir,
+            )
+        consumed = self.state()["phases"]["4"].get("learningsConsumed", [])
+        rule_recs = [c for c in consumed if isinstance(c, dict)]
+        self.assertEqual(len(rule_recs), 1)
+        self.assertEqual(consumed.count("ui-builder"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

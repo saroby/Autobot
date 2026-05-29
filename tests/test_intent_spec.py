@@ -354,6 +354,53 @@ class TestAssessFeatureSpecQuality(unittest.TestCase):
                 ok, problems = assess_feature_spec_quality(tmp_path)
                 self.assertTrue(ok, f"{kind}: {problems}")
 
+    def test_p0_with_flow_acceptance_passes(self):
+        # The default valid payload's P0 already has a flow acceptance.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            _write_feature_spec(tmp_path, _valid_feature_payload())
+            ok, problems = assess_feature_spec_quality(tmp_path)
+            self.assertTrue(ok, problems)
+
+    def test_p0_logic_only_acceptance_rejected(self):
+        # A P0 feature whose only acceptance is logic-kind (with a perfectly
+        # valid postcondition) must STILL be rejected: Gate 5->6 only drives
+        # `flow` acceptances on a simulator, so a logic-only P0 would earn the
+        # VERIFIED badge with no UI flow ever run (the broken-UI / intact-logic
+        # hole). assess_feature_spec_quality must demand >=1 flow per P0.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = _valid_feature_payload()
+            payload["features"][0]["acceptance"] = [{
+                "id": "log-workout.logic",
+                "kind": "logic",
+                "steps": [{"action": "noop"}],
+                "postcondition": {"kind": "value_persisted_after_relaunch", "params": {}},
+            }]
+            _write_feature_spec(tmp_path, payload)
+            ok, problems = assess_feature_spec_quality(tmp_path)
+            self.assertFalse(ok)
+            self.assertTrue(
+                any("flow" in p and "log-workout" in p for p in problems),
+                problems,
+            )
+
+    def test_p1_logic_only_is_allowed(self):
+        # P1 flow failures only warn, so a P1 need not declare a flow acceptance.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = _valid_feature_payload()
+            payload["features"][0]["priority"] = "P1"
+            payload["features"][0]["acceptance"] = [{
+                "id": "log-workout.logic",
+                "kind": "logic",
+                "steps": [{"action": "noop"}],
+                "postcondition": {"kind": "setting_stored", "params": {}},
+            }]
+            _write_feature_spec(tmp_path, payload)
+            ok, problems = assess_feature_spec_quality(tmp_path)
+            self.assertTrue(ok, problems)
+
 
 if __name__ == "__main__":
     unittest.main()

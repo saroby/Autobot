@@ -66,6 +66,8 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
         self.assertTrue(r["degraded"])
 
     def test_benign_skip_when_no_flow_features(self):
+        # Features exist but none is P0 (the bare object has no .priority) →
+        # nothing must be driven, so a benign skip is legitimate.
         out = self._run(
             features=[object()],
             run_result={"status": "skipped", "skipReason": "no_features",
@@ -75,6 +77,23 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
         self.assertTrue(r["passed"])
         self.assertTrue(r["skipped"])
         self.assertFalse(r.get("degraded", False))
+
+    def test_no_flow_but_p0_present_is_hard_fail(self):
+        # A P0 feature exists but run_flows benign-skipped (no flow acceptance):
+        # the spec slipped past Gate 1->2. Refuse it here too — benign-skipping
+        # would launder a logic-only build to VERIFIED with no flow ever run.
+        class _P0:
+            priority = "P0"
+        out = self._run(
+            features=[_P0()],
+            run_result={"status": "skipped", "skipReason": "no_features",
+                        "degraded": False, "results": []},
+        )
+        r = out[0]
+        self.assertFalse(r["passed"])          # hard fail, not a skip
+        self.assertFalse(r.get("skipped", False))
+        self.assertFalse(r.get("degraded", False))
+        self.assertIn("flow", r["message"].lower())
 
     def test_p1_warning_does_not_fail(self):
         out = self._run(

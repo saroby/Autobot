@@ -53,7 +53,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
    출력 (≤ 40KB) 을 그대로 Agent 프롬프트 맨 앞에 붙인다. dropped 항목이 있으면 build-log 에 정보용으로 기록한다.
 5. **sandbox guard 활성화 / 해제**: sub-agent dispatch 직전 `pipeline.sh sandbox set-active --agent <name> --phase <N>`, 완료 직후 `pipeline.sh sandbox clear-active`. PreToolUse hook 이 marker 를 보고 사전 차단한다 (LOOP 12).
 6. Phase 3 은 **두 단계 dispatch**: (a) `create-xcode-project.sh` 를 self 로 실행, 직후 (b) `design-system` 에이전트를 단일 dispatch. 둘 다 끝난 뒤 `advance-phase --phase 3` 으로 gate 실행.
-7. Phase 4 는 **반드시 한 메시지에서** ui-builder + data-engineer (+조건부 backend-engineer) 를 동시 디스패치한다. 이때 sandbox marker 는 첫 agent 가 시작될 때 set, 마지막 agent 가 끝날 때 clear. 병렬 동안은 broadAccess 가 일시적으로 켜지지 않도록 marker 의 `agent` 필드는 가장 제한적인 agent 로 설정한다.
+7. Phase 4 는 **반드시 한 메시지에서** ui-builder + data-engineer (+조건부 backend-engineer) 를 동시 디스패치한다. 세 coder 는 disjoint 트리(Views/ vs Services/ vs backend/)에 쓰므로 construction 상 충돌이 없다. 병렬 중에는 세 agent 가 하나의 marker 를 공유하므로 hook 이 개별 write 를 특정 agent 로 귀속시킬 수 없다 — 따라서 marker 의 `agent` 는 broadAccess 컨텍스트(`quality-engineer`)로 set 한다. pre-write guard 의 Phase 4 역할은 **forbidden floor**(`{appName}/Models/` + `.autobot` 제어 파일)를 세 agent 모두에게 강제하는 것이고(broadAccess 라도 floor 는 뚫지 못한다), **agent 간 디렉토리 OVERLAP 은 Gate 4→5 의 post-hoc `agent-sandbox.sh after` 가 정확히 검출**한다. 가장 제한적인 단일 agent 로 marker 를 set 하면 다른 두 coder 의 정당한 write 가 차단되므로 그렇게 하지 않는다.
 8. Phase 완료 후 `pipeline.sh advance-phase --phase <N>` 으로 outgoing gate 실행 + 상태 마킹 + (성공 시) inputHash 자동 기록을 한 호출로 처리한다.
 9. Gate 실패 시 `retryCount < maxRetry` 면 같은 Phase 재실행, 아니면 `failed` 마킹 후 Phase 7 로 점프.
 10. Circuit breaker (3 연속 phase 실패 또는 에러 시그니처 2회 반복) 트립 시 Phase 7 만 진행.
@@ -101,7 +101,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag     --key backend_requir
 
 | 책임 | 스크립트 | 비고 |
 |------|----------|------|
-| Build lock | `.autobot/build.lock` (Phase 0 acquire, Phase 7 release) | PID 유효성 자동 확인 |
+| Build lock | `build_lock.py` — `init-build` 가 자동 acquire, `write-run-summary`(Phase 7) 가 release | PID liveness 로 crash 후 stale lock 자동 재확보 + 동시 빌드 차단. 진단: `pipeline.sh build-lock status` |
 | Event log | `scripts/build-log.sh` | `.autobot/build-log.jsonl` append-only |
 | Models 체크섬 / Phase 스냅샷 | `scripts/snapshot-contracts.sh` | Phase 4 산출물 복원에 사용 |
 | Agent sandbox | `scripts/agent-sandbox.sh before/after` | 위반은 `phases.<N>.sandbox.violations` 자동 기록 |

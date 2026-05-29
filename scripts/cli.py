@@ -75,6 +75,16 @@ def init_state(args: argparse.Namespace) -> int:
     if state_path.exists() and not args.force:
         raise SystemExit(f"FATAL: build-state.json already exists at {state_path}")
 
+    # Acquire the build lock BEFORE writing any state, so a second concurrent
+    # build cannot clobber an in-flight `.autobot/`. A stale lock (dead holder
+    # PID) is reclaimed automatically; re-init of the same build is idempotent.
+    import build_lock
+    project_root = state_path.parent.parent
+    locked, lock_reason = build_lock.acquire(project_root, args.build_id)
+    if not locked:
+        raise SystemExit(f"FATAL: cannot start build — {lock_reason}")
+    print(f"OK: build lock — {lock_reason}")
+
     timestamp = args.started_at or utc_now()
     state: dict[str, Any] = {
         "schemaVersion": spec.get("schemaVersion"),
@@ -327,13 +337,30 @@ def append_log(args: argparse.Namespace) -> int:
     if args.event == "learning_applied" and args.phase and args.agent:
         state_path = state_file_from_args(args)
         if state_path.is_file():
+            from learning_impact import stable_id  # import-light, no spec dep
+            rules = [r for r in (getattr(args, "rule", None) or []) if r and r.strip()]
+
             def mutate(next_state: dict[str, Any]) -> None:
                 phases = next_state.setdefault("phases", {})
                 phase_state = phases.setdefault(str(args.phase), {"status": "pending"})
                 consumed = phase_state.setdefault("learningsConsumed", [])
+                # Always keep the agent NAME as a bare string: Gate
+                # `*_consumed_learnings` (state_field_contains) asserts the agent
+                # name is present, and grading falls back to it for legacy builds.
                 if args.agent not in consumed:
                     consumed.append(args.agent)
-                    consumed.sort()
+                # Additionally record one structured entry PER applied rule so
+                # effect-score grading + quarantine operate at rule granularity —
+                # a single bad rule can be quarantined without nuking everything
+                # the agent applied (the per-agent-only bucket was the W4 defect).
+                existing_ids = {c.get("id") for c in consumed if isinstance(c, dict)}
+                for rule in rules:
+                    rid = stable_id(str(args.phase), rule)
+                    if rid not in existing_ids:
+                        consumed.append({"id": rid, "rule": rule, "agent": args.agent})
+                        existing_ids.add(rid)
+                # Mixed str/dict list: sort by a string key so str↔dict never compare.
+                consumed.sort(key=lambda c: c if isinstance(c, str) else c.get("id", ""))
 
             mutate_state_with_validation(state_path, spec, mutate)
 
@@ -457,6 +484,13 @@ def build_parser() -> argparse.ArgumentParser:
     log_cmd.add_argument("--agent")
     log_cmd.add_argument("--detail")
     log_cmd.add_argument("--detail-json")
+    log_cmd.add_argument(
+        "--rule", action="append", default=None,
+        help="A specific learning/prevention rule that was applied (repeatable). "
+             "On a learning_applied event each --rule records a per-rule entry in "
+             "phases.<N>.learningsConsumed so effect-score grading can quarantine "
+             "one bad rule instead of the whole agent bucket.",
+    )
     log_cmd.add_argument("--at")
     log_cmd.set_defaults(func=append_log)
 

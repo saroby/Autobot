@@ -14,6 +14,7 @@ PHASE=""
 EVENT=""
 DETAIL=""
 AGENT=""
+RULES=()
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 
 while [[ $# -gt 0 ]]; do
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     --event)       EVENT="$2";       shift 2 ;;
     --detail)      DETAIL="$2";      shift 2 ;;
     --agent)       AGENT="$2";       shift 2 ;;
+    --rule)        RULES+=("$2");    shift 2 ;;
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
@@ -39,5 +41,8 @@ ARGS=(--project-dir "$PROJECT_DIR" --event "$EVENT")
 [[ -n "$PHASE"  ]] && ARGS+=(--phase  "$PHASE")
 [[ -n "$AGENT"  ]] && ARGS+=(--agent  "$AGENT")
 [[ -n "$DETAIL" ]] && ARGS+=(--detail "$DETAIL")
+if [[ ${#RULES[@]} -gt 0 ]]; then
+  for r in "${RULES[@]}"; do ARGS+=(--rule "$r"); done
+fi
 
 exec python3 "$RUNTIME" append-log "${ARGS[@]}"

@@ -79,11 +79,27 @@ def validate_transition_request(
         return False, [f"REJECTED: Invalid target status {target_status}"]
 
     allowed = set(transition_map(spec, phase).get(current_status, []))
+    resume_policy = spec.get("policies", {}).get("resume", {})
     allow_explicit_restart = (
         allow_terminal_restart
-        and spec.get("policies", {}).get("resume", {}).get("allowExplicitRestartFromTerminal", False)
+        and resume_policy.get("allowExplicitRestartFromTerminal", False)
         and target_status == "in_progress"
         and current_status in set(spec.get("terminalStatuses", []))
+    )
+    # An operator who passes --allow-terminal-restart (and the policy permits it)
+    # is explicitly overriding autonomous safety to resume a stuck build. That
+    # override must also clear the GLOBAL circuit breaker — otherwise the
+    # documented `/autobot:resume <N> --allow-terminal-restart` recovery is dead
+    # the moment the breaker trips (the breaker check below would reject every
+    # restart, leaving `rm -rf build-state.json` as the only escape). The
+    # autonomous orchestrator never passes this flag, so the breaker still
+    # guards normal runs. Unlike allow_explicit_restart this is not gated on a
+    # terminal current_status, so it also unblocks retrying the failed phase
+    # that tripped the breaker.
+    operator_override = (
+        allow_terminal_restart
+        and resume_policy.get("allowExplicitRestartFromTerminal", False)
+        and target_status == "in_progress"
     )
 
     if target_status not in allowed and not allow_explicit_restart:
@@ -114,11 +130,12 @@ def validate_transition_request(
         if retry_count >= max_retry:
             return False, [f"REJECTED: Phase {phase} has exhausted retries ({retry_count}/{max_retry})"]
 
-    if target_status == "in_progress":
+    if target_status == "in_progress" and not operator_override:
         tripped, failures, threshold, scope = circuit_breaker_tripped(spec, state)
         if tripped:
             return False, [
                 f"REJECTED: circuit breaker tripped — {scope} retryCount={failures} ≥ {threshold}",
+                "  Pass --allow-terminal-restart to force an operator-driven restart.",
             ]
 
     suffix = " (explicit restart)" if allow_explicit_restart else ""

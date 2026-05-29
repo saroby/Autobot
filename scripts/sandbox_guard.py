@@ -1,24 +1,39 @@
 #!/usr/bin/env python3
 """Pre-write sandbox guard — enforce `spec/pipeline.json.fileOwnership` BEFORE
-an agent's Write/Edit/Bash tool call mutates a forbidden path.
+a structured file-edit tool call (Write / Edit / NotebookEdit) mutates a
+forbidden path.
 
-The existing `agent-sandbox.sh before/after` flow is *post-hoc*: it diffs the
-filesystem and records violations only after damage is done. This guard wires
-the same ownership matrix into a PreToolUse hook so attempted writes outside
-the owner's allow-list never reach disk.
+The existing `sandbox_runner.py` (`agent-sandbox.sh before/after`) flow is
+*post-hoc*: it diffs the filesystem and records violations only after damage is
+done. This guard wires the SAME decision function (`sandbox_runner.
+evaluate_violations`) into a PreToolUse hook so attempted writes are caught
+before they reach disk. Reusing one decision function — rather than a second
+re-implementation — is deliberate: it is the only way the pre-write guard and
+the post-hoc enforcer cannot drift apart.
+
+Scope (be honest about what this does and does NOT cover):
+    - Covers Write / Edit / NotebookEdit. It does NOT see `Bash` writes
+      (`mv`, `cp`, `sed -i`, redirection, build scripts) — the PreToolUse hook
+      matcher only fires for the structured editors. Bash-path mutations are
+      caught post-hoc by `sandbox_runner.py` at Gate 4→5. (Earlier this
+      docstring claimed it guarded Bash; it never did.)
+    - The "forbidden floor" — `forbiddenAlways` ({appName}/Models/) and
+      `forbiddenInfra` (.autobot control files) — is enforced for EVERY agent,
+      INCLUDING broadAccess agents, unless that agent is in the matching
+      *Exempt list. So even quality-engineer (broadAccess, Phase 5) can no
+      longer clobber Models/ or the pipeline control files through Write/Edit.
+    - Per-agent OVERLAP among the three Phase-4 coders (which run in parallel
+      and share one marker, so the hook cannot attribute an individual write to
+      one of them) is enforced post-hoc at Gate 4→5, not here. See SKILL.md.
 
 Activation marker: `.autobot/.guard-active`
     Single-line JSON: {"agent": "ui-builder", "phase": "4"}
-    Skill agents write this on dispatch and remove it when they return. When
-    the marker is missing the guard treats the caller as `quality-engineer`
-    (broadAccess) so direct orchestrator edits keep working.
-
-Allow-list resolution:
-    spec.fileOwnership.agents.<agent>.writes      → allow patterns
-    spec.fileOwnership.agents.<agent>.broadAccess → True bypasses the check
-    spec.fileOwnership.shared.writes              → always allowed
-    {appName} placeholders are expanded from build-state.json
-    Targets matching glob patterns (Path.match) are allowed.
+    The orchestrator writes this before dispatching an agent and removes it
+    when the agent returns. When the marker is missing the guard treats the
+    caller as `quality-engineer` (broadAccess) so orchestrator self-steps keep
+    working — but the forbidden floor above still applies even then.
+    NOTE: the hook (`hooks/sandbox-pre-write.sh`) is itself a no-op when no
+    marker is present, so in production the guard only runs for a marked agent.
 
 CLI:
     sandbox_guard.py check --target <path> [--agent <name>] [--project-dir .]
@@ -31,7 +46,6 @@ payload from stdin, extracts the file path, and invokes `check`.
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import os
 import sys
@@ -46,6 +60,10 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from state_store import state_file_for, try_load_state  # noqa: E402
+# Reuse the post-hoc enforcer's decision function so the two layers can never
+# diverge. evaluate_violations applies the full precedence:
+#   forbiddenAlways → forbiddenInfra → forbiddenPerAgent → broadAccess → writes
+from sandbox_runner import evaluate_violations  # noqa: E402
 
 
 def _load_spec() -> dict:
@@ -68,78 +86,66 @@ def _active_agent(project_root: Path, explicit: str | None) -> str:
                 return agent
         except (json.JSONDecodeError, OSError):
             pass
-    return "quality-engineer"  # default: broad access (matches current pipeline behavior)
+    # Default when no marker is set: quality-engineer (broadAccess) so the
+    # orchestrator's own self-step edits keep working. The forbidden floor in
+    # evaluate_violations still blocks Models/ and infra control files even for
+    # this broadAccess default — broadAccess is no longer a blanket bypass.
+    return "quality-engineer"
 
 
-def _expand_placeholders(pattern: str, app_name: str) -> str:
-    return pattern.replace("{appName}", app_name)
+def _relpath(project_root: Path, target: Path) -> str:
+    """Project-relative POSIX string, matching how `sandbox_runner.hash_tree`
+    records touched paths (so `evaluate_violations`' prefix/exact `matches()`
+    applies identically in both layers).
 
-
-def _path_under(target: Path, allow: str, project_root: Path) -> bool:
-    """Check whether `target` matches the allow pattern.
-
-    Three shapes:
-      - "dir/" → target is inside that directory tree
-      - exact file path → equality
-      - glob pattern (contains '*', '?', '[') → fnmatch
+    Both sides are resolved first so a /var → /private/var symlink (macOS
+    tmpdirs) or a `..` segment cannot defeat the relative_to. A target outside
+    the project root has no project-relative form; we hand back its absolute
+    POSIX path, which matches no relative allow/forbidden rule — so a non-broad
+    agent is denied (OWNERSHIP) and a broadAccess agent is permitted, mirroring
+    the post-hoc semantics for paths the snapshot never walks.
     """
-    allow_path = (project_root / allow).resolve()
     try:
-        target_resolved = target.resolve()
+        proot = project_root.resolve()
     except OSError:
-        target_resolved = target
-
-    if allow.endswith("/"):
-        try:
-            target_resolved.relative_to(allow_path)
-            return True
-        except ValueError:
-            return False
-    if any(ch in allow for ch in ("*", "?", "[")):
-        rel_target = str(target_resolved.relative_to(project_root)) if str(target_resolved).startswith(str(project_root.resolve())) else str(target_resolved)
-        return fnmatch.fnmatchcase(rel_target, allow) or fnmatch.fnmatchcase(target_resolved.name, allow)
-    return target_resolved == allow_path
+        proot = project_root
+    try:
+        tr = target.resolve()
+    except OSError:
+        tr = target
+    try:
+        return tr.relative_to(proot).as_posix()
+    except ValueError:
+        return tr.as_posix()
 
 
 def check(project_root: Path, target: Path, agent: str | None = None) -> tuple[bool, str]:
-    """Return (allowed, reason)."""
+    """Return (allowed, reason).
+
+    Delegates the verdict to `sandbox_runner.evaluate_violations` — the single
+    source of truth shared with the post-hoc enforcer — so the forbidden floor
+    (Models/ + .autobot control files) is enforced for every agent including
+    broadAccess, and the two layers cannot drift.
+    """
     spec = _load_spec()
-    ownership = spec.get("fileOwnership") or {}
-    agents = ownership.get("agents") or {}
-    shared = ownership.get("shared", {}).get("writes", []) or []
+    agents = (spec.get("fileOwnership") or {}).get("agents") or {}
 
     active = _active_agent(project_root, agent)
-    agent_block = agents.get(active)
-    if agent_block is None:
-        # Unknown agent → deny by default. Operator must explicitly pass
-        # --agent quality-engineer (broadAccess) or set the marker.
+    if active not in agents:
+        # Unknown agent → deny by default. The operator must pass a real
+        # --agent (e.g. quality-engineer for broadAccess) or set the marker.
         return False, f"unknown agent '{active}' — no ownership block in spec"
-
-    if agent_block.get("broadAccess"):
-        return True, f"agent '{active}' has broadAccess"
 
     state = try_load_state(state_file_for(project_root)) or {}
     app_name = state.get("appName") or os.environ.get("AUTOBOT_APP_NAME") or ""
 
-    # Always-shared paths (e.g. .autobot/build-log.jsonl) are allowed for any agent.
-    candidates = []
-    for raw in (agent_block.get("writes") or []):
-        candidates.append(_expand_placeholders(raw, app_name) if app_name else raw)
-    for raw in shared:
-        candidates.append(_expand_placeholders(raw, app_name) if app_name else raw)
+    rel = _relpath(project_root, target)
+    violations = evaluate_violations(spec, active, app_name, [rel])
+    if not violations:
+        return True, f"allowed for agent '{active}': {rel}"
 
-    if not candidates:
-        return False, f"agent '{active}' has no declared writes — every write is forbidden"
-
-    for allow in candidates:
-        if _path_under(target, allow, project_root):
-            return True, f"matches '{allow}' for agent '{active}'"
-
-    return False, (
-        f"agent '{active}' may not write '{target}' — "
-        f"allowed: {', '.join(candidates[:6])}"
-        + ("..." if len(candidates) > 6 else "")
-    )
+    v = violations[0]
+    return False, f"agent '{active}' may not write '{rel}' [{v['kind']}]: {v['message']}"
 
 
 def _main() -> int:

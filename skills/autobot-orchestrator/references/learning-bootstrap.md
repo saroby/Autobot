@@ -39,13 +39,16 @@ phase-specific 또는 active 파일 중 **최소 하나라도 적용했다면**,
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
   --phase <N> --event learning_applied --agent <agent-name> \
-  --detail '{"sources":[<실제로 읽은 파일들>]}'
+  --detail '{"sources":[<실제로 읽은 파일들>]}' \
+  --rule "<실제로 적용한 prevention/architecture 규칙 1>" \
+  --rule "<실제로 적용한 규칙 2>"
 ```
 
 규칙:
 - `sources` 배열에는 **실제로 존재했고 적용한 파일만** 포함한다 (없던 파일은 빼고 보낸다).
 - 두 파일 모두 부재하면 이 호출 자체를 건너뛴다.
 - runtime.py 의 `append-log` 가 `phases.<N>.learningsConsumed[]` 에 `agent-name` 을 누적해 두므로 Gate 가 "이 에이전트가 학습을 소비했는지" 를 검증할 수 있다.
+- **`--rule` (반복 가능, 강력 권장)**: 실제로 적용한 개별 규칙의 **본문 텍스트**를 그대로 넘긴다 (렌더된 `## Prevention Rules` / `## Proven Patterns` 항목의 문구). 가능하면 prevention 규칙 문구를 그대로 복사한다. 그래야 회고의 effect-score 채점이 **agent 단위가 아니라 규칙 단위**로 동작해, 반복해서 빌드를 망친 규칙 하나만 quarantine 되어 이후 프롬프트에서 빠진다 (`--rule` 없이 agent 이름만 기록하면 그 agent 가 적용한 모든 규칙이 한 덩어리로 묶여 개별 quarantine 이 불가능하다).
 
 ## 적용 예시
 

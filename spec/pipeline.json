@@ -613,7 +613,10 @@
       "architect": {
         "writes": [
           "{appName}/Models/",
-          ".autobot/architecture.md"
+          ".autobot/architecture.md",
+          ".autobot/architecture.json",
+          ".autobot/app-intent.json",
+          ".autobot/feature-spec.json"
         ]
       },
       "ux-designer": {

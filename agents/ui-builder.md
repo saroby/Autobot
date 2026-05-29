@@ -66,11 +66,10 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
    - Asset Catalog 의 ThemePrimary/ThemeSecondary 등 colorset 은 생성하지 않는다 (design-system 패키지가 이를 코드 토큰으로 대체했다). AccentColor.colorset 은 scaffold 가 만든 그대로 둔다.
    - `Color.accentColor`, `Color.primary` 같은 시스템 기본값 직접 사용 금지 — 항상 `<Module>Color.*` 사용.
 
-6. **Create App Entry Point**: `<AppName>/App/[AppName]App.swift` with @main, WindowGroup, `.modelContainer(for:)` listing ALL @Model types from `<AppName>/Models/`. App에서 Service 프로토콜의 **stub 구현체**를 생성하여 ViewModel에 주입 (data-engineer가 나중에 실제 구현체로 교체):
-   ```swift
-   // <AppName>/App/ServiceStubs.swift — data-engineer의 실제 구현체가 올 때까지의 임시 구현
-   // quality-engineer가 Phase 5에서 App 엔트리포인트를 실제 Repository로 교체 (이 파일은 Preview/테스트용으로 보존)
-   ```
+6. **Populate ServiceStubs — do NOT create the App entry point**: Phase 3 scaffold 가 이미 `<AppName>/App/<AppName>App.swift` (`@main` → `CompositionRoot()`), `<AppName>/App/CompositionRoot.swift`, `<AppName>/App/ServiceStubs.swift`, `<AppName>/Views/Screens/RootView.swift` 를 생성해 두었다. **`[AppName]App.swift` 나 두 번째 `@main` 을 새로 만들지 않는다** (rule 4 — Gate 4→5 `composition_seam_intact` 가 `@main` 중복을 차단한다). 대신:
+   - `<AppName>/App/ServiceStubs.swift` 에 `Models/ServiceProtocols.swift` 의 각 프로토콜에 대한 **Preview 전용 mock 구현체**를 채운다 — `#Preview` 블록이 실제 `ModelContainer` 없이 렌더되도록 한다 (data-engineer 의 실제 Repository 는 Phase 5 에서 wiring 된다).
+   - ViewModel 과 `#Preview` 에는 이 ServiceStubs 의 mock 을 주입한다.
+   - **production `ModelContainer`/실제 Service 주입은 건드리지 않는다** — Phase 5 에서 quality-engineer 가 `CompositionRoot.swift` 에 `.modelContainer(for:)` (모든 @Model 타입 나열) 와 실제 Repository 를 배선한다.
 7. **Build Navigation**:
    - TabView with NavigationStack per tab (if tabbed app)
    - NavigationStack with navigationDestination (if stack-only)
@@ -280,6 +279,6 @@ If the architecture is ambiguous, choose the simpler approach.
 **IMPORTANT:**
 - Do NOT create, modify, or overwrite any files in `<AppName>/Models/` — those are the shared type contract.
 - If you need a view-local enum (e.g. `FilterOption`, `TabSelection`), define it in the relevant ViewModel file, NOT in Models/.
-- When creating the App entry point, list ALL @Model types in `.modelContainer(for:)` by reading `<AppName>/Models/`.
+- **Do NOT create an App entry point or a second `@main`.** The scaffold's `<AppName>/App/<AppName>App.swift` is the single `@main` seam. The production `.modelContainer(for:)` listing ALL @Model types is wired by quality-engineer in `CompositionRoot.swift` at Phase 5 — ui-builder must not add `@main` or `.modelContainer(for:)`.
 - **All files go inside `<AppName>/`**: `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/App/` — never at the project root.
 - **`Packages/` 절대 수정 금지.** Design system 패키지는 design-system 에이전트의 영역. 토큰이 부족하다고 느껴도 직접 수정하지 말고 가장 가까운 토큰을 선택한다.

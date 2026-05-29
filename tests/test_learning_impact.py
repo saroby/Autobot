@@ -51,13 +51,35 @@ class TestGradeBuild(unittest.TestCase):
                 "4": {
                     "status": "completed",
                     "learningsConsumed": [_consumed("4", "good rule")],
-                    "buildFixAttempts": [],
+                    # no errorSignatureHistory → zero fix attempts → "helped"
                 }
             })
             summary = grade_build(proj, "build-001")
             self.assertEqual(summary["updated"], 1)
             self.assertEqual(summary["summaries"][0]["outcome"], "helped")
             self.assertEqual(summary["summaries"][0]["delta"], 1)
+
+    def test_completed_after_fix_attempts_marks_neutral(self):
+        # errorSignatureHistory is the real build-fix-attempt signal. A phase
+        # that COMPLETED but only after recording fix-attempt signatures earns
+        # "neutral" (0), not "helped". This branch was dead while the grader
+        # read the never-written `buildFixAttempts` key (every completed phase
+        # graded "helped", inflating scores).
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, phases={
+                "5": {
+                    "status": "completed",
+                    "learningsConsumed": [_consumed("5", "some rule")],
+                    "errorSignatureHistory": [
+                        {"hash": "deadbeef", "preview": "error: cannot find type 'Foo'"},
+                    ],
+                }
+            })
+            summary = grade_build(proj, "build-neutral")
+            self.assertEqual(summary["updated"], 1)
+            self.assertEqual(summary["summaries"][0]["outcome"], "neutral")
+            self.assertEqual(summary["summaries"][0]["delta"], 0)
 
     def test_failed_phase_marks_hurt(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -138,11 +160,56 @@ class TestGradeBuild(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             proj = Path(tmp)
             _seed(proj, phases={
-                "4": {"status": "completed", "learningsConsumed": ["ui-builder"], "buildFixAttempts": []}
+                "4": {"status": "completed", "learningsConsumed": ["ui-builder"]}
             })
             summary = grade_build(proj, "build-001")
             self.assertEqual(summary["updated"], 1)
             self.assertEqual(summary["summaries"][0]["outcome"], "helped")
+
+    def test_per_rule_records_grade_independently_not_per_agent(self):
+        # Two different rules from the same agent/phase must grade as DISTINCT
+        # learnings (per-rule), and the bare agent-name string present alongside
+        # them must NOT also be graded (no double-count, no coarse agent bucket).
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, phases={
+                "4": {"status": "completed",
+                       "learningsConsumed": [
+                           "ui-builder",  # gate string — must be skipped when rules exist
+                           _consumed("4", "rule A", "ui-builder"),
+                           _consumed("4", "rule B", "ui-builder"),
+                       ]},
+            })
+            summary = grade_build(proj, "build-001")
+            ids = {s["id"] for s in summary["summaries"]}
+            self.assertEqual(summary["updated"], 2)
+            self.assertEqual(ids, {stable_id("4", "rule A"), stable_id("4", "rule B")})
+            self.assertNotIn(stable_id("4", "ui-builder"), ids)
+
+    def test_grade_propagates_quarantine_to_rendered_prevention_rules(self):
+        # A prevention rule graded "hurt" repeatedly must drop the effect_score
+        # of the matching patterns.common_build_errors entry, so the renderer
+        # (which reads that store) stops emitting it — closing the "quarantine
+        # never reaches the prompt path" hole (W2).
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, phases={
+                "5": {"status": "failed",
+                       "learningsConsumed": [_consumed("5", "always pin the sdk", "quality-engineer")]},
+            })
+            # Seed the rendered store with a matching prevention rule.
+            (proj / ".autobot" / "learnings.json").write_text(json.dumps({
+                "patterns": {"common_build_errors": [
+                    {"pattern": "ModelContainer crash", "frequency": 9,
+                     "prevention": "always pin the sdk"},
+                ]},
+                "items": [],
+            }))
+            grade_build(proj, "b1")   # hurt -1
+            grade_build(proj, "b2")   # hurt -1 → -2 (quarantine threshold)
+            data = json.loads((proj / ".autobot" / "learnings.json").read_text())
+            entry = data["patterns"]["common_build_errors"][0]
+            self.assertLessEqual(entry.get("effect_score", 0), QUARANTINE_THRESHOLD)
 
 
 if __name__ == "__main__":

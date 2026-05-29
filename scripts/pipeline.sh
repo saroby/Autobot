@@ -20,6 +20,7 @@
 #   bash pipeline.sh error-signature      check|record|normalize --phase N [--stderr-file ...|--signature ...]
 #   bash pipeline.sh design-spec          validate|synthesize|ensure ...
 #   bash pipeline.sh sandbox              check|set-active|clear-active ...
+#   bash pipeline.sh build-lock           acquire --build-id <id> | release [--force] | status
 set -euo pipefail
 
 MODE="${1:-}"
@@ -27,7 +28,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${SCRIPT_DIR}/runtime.py"
 
-USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|env-snapshot|write-run-summary|grade-learnings|input-hash|context-pack|error-signature|design-spec|sandbox> [options]"
+USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|env-snapshot|write-run-summary|grade-learnings|input-hash|context-pack|error-signature|design-spec|sandbox|build-lock> [options]"
 
 if [[ -z "$MODE" ]]; then
   echo "$USAGE" >&2
@@ -87,6 +88,10 @@ EOF
   sandbox)
     SUBCMD="${1:-check}"; shift || true
     exec python3 "${SCRIPT_DIR}/sandbox_guard.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
+    ;;
+  build-lock)
+    SUBCMD="${1:-status}"; shift || true
+    exec python3 "${SCRIPT_DIR}/build_lock.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
     ;;
   *)
     echo "$USAGE" >&2

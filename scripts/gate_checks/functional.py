@@ -258,7 +258,22 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
                 f"functional flows not run: {reason}",
                 skipped=True, degraded=True,
             )]
-        # benign skip (e.g. no_features)
+        # A non-degraded skip means "nothing to drive". That is only legitimate
+        # when there is no P0 feature: if a P0 feature exists but declared no
+        # kind:'flow' acceptance, the spec slipped past Gate 1->2's
+        # assess_feature_spec_quality, and benign-skipping here would let a
+        # logic-only build earn VERIFIED with the simulator flow never run.
+        # Refuse it as a hard fail (defense-in-depth for the same hole).
+        if reason == "no_features" and any(
+            getattr(f, "priority", None) == "P0" for f in features
+        ):
+            return [_ok(
+                "functional_flows_pass", False,
+                "P0 feature(s) declared but none has a kind:'flow' acceptance to "
+                "drive — cannot functionally verify the app (logic-only spec is "
+                "not shippable; add a flow acceptance for each P0 feature)",
+            )]
+        # benign skip (no P0 features that need a runtime flow)
         return [_ok(
             "functional_flows_pass", True,
             f"functional flows skipped: {reason}",

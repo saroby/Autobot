@@ -14,6 +14,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+# Mirror of learning_impact.QUARANTINE_THRESHOLD. A common_build_errors entry
+# whose effect_score has fallen to/below this is a prevention rule that has
+# repeatedly hurt builds; it must NOT be rendered into the prompt. Kept as a
+# local constant so this renderer has no import dependency on the runtime.
+QUARANTINE_THRESHOLD = -2
+
 
 PHASE_CONFIG: dict[str, dict[str, Any]] = {
     "architecture": {
@@ -110,12 +116,26 @@ def clean_text(value: Any) -> str:
     return " ".join(text.split())
 
 
+def _is_quarantined(item: dict[str, Any]) -> bool:
+    """A prevention rule graded down to the quarantine threshold must not be
+    rendered — this is what carries effect-score quarantine into the prompt
+    path (active-learnings.md + phase files). Entries without an effect_score
+    (the common case) default to 0 and are kept."""
+    try:
+        return int(item.get("effect_score", 0) or 0) <= QUARANTINE_THRESHOLD
+    except (TypeError, ValueError):
+        return False
+
+
 def top_common_errors(patterns: dict[str, Any]) -> list[dict[str, Any]]:
     errors = patterns.get("common_build_errors", [])
     if not isinstance(errors, list):
         return []
     sorted_errors = sorted(
-        (item for item in errors if isinstance(item, dict)),
+        (
+            item for item in errors
+            if isinstance(item, dict) and not _is_quarantined(item)
+        ),
         key=lambda item: int(item.get("frequency", 0) or 0),
         reverse=True,
     )

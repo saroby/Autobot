@@ -62,6 +62,41 @@ class TestFunctionalVerificationBadge(unittest.TestCase):
         self.assertIn("## Verification", md)
         self.assertIn("VERIFIED", md)
 
+    # ── header honesty: a DEGRADED build must NOT read as plain "completed" ──
+
+    def _md(self, gate56_status):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, gate56_status=gate56_status)
+            return render_markdown(build_summary(proj))
+
+    def test_degraded_header_leads_with_not_shippable_banner(self):
+        md = self._md("degraded")
+        head = "\n".join(md.splitlines()[:7])
+        # The verdict banner appears at the top, before any per-section detail.
+        self.assertIn("DEGRADED", head)
+        self.assertIn("NOT shippable", head)
+
+    def test_degraded_status_line_is_not_bare_completed(self):
+        md = self._md("degraded")
+        status_line = next(l for l in md.splitlines() if l.startswith("- **status**"))
+        # phase rollup is 'completed' but it must be qualified, never standalone.
+        self.assertIn("completed", status_line)
+        self.assertIn("NOT shippable", status_line)
+        self.assertIn("DEGRADED", status_line)
+
+    def test_verified_status_line_marks_shippable(self):
+        md = self._md("passed")
+        status_line = next(l for l in md.splitlines() if l.startswith("- **status**"))
+        self.assertIn("VERIFIED", status_line)
+        self.assertIn("shippable", status_line)
+
+    def test_unverified_header_leads_with_not_shippable_banner(self):
+        md = self._md(None)
+        head = "\n".join(md.splitlines()[:7])
+        self.assertIn("UNVERIFIED", head)
+        self.assertIn("NOT shippable", head)
+
 
 class TestCommandDocsSurfaceBadge(unittest.TestCase):
     def test_mvp_completion_reads_functional_verification_badge(self):
