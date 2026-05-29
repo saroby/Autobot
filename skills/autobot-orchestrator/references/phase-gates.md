@@ -64,9 +64,9 @@ CHECK:
   ✓ (backend_required) architecture.md에 API Contract 관련 섹션 존재 (grep -qi "api.*contract")
   ✓ (backend_required) architecture.md에 iOS Configuration 관련 섹션 존재 (grep -qi "ios.*config\|xcconfig")
   ✓ (backend_required) <AppName>/Models/APIContracts.swift 존재
-  ✓ (backend_required) docker --version 종료 코드 == 0
+  ~ (backend_required) docker --version 종료 코드 == 0 (미설치 시 DEGRADE, 중단 아님)
 FAIL → architect 에이전트 재실행 (최대 2회)
-FAIL (docker 미설치) → 사용자에게 Docker Desktop 설치 안내 후 빌드 중단
+DEGRADE (docker 미설치) → 빌드는 계속 진행한다. iOS 앱 + backend/ 코드는 생성되고, 백엔드 컨테이너만 미검증(DEGRADED)으로 남는다. Capability Coverage 가 "backend pending / localhost" 를 사용자에게 명시. Docker Desktop 설치 후 백엔드를 로컬 빌드/실행할 수 있다.
 ```
 
 ### Gate 2→3: UX 디자인 완료 (필수, fallback 포함)

@@ -79,5 +79,9 @@ allowed-tools:
   - `UNVERIFIED` → `❌ 기능 미검증 — /autobot:resume 5 로 Phase 5 를 재실행하세요.`
 
   `DEGRADED`/`UNVERIFIED` 는 초록색 완료 메시지에 묻히지 않도록 **별도 줄에 경고 아이콘과 함께** 크게 출력한다. 사용자가 미검증 빌드를 검증된 것으로 오인하지 않게 하는 것이 목적이다.
+- **Capability Coverage (필수, 침묵 금지)**: `run-summary.json` 의 `coverage` (또는 `run-summary.md` 의 `## Capability Coverage` 섹션) 를 완료 화면에 그대로 요약한다. 특히 다음이 있으면 **반드시 화면에 출력**한다 — 빌드가 조용히 좁혀진 부분을 사용자가 모르고 넘어가지 않게 하는 것이 목적이다:
+  - 누락된 검증 prereq + 설치 명령 (예: `brew install cameroncooke/axe/axe`) — DEGRADED 의 실제 원인.
+  - `scope.unsupportedRequested` (아이디어에 있었지만 빌드되지 않은 iOS 카테고리), `scope.downgradedFeatures` (P2 stub), `scope.backend` (백엔드 미배포·localhost), `scope.deviceDeployment` (기기 설치 시 서명 필요).
+  - "앱을 바꾸려면" 안내 (`coverage.iteration`).
 
 자세한 출력 포맷은 `autobot-build-report` 스킬과 `autobot-orchestrator` 의 "완료 보고" 섹션이 관리한다.

@@ -162,7 +162,7 @@ Phase 7 은 두 산출물을 순서대로 생성:
 1. **`build-report.md`** — `autobot-build-report` 스킬 사용. 플러그인 수준 문제를 구조화.
 2. **`learnings.json`** — `autobot-retrospective` 스킬 사용. 누적 학습 + `effect_score` 갱신.
 
-Phase 7 직후 `run-summary.json` / `run-summary.md` 가 모든 run (성공/실패) 에 대해 생성된다 — phase duration, gate 결과, build attempts, runtime smoke 결과, visual contract 점수, applied learnings 포함.
+Phase 7 직후 `run-summary.json` / `run-summary.md` 가 모든 run (성공/실패) 에 대해 생성된다 — phase duration, gate 결과, build attempts, runtime smoke 결과, visual contract 점수, applied learnings, **capability coverage** (미지원 카테고리·P2 stub·backend pending·검증 prereq 설치 안내·검증 깊이 caveat — `scripts/capability_coverage.py`) 포함. 완료 보고는 coverage 의 격차를 침묵하지 않고 화면에 표면화한다.
 
 ## Additional Resources
 

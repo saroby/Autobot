@@ -169,6 +169,17 @@ def _learnings_summary(project_root: Path) -> dict:
     }
 
 
+def _coverage(project_root: Path) -> dict:
+    """Capability-coverage report — makes the feature's limits loud, not silent.
+    Fail-safe: a missing module or any error degrades to an empty dict so summary
+    generation never breaks."""
+    try:
+        import capability_coverage
+        return capability_coverage.assess(project_root)
+    except Exception:
+        return {}
+
+
 def _overall_status(state: dict) -> str:
     phases = state.get("phases") or {}
     statuses = [b.get("status") for b in phases.values() if isinstance(b, dict)]
@@ -215,6 +226,7 @@ def build_summary(project_root: Path) -> dict:
         "environment": state.get("environment"),
         "status": _overall_status(state),
         "functionalVerification": _functional_verification(state),
+        "coverage": _coverage(project_root),
         "phases": _phase_durations(events),
         "gateLedger": _gate_ledger(events),
         "buildAttempts": _build_attempts(events),
@@ -277,6 +289,19 @@ def render_markdown(summary: dict) -> str:
         lines.append("- **functional verification**: ❌ **UNVERIFIED** "
                      f"(gate 5->6 = `{fv.get('gate56Status')}`) — NOT shippable")
     lines.append("")
+
+    # Capability coverage — surface every silent limit (downgraded features,
+    # unsupported categories, backend-pending, device-deploy, depth caveats).
+    coverage = summary.get("coverage") or {}
+    if coverage:
+        try:
+            import capability_coverage
+            section = capability_coverage.render(coverage)
+            if section:
+                lines.append(section)
+                lines.append("")
+        except Exception:
+            pass
 
     lines.append("## Phase Ledger")
     lines.append("")

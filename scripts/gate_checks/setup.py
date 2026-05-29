@@ -177,5 +177,15 @@ def check_backend_required_consistent(proj: Path, app: str, state: dict) -> list
         subprocess.run(["docker", "--version"], capture_output=True, timeout=5, check=True)
         results.append(_ok("docker_available", True, "docker installed"))
     except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
-        results.append(_ok("docker_available", False, "docker NOT available"))
+        # Docker missing must NOT abort the whole build (the old hard fail meant
+        # a backend_required idea produced nothing). Degrade instead: the iOS app
+        # and the backend/ code are still generated; only the backend container is
+        # left unverified. Capability Coverage tells the user it is pending.
+        results.append(_ok(
+            "docker_available", False,
+            "docker NOT available — backend code is still generated but its container "
+            "is unverified (DEGRADED). Install Docker Desktop to build/run the backend "
+            "locally.",
+            skipped=True, degraded=True,
+        ))
     return results
