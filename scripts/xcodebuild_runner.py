@@ -108,13 +108,14 @@ def _run_xcodebuild(
     extra_args: list[str],
     log_path: Path,
     timeout: int,
+    destination: str = DEFAULT_DESTINATION,
 ) -> tuple[int, str, str, float]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "xcodebuild",
         "-project", str(project),
         "-scheme", scheme,
-        "-destination", DEFAULT_DESTINATION,
+        "-destination", destination,
         "-quiet",
         "CODE_SIGNING_ALLOWED=NO",
         "ONLY_ACTIVE_ARCH=YES",
@@ -220,13 +221,23 @@ def integration_build(
     *,
     attempt: int = 1,
     test: bool = False,
+    destination: str | None = None,
 ) -> dict:
-    """Phase 5 — full integration build with `.xcresult` bundle captured."""
+    """Phase 5 — full integration build with `.xcresult` bundle captured.
+
+    The `test` action REQUIRES a concrete simulator destination — `xcodebuild`
+    refuses to test against the generic `platform=iOS Simulator` ("Tests must be
+    run on a concrete device"). Callers running tests must pass
+    `destination="id=<udid>"` (or "platform=iOS Simulator,name=...,OS=..."); the
+    `build` action is fine with the generic default.
+    """
     if not _xcodebuild_available():
         return _skipped("5", "xcodebuild_unavailable")
     project = _resolve_project(project_root, app_name)
     if project is None:
         return _skipped("5", "xcodeproj_missing")
+    if test and not destination:
+        return _skipped("5", "no_concrete_destination_for_test")
 
     attempt_root = _canonical_attempt_dir(project_root, phase=5, attempt=attempt)
     log_path = attempt_root / "xcodebuild.log"
@@ -241,6 +252,7 @@ def integration_build(
         extra_args=extra,
         log_path=log_path,
         timeout=DEFAULT_TIMEOUT,
+        destination=destination or DEFAULT_DESTINATION,
     )
     return _build_result(
         phase="5",

@@ -77,7 +77,7 @@ class TestCheckLogicTestsPass(unittest.TestCase):
 
     def _patch_build(self, *, status: str, skip_reason: str | None = None) -> Path:
         bundle = self.proj / "Build.xcresult"
-        def fake_build(project_root, app_name, *, attempt=1, test=False):
+        def fake_build(project_root, app_name, *, attempt=1, test=False, destination=None):
             out = {"phase": "5", "status": status}
             if status == "skipped":
                 out["skipReason"] = skip_reason or "xcodebuild_unavailable"
