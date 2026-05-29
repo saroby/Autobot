@@ -136,7 +136,48 @@ class TestRunGateRollup(unittest.TestCase):
         self.assertIn("degraded", r["checks"][0])
 
 
-# ── Task 3: format_text DEGRADED marker (filled in Task 3) ───────────────────
+class TestFormatTextDegraded(unittest.TestCase):
+
+    def _gate(self, *, passed, degraded, soft=False, group_degraded=False):
+        return {
+            "gate": "5->6",
+            "passed": passed,
+            "degraded": degraded,
+            "soft": soft,
+            "checks": [{
+                "check": "functional_flows_pass",
+                "passed": passed and not group_degraded,
+                "degraded": group_degraded,
+                "sub_checks": [
+                    _ok("flow", not group_degraded, "x",
+                        skipped=group_degraded, degraded=group_degraded),
+                ],
+            }],
+        }
+
+    def test_pass_header_when_clean(self):
+        txt = format_text(self._gate(passed=True, degraded=False))
+        self.assertIn("Gate 5->6: PASS", txt)
+        self.assertNotIn("DEGRADED", txt)
+
+    def test_degraded_header_and_group_marker(self):
+        txt = format_text(self._gate(passed=True, degraded=True, group_degraded=True))
+        self.assertIn("Gate 5->6: DEGRADED", txt)
+        # the degraded group renders a DEGRADED marker, not PASS/FAIL
+        self.assertIn("[DEGRADED] functional_flows_pass", txt)
+
+    def test_fail_header_unchanged(self):
+        txt = format_text(self._gate(passed=False, degraded=False))
+        self.assertIn("Gate 5->6: FAIL", txt)
+
+    def test_soft_fail_still_renders(self):
+        txt = format_text(self._gate(passed=False, degraded=False, soft=True))
+        self.assertIn("Gate 5->6: SOFT FAIL", txt)
+
+    def test_degraded_sub_check_icon(self):
+        txt = format_text(self._gate(passed=True, degraded=True, group_degraded=True))
+        # degraded skip uses the degraded icon, distinct from benign skip ⊘
+        self.assertIn("⚠", txt)
 
 
 # ── Task 4: build_gate_evidence status minting (filled in Task 4) ────────────

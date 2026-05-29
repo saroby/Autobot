@@ -354,15 +354,25 @@ def run_gate(
 
 def format_text(result: dict) -> str:
     lines: list[str] = []
-    status = "PASS" if result["passed"] else ("SOFT FAIL" if result.get("soft") else "FAIL")
+    if result["passed"]:
+        status = "DEGRADED" if result.get("degraded") else "PASS"
+    else:
+        status = "SOFT FAIL" if result.get("soft") else "FAIL"
     lines.append(f"Gate {result['gate']}: {status}")
     lines.append("")
 
     for group in result.get("checks", []):
-        mark = "PASS" if group["passed"] else "FAIL"
+        if group["passed"]:
+            mark = "PASS"
+        elif group.get("degraded"):
+            mark = "DEGRADED"
+        else:
+            mark = "FAIL"
         lines.append(f"  [{mark}] {group['check']}")
         for sub in group.get("sub_checks", []):
-            if sub.get("skipped"):
+            if sub.get("skipped") and sub.get("degraded"):
+                icon = "⚠"
+            elif sub.get("skipped"):
                 icon = "⊘"
             elif sub["passed"]:
                 icon = "✓"
