@@ -1,0 +1,81 @@
+name: e2e-verify
+
+# Real functional-verification PROOF: runs the shipped gate checks
+# (logic_tests_pass + functional_flows_pass) against committed fixture iOS apps
+# on a real iOS 26 simulator — the path cycle-1 only ever exercised with mocks.
+#   GreenApp (working)    -> must VERIFY  (logic + flow both pass)
+#   RedApp   (broken UI)  -> flow must HARD-FAIL  (the detector detects)
+#
+# Path-filtered so this slow (~10-15 min, cold sim) macOS job only runs when the
+# verification path or fixtures change — not on every unrelated PR.
+
+on:
+  pull_request:
+    paths:
+      - "scripts/flow_runner.py"
+      - "scripts/gate_checks/functional.py"
+      - "scripts/sim_runtime.py"
+      - "scripts/xcodebuild_runner.py"
+      - "scripts/e2e_verify.py"
+      - "tests/e2e/**"
+      - ".github/workflows/e2e-verify.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/flow_runner.py"
+      - "scripts/gate_checks/functional.py"
+      - "scripts/sim_runtime.py"
+      - "scripts/xcodebuild_runner.py"
+      - "scripts/e2e_verify.py"
+      - "tests/e2e/**"
+      - ".github/workflows/e2e-verify.yml"
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    # macos-26 (GA 2026-02-26) ships Xcode 26.4.1 + iOS 26.0-26.5 simulators.
+    # macos-15 / macos-latest still default to Xcode 16.x — do NOT use them here.
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.4.1.app/Contents/Developer \
+            || sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+
+      - name: Ensure an iOS 26 simulator runtime is present
+        run: |
+          xcrun simctl list runtimes | grep -i "iOS 26" || xcodebuild -downloadPlatform iOS
+
+      - name: Install xcodegen + AXe
+        run: |
+          brew install xcodegen 2>/dev/null || brew upgrade xcodegen || true
+          brew tap cameroncooke/axe
+          brew install axe
+          axe --version
+          xcodegen --version
+
+      - name: E2E — GreenApp must VERIFY (logic + AXe flow both pass)
+        run: python3 scripts/e2e_verify.py --fixture tests/e2e/fixtures/GreenApp --app GreenApp --expect verified
+
+      - name: E2E — RedApp flow must HARD-FAIL (detector catches broken UI)
+        run: python3 scripts/e2e_verify.py --fixture tests/e2e/fixtures/RedApp --app RedApp --expect flow-fail
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-verify-diagnostics
+          path: |
+            tests/e2e/fixtures/*/.autobot/phase-5/**/xcodebuild.log
+            tests/e2e/fixtures/*/artifacts/**
+          retention-days: 7
+          if-no-files-found: ignore
