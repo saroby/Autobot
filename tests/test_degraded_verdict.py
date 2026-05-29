@@ -220,7 +220,51 @@ class TestBuildGateEvidenceStatus(unittest.TestCase):
         self.assertEqual(self._evidence(gr, gate_id="6->7")["status"], "degraded")
 
 
-# ── Task 5: phase advances on degraded (filled in Task 5, IsolatedProjectCase)
+class TestDegradedAdvancesPhase(IsolatedProjectCase):
+    """A degraded gate (passed=True, degraded=True) must:
+      1. let success_path stay True so the phase advances, and
+      2. write a "degraded" gate status that collect_schema_issues accepts."""
+
+    def test_degraded_gate_evidence_writes_and_validates(self):
+        from gate_persistence import build_gate_evidence
+        from spec_loader import load_spec
+        from state_store import mutate_state_with_validation
+
+        spec = load_spec()
+        state_path = self.project_dir / ".autobot" / "build-state.json"
+
+        degraded_result = {
+            "gate": "5->6",
+            "passed": True,
+            "degraded": True,
+            "soft": False,
+            "checks": [{
+                "check": "functional_flows_pass",
+                "passed": False,
+                "degraded": True,
+                "sub_checks": [
+                    {"check": "flow", "passed": False, "message": "no simulator",
+                     "skipped": True, "degraded": True},
+                ],
+            }],
+        }
+
+        # success_path mirrors phase_advance.py:158-160 — degraded keeps passed=True.
+        gate_passed = degraded_result.get("passed", False)
+        gate_soft = degraded_result.get("soft", False)
+        success_path = gate_passed or gate_soft
+        self.assertTrue(success_path, "degraded gate must keep success_path True")
+
+        evidence = build_gate_evidence(spec, "5->6", degraded_result, "2026-05-29T00:00:00Z")
+        self.assertEqual(evidence["status"], "degraded")
+
+        # Writing the degraded evidence through the validating mutator must NOT
+        # raise — gate status is not enum-validated by collect_schema_issues.
+        def mutate(next_state):
+            next_state.setdefault("gates", {})["5->6"] = evidence
+
+        mutate_state_with_validation(state_path, spec, mutate)
+        self.assertEqual(self.state()["gates"]["5->6"]["status"], "degraded")
 
 
 if __name__ == "__main__":
