@@ -670,6 +670,7 @@
     "forbiddenInfra": [
       ".autobot/build-state.json",
       ".autobot/architecture.md",
+      ".autobot/feature-spec.json",
       ".autobot/contracts/",
       ".autobot/build-log.jsonl",
       ".autobot/build.lock",
