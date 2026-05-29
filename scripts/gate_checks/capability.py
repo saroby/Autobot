@@ -92,6 +92,57 @@ def check_app_intent_declared(proj: Path, app: str, state: dict) -> list[dict]:
     )]
 
 
+def check_feature_spec_declared(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 1→2 — the architect must declare a per-feature spec where every
+    P0/P1 feature has at least one acceptance AND a non-empty anchor.
+
+    This is the new SPINE: unlike legacy `app-intent.json` (which soft-skips
+    when absent), `feature-spec.json` is mandatory. Absence is a HARD FAIL —
+    there is nothing for Phase 5 functional flows to drive without it.
+    """
+    from intent_spec import validate_feature_spec, load_feature_spec
+
+    ok, problems = validate_feature_spec(proj)
+    if ok:
+        features = load_feature_spec(proj) or []
+        p_counts = {"P0": 0, "P1": 0, "P2": 0}
+        for f in features:
+            p_counts[f.priority] = p_counts.get(f.priority, 0) + 1
+        return [_ok(
+            "feature_spec_declared", True,
+            f"{len(features)} feature(s) declared "
+            f"(P0={p_counts.get('P0', 0)}, P1={p_counts.get('P1', 0)}, "
+            f"P2={p_counts.get('P2', 0)}); every P0/P1 has acceptance + anchor",
+        )]
+    return [_ok(
+        "feature_spec_declared", False,
+        f"feature-spec.json invalid: {'; '.join(problems)}",
+    )]
+
+
+def check_feature_spec_quality(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 1→2 — every P0/P1 acceptance must assert a behavioral postcondition.
+
+    An acceptance whose postcondition is merely "the anchor exists" (kind not in
+    POSTCONDITION_KINDS) is a placeholder that cannot prove the feature works.
+    Hard gate: absent / placeholder-only specs FAIL.
+    """
+    from intent_spec import assess_feature_spec_quality
+
+    ok, problems = assess_feature_spec_quality(proj)
+    if ok:
+        return [_ok(
+            "feature_spec_quality", True,
+            "all P0/P1 acceptances assert a behavioral postcondition",
+        )]
+    sample = "; ".join(problems[:3])
+    more = f" (+{len(problems) - 3} more)" if len(problems) > 3 else ""
+    return [_ok(
+        "feature_spec_quality", False,
+        f"feature-spec quality: {sample}{more}",
+    )]
+
+
 def check_intent_anchors_in_ui(proj: Path, app: str, state: dict) -> list[dict]:
     """Phase 4→5 — every anchor the architect promised must appear in the UI tree.
 

@@ -50,6 +50,8 @@ from gate_checks.setup import (  # noqa: E402,F401
 )
 from gate_checks.capability import (  # noqa: E402,F401
     check_app_intent_declared,
+    check_feature_spec_declared,
+    check_feature_spec_quality,
     check_intent_anchors_in_ui,
     check_primary_cta_visibility,
     check_ios_capability_safe
@@ -116,6 +118,8 @@ GATE_CHECKS: dict[str, Any] = {
     "architecture_peer_review_acceptable": check_architecture_peer_review_acceptable,
     "ios_capability_safe": check_ios_capability_safe,
     "app_intent_declared": check_app_intent_declared,
+    "feature_spec_declared": check_feature_spec_declared,
+    "feature_spec_quality": check_feature_spec_quality,
     "intent_anchors_in_ui": check_intent_anchors_in_ui,
     # Gate 2→3
     "design_spec_sections_complete": check_design_spec_sections_complete,
