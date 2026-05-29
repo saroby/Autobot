@@ -63,5 +63,21 @@ class TestFunctionalVerificationBadge(unittest.TestCase):
         self.assertIn("VERIFIED", md)
 
 
+class TestCommandDocsSurfaceBadge(unittest.TestCase):
+    def test_mvp_completion_reads_functional_verification_badge(self):
+        from pathlib import Path as _P
+        root = _P(__file__).resolve().parent.parent
+        mvp = (root / "commands" / "mvp.md").read_text(encoding="utf-8")
+        self.assertIn("functionalVerification", mvp,
+                      msg="mvp completion report must read the verification badge")
+        self.assertIn("DEGRADED", mvp)
+
+    def test_testflight_report_shows_verification(self):
+        from pathlib import Path as _P
+        root = _P(__file__).resolve().parent.parent
+        tf = (root / "commands" / "testflight.md").read_text(encoding="utf-8")
+        self.assertIn("Verification", tf)
+
+
 if __name__ == "__main__":
     unittest.main()

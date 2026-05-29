@@ -165,6 +165,7 @@ Register:     created (App Store Connect 에 신규 등록)
 Archive:      build/MyApp.xcarchive
 IPA:          build/export/MyApp.ipa
 Build status: uploaded (upload_success: true)
+Verification: ✅ VERIFIED (gate 5->6 passed)   ← 업로드는 functional_verification_passed 통과 시에만 도달
 Testers:      alice@x.com (invited), bob@x.com (already in group)
 
 ⏳ ASC processing: 5분~1시간 후 TestFlight 에서 빌드 확인 가능
