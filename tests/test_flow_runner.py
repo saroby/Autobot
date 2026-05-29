@@ -69,6 +69,31 @@ class TestAnchorReady(unittest.TestCase):
         self.assertTrue(flow_runner._anchor_ready([el], "autobot.primaryCTA", SCREEN))
 
 
+class TestFlatten(unittest.TestCase):
+    """AXe describe-ui returns a nested tree (root + children); the matchers
+    need every node. _flatten must surface deeply-nested anchors."""
+
+    def _nested(self):
+        return [{
+            "type": "Application", "AXUniqueId": "root", "children": [
+                {"type": "Group", "children": [
+                    {"type": "Button", "AXUniqueId": "autobot.add", "enabled": True,
+                     "frame": {"x": 20, "y": 80, "width": 100, "height": 44}},
+                ]},
+            ],
+        }]
+
+    def test_flattens_nested_tree_so_anchor_is_found(self):
+        flat = flow_runner._flatten(self._nested())
+        self.assertTrue(any(flow_runner._anchor_id(e) == "autobot.add" for e in flat))
+        self.assertTrue(flow_runner._anchor_ready(flat, "autobot.add", SCREEN))
+
+    def test_single_root_dict_flattens(self):
+        root = self._nested()[0]
+        flat = flow_runner._flatten(root)
+        self.assertTrue(flow_runner._present(flat, "autobot.add"))
+
+
 class TestEvaluatePostcondition(unittest.TestCase):
     def test_count_increased_pass(self):
         before = [_el("autobot.row", typ="Cell"), _el("autobot.row", typ="Cell")]

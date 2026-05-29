@@ -99,6 +99,28 @@ def _prepare_app(project_root: Path, app: str, udid: str) -> tuple[str | None, s
     return bundle_id, None
 
 
+def _flatten(data) -> list[dict]:
+    """Flatten AXe's describe-ui output into every node.
+
+    `axe describe-ui` returns a nested tree — a root element (or list of roots)
+    whose descendants live under `children`. The matchers need every node, so we
+    walk the whole tree. (Mocks that pass a flat list of leaf dicts flatten to
+    themselves, so this is back-compatible with the unit-test fixtures.)
+    """
+    roots = data if isinstance(data, list) else [data]
+    flat: list[dict] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            flat.append(node)
+            for child in node.get("children") or []:
+                walk(child)
+
+    for root in roots:
+        walk(root)
+    return flat
+
+
 def _describe_ui(udid: str) -> list[dict]:
     rc, out, _ = _run(["axe", "describe-ui", "--udid", udid])
     if rc != 0 or not out.strip():
@@ -107,7 +129,7 @@ def _describe_ui(udid: str) -> list[dict]:
         data = json.loads(out)
     except json.JSONDecodeError:
         return []
-    return data if isinstance(data, list) else []
+    return _flatten(data)
 
 
 def _screen_bounds(udid: str) -> dict:

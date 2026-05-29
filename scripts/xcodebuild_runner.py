@@ -242,6 +242,9 @@ def integration_build(
     attempt_root = _canonical_attempt_dir(project_root, phase=5, attempt=attempt)
     log_path = attempt_root / "xcodebuild.log"
     result_bundle = attempt_root / "Build.xcresult"
+    # xcodebuild refuses to overwrite an existing -resultBundlePath; clear any
+    # stale bundle from a prior attempt/run so re-runs don't spuriously fail.
+    shutil.rmtree(result_bundle, ignore_errors=True)
     extra: list[str] = [
         "-resultBundlePath", str(result_bundle),
         "test" if test else "build",
