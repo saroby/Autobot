@@ -460,6 +460,21 @@ targets:
       - path: ${APP_NAME}Tests
     dependencies:
       - target: ${APP_NAME}
+
+schemes:
+  ${APP_NAME}:
+    build:
+      targets:
+        ${APP_NAME}: all
+        ${APP_NAME}Tests: [test]
+    test:
+      targets:
+        - ${APP_NAME}Tests
+      gatherCoverageData: false
+    run:
+      config: Debug
+    archive:
+      config: Release
 YAML_EOF
 
   (cd "${PROJECT_DIR}" && xcodegen generate)
