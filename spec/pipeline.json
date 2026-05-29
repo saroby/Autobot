@@ -1198,6 +1198,11 @@
           "label": "metadata_readiness"
         },
         {
+          "type": "procedural",
+          "name": "logic_tests_pass",
+          "label": "logic_tests_pass"
+        },
+        {
           "type": "state_field_contains",
           "label": "quality_engineer_consumed_learnings",
           "field": "phases.5.learningsConsumed",

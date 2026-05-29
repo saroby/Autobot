@@ -98,6 +98,9 @@ from gate_checks.build import (  # noqa: E402,F401
 from gate_checks.deploy import (  # noqa: E402,F401
     check_deployment_attempt_recorded
 )
+from gate_checks.functional import (  # noqa: E402,F401
+    check_logic_tests_pass
+)
 
 
 # ── Registry: spec name → procedural check function ──
@@ -149,6 +152,7 @@ GATE_CHECKS: dict[str, Any] = {
     "visual_contract": check_visual_contract,
     "metadata_readiness": check_metadata_readiness,
     "service_stubs_preserved": check_service_stubs_preserved,
+    "logic_tests_pass": check_logic_tests_pass,
     # Gate 6→7
     "deployment_attempt_recorded": check_deployment_attempt_recorded,
     # Gate 4→5 (added with fileOwnership SSOT)
