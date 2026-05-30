@@ -88,7 +88,8 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 | 0 | 없음 (처음부터) |
 | 1 | Phase 0 completed |
 | 2 | Phase 1 completed + `.autobot/architecture.md` 존재 + `<AppName>/Models/*.swift` 존재 |
-| 3 | Phase 2 completed 또는 fallback |
+| 2.5 | Phase 2 completed 또는 fallback — `/autobot:plan` 만 트리거하는 manual phase. 자동 resume 흐름은 Phase 2.5 를 skip 하고 Phase 3 로 진입한다. 사용자가 `/autobot:resume 2.5` 를 명시 호출하면 그때만 진입. |
+| 3 | Phase 2 completed 또는 fallback (Phase 2.5 는 pending 이어도 무방 — manual) |
 | 4 | Phase 3 completed + `.xcodeproj` 존재 |
 | 5 | Phase 4 completed + `<AppName>/Views/` 및 `<AppName>/Services/` 디렉토리에 .swift 파일 존재 |
 | 6 | Phase 5 completed + 마지막 빌드 성공 — 단, **Phase 6는 manual phase 이므로 자동 resume 대상이 아니다**. resume 이 자동 진행할 때 Phase 5 다음은 Phase 7. 사용자가 명시적으로 `/autobot:resume 6` 또는 `/autobot:testflight` 를 호출했을 때만 진입. |

@@ -761,6 +761,27 @@
         "gateLabel": "→ Stitch 성공 필수(미설치 시 fallback) + app-icon-1024.png 존재"
       }
     },
+    "2.5": {
+      "name": "Plan Preview",
+      "maxRetry": 1,
+      "dependencies": [
+        "2"
+      ],
+      "gate": "2.5->3",
+      "allowFallback": false,
+      "manual": true,
+      "docs": {
+        "displayName": "기획·디자인 HTML 미리보기 (수동, /autobot:plan)",
+        "readmeAgent": "(self) + autobot-plan-preview",
+        "skillAgent": "(self) + autobot-plan-preview",
+        "outputs": [
+          "`.autobot/designs/preview/index.html`",
+          "기획·디자인 critique"
+        ],
+        "parallel": false,
+        "gateLabel": "→ preview HTML 존재 (critique 는 스킬 contract)"
+      }
+    },
     "3": {
       "name": "Project Scaffold",
       "maxRetry": 1,
@@ -1034,6 +1055,20 @@
           "type": "procedural",
           "name": "app_icon_source_present",
           "label": "app_icon_source_present"
+        }
+      ]
+    },
+    "2.5->3": {
+      "fromPhase": "2.5",
+      "toPhase": "3",
+      "soft": false,
+      "summary": "Plan preview HTML is generated for user review.",
+      "docsSummary": "designs/preview/index.html 가 생성됐는지 검증 (critique 섹션 강제는 autobot-plan-preview 스킬 contract)",
+      "checks": [
+        {
+          "type": "file_exists",
+          "path": ".autobot/designs/preview/index.html",
+          "label": "preview_html_exists"
         }
       ]
     },

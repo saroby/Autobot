@@ -101,6 +101,22 @@ CONDITION: build-state.json.environment.stitch == false
   → Phase 3로 진행
 ```
 
+### Gate 2.5→3: Plan Preview HTML 생성 완료 (수동, /autobot:plan)
+
+```
+CHECK (preview_html_exists):
+  ✓ .autobot/designs/preview/index.html 존재
+FAIL → autobot-plan-preview 스킬이 build-preview.sh 또는 critique 주입 단계에서 실패한 것.
+       maxRetry: 1. 재시도 후에도 실패면 Phase 2.5 fail.
+
+NOTE: critique 섹션의 품질 (HIGH/MEDIUM/LOW 발견 수, 기획·디자인 두 축 균형) 강제는
+      이 gate 가 아니라 autobot-plan-preview 스킬의 contract 다. gate 는 파일 존재만 검사한다.
+
+NOTE: 이 phase 는 spec 의 manual: true 이므로 mvp 자율 흐름 (`/autobot:mvp`) 에서는
+      자동 skip. `/autobot:plan` 만 트리거. Phase 3 의 dependencies 는 ["2"] 라서
+      Phase 2.5 가 pending 이어도 mvp 의 Phase 3 진입은 막히지 않는다.
+```
+
 ### Gate 3→4: Xcode 프로젝트 생성 완료
 
 ```

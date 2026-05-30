@@ -19,7 +19,8 @@ def load_spec() -> dict:
 
 
 def sorted_phases(spec: dict) -> list[tuple[str, dict]]:
-    return sorted(spec.get("phases", {}).items(), key=lambda item: int(item[0]))
+    # float() — supports fractional phase ids ("2.5") in addition to integer ones.
+    return sorted(spec.get("phases", {}).items(), key=lambda item: float(item[0]))
 
 
 def gate_label(gate_id: str | None) -> str:
@@ -45,7 +46,7 @@ def render_readme_phase_table(spec: dict) -> str:
 
 def render_readme_gate_summary(spec: dict) -> str:
     lines = []
-    for gate_id, gate in sorted(spec.get("gates", {}).items(), key=lambda item: int(item[1]["fromPhase"])):
+    for gate_id, gate in sorted(spec.get("gates", {}).items(), key=lambda item: float(item[1]["fromPhase"])):
         label = gate_label(gate_id)
         summary = gate.get("docsSummary", gate.get("summary", "")).strip()
         suffix = " (soft gate)" if gate.get("soft") else ""

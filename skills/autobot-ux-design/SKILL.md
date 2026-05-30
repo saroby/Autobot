@@ -104,11 +104,29 @@ Key UI Elements:
 - [Element 2: e.g., "Floating action button for adding new item"]
 - [Element 3: e.g., "Search bar at top"]
 
-Layout Requirements:
-- iPhone portrait orientation
-- Safe area aware (notch, home indicator)
+Canvas Layout (HARD CONSTRAINT — mockup will be REJECTED if violated):
+
+Canvas size: iPhone 16 Pro portrait — 393 × 852 points (1179 × 2556 pixels @3x). The canvas is divided into three zones:
+
+| Zone | Y range (pt) | % of canvas | Allowed content |
+|------|-------------|------------|-----------------|
+| STATUS BAR ZONE | 0 – 47 | top 5.5% | iOS system chrome ONLY — clock "9:41" left, signal+wifi+battery icons right, Dynamic Island pill at top center. NO app content (no title, no button, no list). |
+| APP CONTENT ZONE | 47 – 818 | middle 90.5% | All app content — navigation bar, lists, cards, CTAs, etc. |
+| HOME INDICATOR ZONE | 818 – 852 | bottom 4% | iOS home indicator bar (thin horizontal pill) ONLY. NO app content. If TabView, the tab bar sits in the APP CONTENT ZONE just above this (y=720-818). |
+
+Mandatory iOS system chrome visuals (must be drawn in mockup):
+- **Status bar**: render "9:41" digital clock on the left, signal bars + wifi + battery icons on the right (y=15-30 within the status bar zone). This naturally reserves the top zone.
+- **Home indicator**: render a thin horizontal white/black pill (width ≈ 130pt, height ≈ 5pt) centered at y=835. This naturally reserves the bottom zone.
+
+If any text, screen title, button, list item, image, or interactive element is rendered with its bounding box overlapping y<47 or y>818, the mockup will FAIL Phase 2.5 critique with HIGH severity and require regeneration via `/autobot:resume 2 --force`.
+
+If NavigationStack: navigation bar (title + back chevron) at y=47–91 (top of APP CONTENT ZONE, 44pt height).
+If TabView: tab bar at y=720–818 (bottom of APP CONTENT ZONE, 49pt height, just ABOVE the home indicator zone).
+
+Other Layout Requirements:
 - Color Tokens from architecture.md Design Direction (light/dark compatible)
 - Dynamic Type ready text sizes
+- Liquid Glass for translucent surfaces
 
 Interactive States:
 - [Empty state: when no items exist]

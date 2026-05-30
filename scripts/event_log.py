@@ -119,7 +119,16 @@ def append_build_log(
 
     entry: dict[str, Any] = {"ts": timestamp or utc_now(), "event": event}
     if phase is not None:
-        entry["phase"] = int(phase)
+        # Phase ids are strings in the spec (e.g. "0", "2.5", "7"). Most existing
+        # ids happen to be integer-valued so int() round-tripped, but fractional
+        # ids like "2.5" can't. Preserve numeric ids as int when possible
+        # (back-compat with existing build-log entries) and fall through to a
+        # raw string for non-integer ids.
+        phase_str = str(phase)
+        try:
+            entry["phase"] = int(phase_str)
+        except ValueError:
+            entry["phase"] = phase_str
     if agent:
         entry["agent"] = agent
     if detail is not None:

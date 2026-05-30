@@ -27,6 +27,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
 | 0 | Pre-flight & 환경 준비 | (self) | No | → 환경/이름 검증 | 1 |
 | 1 | 아키텍처 + 계약 | architect | No | → 산출물 존재/구조 검증 | 2 |
 | 2 | UX Design (필수) | ux-designer | No | → Stitch 성공 필수(미설치 시 fallback) + app-icon-1024.png 존재 | 1 |
+| 2.5 | 기획·디자인 HTML 미리보기 (수동, /autobot:plan) | (self) + autobot-plan-preview | No | → preview HTML 존재 (critique 는 스킬 contract) | 1 |
 | 3 | Xcode 프로젝트 + Design System | (self) + design-system | No | → .xcodeproj + Package 존재 + tokens 채워짐 | 1 |
 | 4 | 병렬 코드 생성 | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 + sandbox 위반 0건 | 2 |
 | 5 | 통합 + 빌드 검증 | quality-engineer (`autobot-integration-build` 스킬) | No | → xcodebuild 성공 | 2 |
@@ -38,7 +39,10 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
 
 ## Dispatcher 결정 로직
 
-1. `.autobot/build-state.json` 을 읽어 다음 실행할 Phase 를 정한다 (`pending` 또는 `failed (retry < maxRetry)` 중 가장 작은 번호).
+1. `.autobot/build-state.json` 을 읽어 다음 실행할 Phase 를 정한다 (`pending` 또는 `failed (retry < maxRetry)` 중 가장 작은 번호). **단 `manual: true` 인 phase (현재 2.5, 6) 는 자율 흐름에서 자동 skip — 전용 명령이 트리거할 때만 실행한다**:
+   - Phase 2.5 → `/autobot:plan` 만 트리거 (코드 생성 전 기획·디자인 HTML 미리보기)
+   - Phase 6 → `/autobot:testflight` / `/autobot:app-review` 만 트리거 (TestFlight 배포)
+   - mvp 자율 흐름은 manual phase 를 만나면 그 다음 non-manual phase 로 점프 (Phase 2 → 3, Phase 5 → 7)
 2. 해당 Phase 의 agent 목록을 spec 의 `phases.<id>.agents` 에서 확인한다. 배열이 없으면 self 단계다.
 3. self 단계는 직접 수행한다. agent 목록이 있으면 각 항목을 `Agent(subagent_type=...)` 로 디스패치한다.
 4. **Agent 디스패치 직전에 context_pack 을 생성**해 sub-agent 프롬프트의 첫 블록으로 임베드한다 (LOOP 19). 그러면 sub-agent 는 mvp.md / orchestrator 전체 본문을 받지 않고, 자신의 phase 슬라이스 + output contract + allowed paths + top-scored learnings 만 본다:
