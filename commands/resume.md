@@ -1,7 +1,7 @@
 ---
 name: resume
 description: "중단된 Autobot 빌드를 이어서 실행합니다. Phase 번호를 지정하면 해당 Phase부터, 생략하면 마지막 실패/중단 지점부터 재개합니다."
-argument-hint: "[phase번호] [--force] [--regenerate-contracts] (예: /autobot:resume 5, /autobot:resume 1 --regenerate-contracts)"
+argument-hint: "[phase번호] [--force] [--regenerate-contracts] [--allow-visual-drift] (예: /autobot:resume 5, /autobot:resume 1 --regenerate-contracts, /autobot:resume 5 --allow-visual-drift)"
 allowed-tools:
   - Read
   - Write
@@ -58,6 +58,22 @@ if [ -f "$LOCK_FILE" ]; then
 fi
 echo $$ > "$LOCK_FILE"
 ```
+
+## Step 0.5: override 플래그 처리 (`--allow-visual-drift`)
+
+사용자가 `--allow-visual-drift` 와 함께 호출했으면, **Phase 5 를 재실행하기 전에** 영속 플래그를 세팅한다. 이 플래그는 Gate 5→6 의 `visual_judge` 체크가 읽어, 빌드된 앱이 디자인 의도와 어긋난다는 vision judge 판정(verdict=fail)을 **DEGRADED 대신 통과(green)**로 강등한다 — 운영자가 그 드리프트를 의도적으로 수용하고 출하하겠다는 선언이다.
+
+```bash
+# (resume 호출 인자를 직접 확인해 아래를 채운다 — 환경변수가 아니라 사용자 입력 기준.)
+# 사용자가 --allow-visual-drift 를 줬으면 다음을 실행한다 (안 줬으면 건너뛴다):
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag \
+  --key allowVisualDrift --value true \
+  --reason "operator accepted visual drift via /autobot:resume --allow-visual-drift"
+```
+
+> **왜 영속 플래그인가** (freeze-contracts 의 one-shot `--regenerate-contracts` 와 의도적으로 다름): `/autobot:testflight` 의 anti-laundering 단계가 업로드 직전 Gate 5→6 을 **플래그 없이 신선 재실행**한다. override 가 build-state 에 영속돼 있어야 그 재실행이 `allowVisualDrift` 를 존중해 업로드가 진행된다. one-shot 이면 업로드 시점에 override 가 사라져 출하가 다시 막힌다. 세팅은 `flag_changed` 이벤트로 감사된다.
+>
+> 드리프트 수용을 **취소**하려면 `set-flag --key allowVisualDrift --value false` 로 되돌린다.
 
 ## Step 1: 빌드 상태 로드
 

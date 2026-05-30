@@ -87,6 +87,108 @@ def check_visual_contract(proj: Path, app: str, state: dict) -> list[dict]:
     )]
 
 
+def check_visual_judge(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 5→6 — multimodal design-fidelity verdict on the built app.
+
+    Where check_visual_contract is a deterministic Pillow/deltaE structural pass
+    (blank/monochrome → fail, colour-match → informational), this check reads the
+    verdict of a *vision judge*: a multimodal agent (Phase 5 / integration-build
+    Step 9) that Reads the runtime screenshot and compares it against the design
+    intent (design-spec + Stitch mockups), then records the result. The LLM work
+    is done by the agent; this gate check only reads what it recorded — the same
+    "agent records metadata → deterministic check reads it" pattern as
+    check_build_succeeded.
+
+    Truth source: ``phases.5.metadata.visualJudge`` (a dict)::
+
+        {"verdict": "pass" | "fail",
+         "highCount": int,            # number of HIGH-severity fidelity violations
+         "summary": str,              # one-line human summary
+         "violations": [ ... ]}       # optional detail (severity/axis/title/evidence)
+
+    Verdict → gate mapping (DEGRADED-only, NEVER a hard fail):
+      - state.allowVisualDrift set        → pass (operator waived visual gating)
+      - verdict == 'pass'                 → pass
+      - verdict == 'fail'                 → DEGRADED (skipped+degraded)
+      - no/garbled verdict, screenshot on disk  → DEGRADED (anti-laundering: the
+        screen WAS verifiable but Step 9 recorded nothing — refuse to launder it
+        to VERIFIED, mirroring functional_flows_pass / peer_review_acceptable)
+      - no/garbled verdict, NO screenshot → benign skip (no simulator → not
+        verifiable here; runtime_smoke degrades that case on its own)
+
+    Why DEGRADED and never a hard fail: gate 5→6 is soft=False, so a hard fail
+    here marks Phase 5 failed and increments retryCount (phase_advance.py) — a
+    nondeterministic, uncalibrated judge could trip the global circuit breaker
+    and halt the autonomous /mvp build ("질문 없이 끝까지"). DEGRADED still blocks
+    *shipping*: it drives functionalVerification → DEGRADED, and the upload paths
+    (/autobot:testflight Step 1.5, /autobot:app-review) refuse any non-'passed'
+    gate 5→6 via check_functional_verification_passed (anti-laundering). The
+    operator overrides with ``/autobot:resume 5 --allow-visual-drift`` which
+    persists the top-level ``allowVisualDrift`` flag (via pipeline.sh set-flag,
+    logged as flag_changed) so the flagless upload re-run honours it.
+    """
+    p5 = state.get("phases", {}).get("5", {})
+    meta = p5.get("metadata", {}) if isinstance(p5, dict) else {}
+    verdict_obj = meta.get("visualJudge")
+    has_verdict = isinstance(verdict_obj, dict) and bool(verdict_obj.get("verdict"))
+    verdict = str(verdict_obj.get("verdict")).lower() if has_verdict else None
+    summary = str(verdict_obj.get("summary") or "").strip() if has_verdict else ""
+    high = verdict_obj.get("highCount") if has_verdict else None
+    high_note = f" ({high} high-severity)" if isinstance(high, int) and high else ""
+
+    # Operator opt-out: --allow-visual-drift (persisted allowVisualDrift flag)
+    # waives visual gating entirely — never blocks or degrades.
+    if bool(state.get("allowVisualDrift")):
+        return [_ok(
+            "visual_judge", True,
+            f"visual gating waived via --allow-visual-drift{high_note}"
+            f"{f': {summary}' if summary else ''}",
+        )]
+
+    if verdict == "pass":
+        return [_ok(
+            "visual_judge", True,
+            f"design fidelity confirmed{f': {summary}' if summary else ''}",
+        )]
+
+    if verdict == "fail":
+        return [_ok(
+            "visual_judge", False,
+            f"built app diverges from design intent{high_note}"
+            f"{f': {summary}' if summary else ''} — DEGRADED (not shippable). "
+            "Review .autobot/artifacts/visual-judge.json, fix the UI and "
+            "/autobot:resume 5, or /autobot:resume 5 --allow-visual-drift to ship as-is.",
+            skipped=True, degraded=True,
+        )]
+
+    # No usable verdict (absent or unrecognized). Anti-laundering: if a runtime
+    # screenshot exists, fidelity WAS verifiable but the judge recorded nothing —
+    # do not launder to VERIFIED. If no screenshot exists, the simulator was
+    # unavailable, so design fidelity is genuinely not verifiable here → benign
+    # skip (runtime_smoke already degrades the no-simulator case separately).
+    build_id = state.get("buildId") or "unknown-build"
+    screenshot_exists = (
+        (proj / "artifacts" / build_id / "phase-5" / "runtime-smoke" / "screenshot.png").is_file()
+        or (proj / ".autobot" / "phase-5" / "runtime-smoke" / "screenshot.png").is_file()
+    )
+    if screenshot_exists:
+        reason = (
+            f"unrecognized visual-judge verdict {verdict!r}" if verdict
+            else "no visual-judge verdict on record"
+        )
+        return [_ok(
+            "visual_judge", False,
+            f"{reason} but a runtime screenshot exists — design fidelity unverified "
+            "(integration-build Step 9 recorded no verdict). DEGRADED (not shippable).",
+            skipped=True, degraded=True,
+        )]
+    return [_ok(
+        "visual_judge", True,
+        "skipped: no runtime screenshot (simulator unavailable) — fidelity not verifiable here",
+        skipped=True,
+    )]
+
+
 def check_runtime_smoke(proj: Path, app: str, state: dict) -> list[dict]:
     """Phase 5→6 — boot a simulator, install the .app, launch it, confirm the
     process stays alive a few seconds, and capture a screenshot.

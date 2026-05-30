@@ -152,6 +152,7 @@ def _quality_signals(state: dict) -> dict:
         "scaffoldBuild": (p3.get("metadata") or {}).get("scaffoldBuild"),
         "runtimeSmoke": (p5.get("metadata") or {}).get("runtimeSmoke"),
         "visualContract": (p5.get("metadata") or {}).get("visualContract"),
+        "visualJudge": (p5.get("metadata") or {}).get("visualJudge"),
         "metadataReadiness": (p5.get("metadata") or {}).get("metadataReadiness"),
         "axiomAudit": (p5.get("metadata") or {}).get("axiomAudit") or (p7.get("metadata") or {}).get("axiomAudit"),
         "peerReview": (p5.get("metadata") or {}).get("peerReview"),

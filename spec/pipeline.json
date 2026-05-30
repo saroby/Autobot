@@ -134,7 +134,8 @@
       ]
     },
     "allowedFlags": [
-      "backend_required"
+      "backend_required",
+      "allowVisualDrift"
     ]
   },
   "logEvents": {
@@ -317,6 +318,13 @@
       ]
     },
     "contracts_frozen": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": []
+    },
+    "visual_judge_verdict": {
       "required": [
         "phase",
         "detail"
@@ -1237,6 +1245,11 @@
           "type": "procedural",
           "name": "visual_contract",
           "label": "visual_contract"
+        },
+        {
+          "type": "procedural",
+          "name": "visual_judge",
+          "label": "visual_judge"
         },
         {
           "type": "procedural",

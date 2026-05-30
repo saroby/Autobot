@@ -123,3 +123,51 @@
   - verify_spec_docs `check_phase_count` 경고 → **checker 의 regex 버그**. `^\|\s*\d+\s*\|` 가 정수 id 만 매치해 `| 2.5 |` 행을 누락(8행), spec 은 9 → spurious. 0.7.2 의 `render_pipeline_docs int→float` 수정 때 같이 안 고쳐진 곳. regex 를 `\d+(?:\.\d+)?` 로 일반화. SKILL.md 표 자체는 정상(9행, auto-rendered)이었음.
   - 회귀 가드: `test_verify_spec_docs_contracts.test_phase_count_handles_fractional_ids` (regex 회귀 또는 2.5 행 손실 즉시 검출).
   - 검증: 전체 슈트 386 tests OK, verify_spec_docs "All checks passed" (경고 0).
+
+---
+
+# #2 디자인 의도 게이트 (vision judge) — 빌드된 앱 ↔ 디자인 충실도 검증
+
+목적: 검증된 약점 #2 수정. 오늘 Phase 5 의 `check_visual_contract` 는 deltaE 색-매치를 informational-only 로만 출력(`visual_contract.py:225-228, 251`) → 디자인을 무시한 빌드(예: 커스텀 coral 팔레트인데 system-blue 렌더)도 ✅ VERIFIED 로 통과. 빌드된 앱의 실제 스크린샷을 디자인 의도(design-spec + Stitch 목업)와 **멀티모달 vision judge** 로 비교해, 충실도가 깨지면 배지를 DEGRADED 로 떨어뜨려 **shipping 을 차단**한다.
+
+## 핵심 아키텍처 결정 (워크플로우 wf_e07cf73c-899 + 직접 read 로 검증)
+
+1. **vision judge 는 에이전트, 게이트 체크는 결정적 — 분리 (load-bearing).** `visual_contract.py` 는 순수 Python(Pillow)이라 LLM 호출 불가. judge 는 Claude 가 PNG 를 Read 하는 **에이전트 디스패치** (Phase 2.5 plan-preview Step 2 와 동일 메커니즘). 패턴은 `check_build_succeeded`(build.py:36-54): **에이전트 작업 → `phases.5.metadata` 기록 → 결정적 게이트 체크가 읽음.** ⚠️ 워크플로우 일부 에이전트가 "judge 를 visual_contract.evaluate() 안에 넣어라"고 제안했으나 이는 오류 — 반영 안 함.
+
+2. **DEGRADED-only, hard-fail 안 함 (자율 안전성).** `phase_advance.py:158-160`: gate 5->6 (soft=False) hard-fail → Phase 5 status=failed + retryCount++ → 글로벌 circuit breaker(합 3)가 trip → **자율 /mvp 가 멈춤.** vision judge 는 비결정적이고 ground-truth 없이 ~10 합성 빌드로 calibrate → hard-fail 시키면 false-positive 가 "질문 없이 끝까지" 핵심 가치를 깸. 따라서 judge fail → `_ok(True, skipped=True, degraded=True)` (DEGRADED), **절대 `_ok(False)` 반환 안 함.** shipping 차단은 배지 경로로: DEGRADED → not shippable → `/autobot:testflight`·`/autobot:app-review` 가 업로드 거부 (mvp.md:97, run_summary shippable==VERIFIED). 즉 자율 빌드는 완주하되 디자인 깨진 앱은 출하 불가.
+
+3. **escape-hatch `--allow-visual-drift` (freeze-contracts 패턴 미러).** resume-only(/(mvp 는 자율이라 플래그 없음). 세팅 시 judge fail → `_ok(True)` green + `visual_drift_allowed` 이벤트 → 배지 VERIFIED 회복 → 사람이 의도적으로 출하. one-shot(미영속), `--regenerate-contracts` 와 동형.
+
+4. **judge verdict 구조 = Phase 2.5 critique 재사용.** `{verdict: pass|fail, violations:[{severity:high|medium|low, axis, title, evidence, fix}], summary}`. verdict=fail ⟺ HIGH severity 충실도 위반 ≥1. evidence 인용 강제(위반 토큰 vs 관측 색, 부재 화면명)로 단일-judge false-positive 완화.
+
+## 검증된 좌표
+
+- 스크린샷: `sim_runtime.py` → `artifacts/{buildId}/phase-5/runtime-smoke/screenshot.png` (or `.autobot/phase-5/runtime-smoke/screenshot.png`). `visual_contract.py:_default_screenshot()` 가 이미 해석. 단일 launch 스크린샷(per-screen 아님).
+- 디자인 의도: `.autobot/design-spec.json`(토큰) + `.autobot/design-spec.md` + `.autobot/designs/*.png`(Stitch 목업).
+- 게이트 롤업: `_ok(True, skipped=True, degraded=True)` → gate.degraded → 배지 DEGRADED (gate_runner.py:338-347, run_summary.py:202-208).
+- event 선언: `spec/pipeline.json` logEvents (contracts_frozen @319 미러). 미선언 시 event_log.py:77 FATAL.
+- gate 체크 등록: gate_runner.py GATE_CHECKS + spec gate 5->6 checks.
+
+## 작업 — 결과
+
+- [x] T1 — 별도 스킬 대신 **integration-build Step 9** 로 접음(최소·일관). quality-engineer(멀티모달 Claude)가 스크린샷+의도 Read→충실도 verdict→`.autobot/artifacts/visual-judge.json` + 최종 advance-phase `--metadata visualJudge`.
+- [x] T2 — `check_visual_judge` (gate_checks/build.py). DEGRADED-only 매핑. 10종 단위테스트 PASS.
+- [x] T3 — gate_runner.py GATE_CHECKS 등록 + spec gate 5->6 checks 추가. `list-checks` ✓ 확인.
+- [x] T4 — `visual_judge_verdict` 이벤트 선언. (`visual_drift_allowed` 는 set-flag 의 `flag_changed` 로 대체 — 불필요해 제거.)
+- [x] T5 — `--allow-visual-drift` → top-level `allowVisualDrift` 플래그(set-flag 재사용, **영속**). resume.md Step 0.5 파싱. end-to-end 검증(set-flag OK, 미등록 플래그 FATAL).
+  - 정정: 중첩 `allowances.visualDrift` → top-level `allowVisualDrift`. testflight 가 플래그 없이 게이트 재실행하므로 **영속 필요**(one-shot 폐기).
+- [x] T6 — Phase 5 디스패치 위치 = integration-build Step 9 (orchestrator 가 quality-engineer 에 이 스킬을 위임). 별도 top-level 디스패치 불필요.
+- [x] T7 — `tests/test_visual_judge_gate.py` 10종. 전체 슈트 398 PASS.
+- [x] T8 — CHANGELOG [Unreleased] Added. verify_spec_docs + render_pipeline_docs PASS.
+
+## 해소된 미해결
+- **DEGRADED-only 정책** (advisor 검토): BLOCKER #1(DEGRADED 가 출하를 코드로 막는가)을 `commands/testflight.md:114 exit 1` + `check_functional_verification_passed` 로 확인 → DEGRADED-only 가 정답(hard-fail 불필요). hard-block 은 circuit breaker 로 자율빌드를 멈추므로 미채택.
+- **T6 위치**: integration-build Step 9 (Step 7 axiom / Step 8 peer-review 와 동일 패턴).
+
+## advisor 2차 검토 반영 (둘 다 green 슈트가 구조적으로 못 보는 경로)
+- **#1 metadata round-trip 직접 검증**: `--metadata visualJudge='{...}'` 가 state 에 **dict 로** 저장되는지 (string 이면 게이트가 silently inert) → `parse_key_value`→`parse_json_value` 가 JSON 디코드 확인 (`isinstance dict: True`). 게이트 정상 작동.
+- **#2 anti-laundering 의식적 결정**: verdict 부재 시 무조건 benign-skip 은 VERIFIED 경로(sim 있음→스크린샷 존재)에서 Step 9 미실행 빌드를 VERIFIED 로 세탁 → 약점 재개방. `functional_flows_pass`/`peer_review_acceptable` 선례 미러: **스크린샷 존재 시 verdict 부재/garbled → DEGRADED**, 스크린샷 부재 시만 benign-skip. `allowVisualDrift` 는 전체 면제. 테스트 10→13 으로 확장(anti-laundering 매트릭스).
+
+## 알려진 v1 한계 / 후속
+- **이중 스크린샷 캡처**: Step 9 가 judge 용으로 1회, 게이트의 `check_runtime_smoke` 가 liveness 용으로 1회. testflight 의 fresh 재검증 속성 보존을 위해 의도적. sim 이 이미 부팅돼 있어 비용은 launch+screenshot 1회. 후속: 게이트가 Step9 의 fresh 캡처를 재사용하도록 dedupe.
+- **judge 보정**: tolerance/판정이 ground-truth 없이 ~10 빌드 기준 → 보수적 "애매하면 pass". 실 빌드 누적 후 fail 기준 정교화.

@@ -90,6 +90,7 @@ from gate_checks.app import (  # noqa: E402,F401
 from gate_checks.build import (  # noqa: E402,F401
     check_build_succeeded,
     check_visual_contract,
+    check_visual_judge,
     check_runtime_smoke,
     check_metadata_readiness,
     check_app_uses_real_repositories,
@@ -152,6 +153,7 @@ GATE_CHECKS: dict[str, Any] = {
     "app_uses_real_repositories": check_app_uses_real_repositories,
     "runtime_smoke": check_runtime_smoke,
     "visual_contract": check_visual_contract,
+    "visual_judge": check_visual_judge,
     "metadata_readiness": check_metadata_readiness,
     "service_stubs_preserved": check_service_stubs_preserved,
     "logic_tests_pass": check_logic_tests_pass,

@@ -224,12 +224,14 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_attempt 
   --detail "{\"attempt\":${N},\"errors\":0,\"succeeded\":true}"
 
 # Gate가 읽는 truth source — 최종 advance-phase 호출에 포함 필수
+# visualJudge 는 Step 9 가 스크린샷을 얻었을 때만 포함한다 (없으면 Gate 가 benign-skip).
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 5 \
   --metadata build_succeeded=true \
-  --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}'
+  --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}' \
+  --metadata 'visualJudge={"verdict":"pass","highCount":0,"summary":"design tokens applied"}'
 ```
 
-> `metadata.build_succeeded=true`와 `metadata.peerReview`가 최종 `advance-phase` 호출에 포함되지 않으면 Gate 5→6는 실패한다.
+> `metadata.build_succeeded=true`와 `metadata.peerReview`가 최종 `advance-phase` 호출에 포함되지 않으면 Gate 5→6는 실패한다. `visualJudge`(Step 9)는 스크린샷을 얻은 경우 함께 전달한다 — 없으면 `visual_judge` 체크가 green-skip 한다.
 > `advance-phase`는 metadata를 gate 평가 전에 반영한 뒤 통과 시 `completed`까지 한 번에 기록한다.
 
 | 반복 횟수 | 전략 |
@@ -367,6 +369,65 @@ Read $CLAUDE_PLUGIN_ROOT/skills/autobot-peer-review-bridge/SKILL.md
 - peer 도구 부재/호출 실패 → `verdict="skipped"` 와 `skipReason` 기록 후 진행.
 - `verdict == "FAIL"` → `blockingFindings` 를 Step 3 Build-Fix Loop 의 다음 에러 배치로 처리한다.
 - 누락은 실패다. Gate 5→6 의 `peer_review_acceptable` 체크가 `peerReview` 기록을 강제한다.
+
+## Step 9: Visual Fidelity Judge (멀티모달, soft → DEGRADED-only)
+
+빌드와 peer review 가 통과했으면, **빌드된 앱의 실제 화면이 디자인 의도를 충실히 구현했는지** 멀티모달로 판정한다. deltaE 색-매치(`check_visual_contract`)는 informational-only 라 디자인을 무시한 빌드(예: 디자인은 커스텀 coral 인데 system-blue 로 렌더)도 통과시킨다 — 이 step 이 그 격차를 메운다. Phase 2.5 plan-preview 가 *목업*을 비평하는 것과 달리, 여기선 *빌드 산출물*을 디자인 의도와 **비교**한다.
+
+### 9a. 런타임 스크린샷 확보
+
+```bash
+JUDGE_SHOT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/sim_runtime.py" \
+  --project-dir "$PWD" --app-name "<AppName>" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('screenshotPath') or '')")
+```
+
+- 스크린샷을 못 얻으면 (`simctl`/시뮬레이터/빌드 부재) `JUDGE_SHOT` 가 빈 값 → **이 step 을 건너뛴다** (verdict 미기록). 이때 Gate 의 `visual_judge` 는 스크린샷도 없으므로 benign-skip(green); runtime_smoke 가 별도로 degraded 처리한다.
+- **반대로 스크린샷을 얻었으면 verdict 를 반드시 기록해야 한다.** 스크린샷이 디스크에 있는데 `visualJudge` verdict 가 없으면 Gate 의 `visual_judge` 가 **DEGRADED** 처리한다 (anti-laundering — 검증 가능했는데 안 한 빌드를 VERIFIED 로 세탁 금지, `functional_flows_pass`/`peer_review_acceptable` 와 동일 원칙). 즉 sim 이 있는 환경에서 9b–9c 를 건너뛰면 배지가 DEGRADED 로 떨어진다.
+
+### 9b. 충실도 판정 (Read 로 이미지 직접 분석)
+
+`JUDGE_SHOT` 가 있으면 다음을 Read 해 **비교**한다:
+- 스크린샷 PNG (`JUDGE_SHOT`) — 빌드된 앱의 실제 렌더
+- `.autobot/design-spec.md` + `.autobot/design-spec.json` — 색/타이포/간격 토큰 (의도)
+- `.autobot/designs/*.png` — Stitch 목업 (의도)
+
+판정 기준 — **빌드가 디자인을 명백히 버렸는가**만 본다 (보수적: 확신 없으면 pass):
+
+- `verdict="fail"` (HIGH severity) — 디자인은 뚜렷한 정체성(커스텀 팔레트/레이아웃)을 지정했는데 빌드는 **generic system default**(system blue + system gray)로 렌더 / design-spec 의 primary 토큰이 화면에 전혀 안 보임 / 설계된 P0 화면이 **blank·부재**. 반드시 **구체 증거** 인용: 관측 색 vs design 토큰 hex, 부재 화면명.
+- `verdict="pass"` — 빌드가 디자인 토큰/레이아웃을 충실히 반영. 소프트 드리프트(미세 간격·계층·radius 차이)는 fail 아님 (medium/low 로 summary 에만 기록).
+
+> **보수적 판정 원칙**: 이 게이트의 fail 은 *출하를 막는다* (아래 DEGRADED-only 참조). vision judge 는 비결정적·미보정(ground-truth ~10 빌드)이므로, **애매하면 pass**. fail 은 "디자인을 명백히 버렸다"는 증거가 있을 때만.
+
+### 9c. verdict 기록 (최종 advance-phase 에 포함)
+
+verdict 를 `.autobot/artifacts/visual-judge.json` 에 쓰고, 감사 이벤트를 남긴 뒤, **최종 advance-phase 의 `--metadata visualJudge` 로 전달**한다 (Step 7/8 의 axiom/peerReview 와 동일 패턴):
+
+```bash
+mkdir -p .autobot/artifacts
+cat > .autobot/artifacts/visual-judge.json <<'JSON'
+{"verdict":"pass","highCount":0,"summary":"primary coral #FF6B6B 적용 확인, 탭바·계층 의도대로","violations":[]}
+JSON
+
+bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event visual_judge_verdict \
+  --detail "{\"verdict\":\"pass\",\"highCount\":0,\"summary\":\"...\"}"
+```
+
+> verdict JSON 스키마: `{"verdict":"pass"|"fail", "highCount":<int>, "summary":"<1줄>", "violations":[{"severity":"high|medium|low","axis":"디자인","title":"...","evidence":"...","fix":"..."}]}`.
+
+### 9d. Gate 매핑 (DEGRADED-only — 빌드를 멈추지 않는다)
+
+`check_visual_judge` 가 `phases.5.metadata.visualJudge` 를 읽어:
+
+| verdict | 스크린샷 | `allowVisualDrift` | 결과 |
+|---|---|---|---|
+| `pass` | — | — | green |
+| `fail` | — | false (기본) | **DEGRADED** (hard-fail 아님) → 배지 DEGRADED → 출하 차단 |
+| 없음/garbled | 있음 | false | **DEGRADED** (anti-laundering — 검증 가능했는데 verdict 없음) |
+| 없음/garbled | 없음 | false | benign-skip (green) — sim 부재로 검증 불가 |
+| 임의 | — | true | green — `--allow-visual-drift` 가 visual gating 전체 면제 |
+
+**왜 hard-fail 이 아닌가**: Gate 5→6 은 `soft=false` 라 hard-fail 시 Phase 5 가 `failed` + retryCount++ 되어 글로벌 circuit breaker 를 태우고 자율 빌드를 멈춘다. 비결정적 judge 의 false-positive 가 "질문 없이 끝까지"를 깨선 안 된다. 대신 DEGRADED 가 *출하*를 막는다 — `functionalVerification` 을 DEGRADED 로 떨어뜨려 `/autobot:testflight`·`/autobot:app-review` 가 거부한다 (anti-laundering). 운영자는 `/autobot:resume 5 --allow-visual-drift` 로 수용 가능.
 
 ## Gate 5→6 통과 조건
 
