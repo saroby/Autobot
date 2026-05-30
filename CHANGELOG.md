@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-05-30
+
+`/autobot:plan` 명령 + Phase 2.5 (Plan Preview HTML) 신설. mvp 자율 흐름의 취약점 — architect/ux-designer 의 첫 패스 결과가 사람 검토 없이 Phase 3–5 의 코드로 곧장 변환되는 것 — 을 막는 게이트. 새 명령은 Phase 0–2 까지만 빌드하고 `designs/preview/index.html` (self-contained 모바일 갤러리 + 기획 요약 + nav flow + token swatch + LLM critique) 을 브라우저로 자동 표면화. OK 면 `/autobot:resume` 으로 Phase 3 진입.
+
+### Added
+- `/autobot:plan <아이디어>` 명령 — Phase 0–2 자율 + Phase 2.5 명시 진입 + STOP 의 7-step enumeration (dispatcher 의 manual-skip 을 prose 가 아닌 명령 entry 에서 명시 override).
+- `autobot-plan-preview` 스킬 — Phase 2.5 self 단계. `build-preview.sh` 호출 + 멀티모달 critique 작성 (축 1 기획 정합성, 축 2 디자인/HIG; safe area 침범 1순위) + HTML placeholder 주입 + 브라우저 자동 열기.
+- `scripts/build_preview.py` + `build-preview.sh` — 외부 CDN 0, base64 PNG, iPhone 16 Pro aspect 393/852 깨끗한 베젤 frame 의 self-contained HTML 빌더.
+- `spec/pipeline.json` 의 phase `"2.5"` + gate `"2.5->3"` (`manual: true` → mvp 자율 흐름은 자동 skip, `/autobot:plan` 만 명시 트리거).
+
+### Changed
+- `skills/autobot-ux-design/SKILL.md` — Stitch prompt 의 Layout Requirements 를 픽셀 단위 3-zone 표 (status 0–47pt / content 47–818pt / home indicator 818–852pt) + 시각 chrome 강제 ("9:41" 시계, 신호/wifi/배터리, home indicator pill) 로 교체. Stitch image generator 가 chrome 자체를 그려야 safe area 가 자연스럽게 보호된다. 침범 시 Phase 2.5 critique HIGH severity → `/autobot:resume 2 --force` 재생성 안내.
+- `skills/autobot-orchestrator/SKILL.md` — dispatcher 결정 로직에 `manual: true` phase 자동 skip + 전용 명령 트리거 명시 (phase summary 표 auto-rendered, 2.5 행 포함).
+- `skills/autobot-orchestrator/references/phase-gates.md` — Gate 2.5→3 추가 (file_exists 만 검사; critique 품질 강제는 스킬 contract).
+- `commands/resume.md` — phase 2.5 행 추가, Phase 3 의 "2.5 pending 무방" 명시.
+
+### Fixed
+- `scripts/event_log.py` — `int(phase)` 가 `"2.5"` 에서 ValueError. 정수 phase id 케이스는 back-compat 으로 int 저장, 비정수 id 는 str 저장으로 lenient.
+- `scripts/render_pipeline_docs.py` — `int(phase_id)` 정렬을 `float()` 로 일반화. fractional phase id 안전.
+
 ## [0.7.1] — 2026-05-29
 
 `/autobot:mvp` 진입점 문서(`commands/mvp.md`)의 SSOT drift·문서 간 불일치 5건 교정. 동작 변화 없음 — 진입점 문서가 실제 스크립트·스킬·sibling 커맨드와 어긋나 사용자를 오인시키던 지점을, 다중 렌즈 감사 + 적대적 검증(라운드별 ground-truth 대조)으로 찾아 고치고, 이어 같은 문서를 정보·가드레일 100% 보존 하에 가독성 중심으로 재구성했다(형태만 변경).
