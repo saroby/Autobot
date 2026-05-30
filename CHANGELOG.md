@@ -12,6 +12,11 @@
   - `commands/resume.md` Phase 1 재개 를 freeze-aware 로 교체 + `--regenerate-contracts` 인자 파싱.
   - `tests/test_contract_freeze.py` — decide 결정 매트릭스(snapshot×downstream×regenerate) + apply 복원/로그 + pipeline.sh passthrough.
 
+### Fixed
+- **ux-designer 가 Stitch 를 항상 npx CLI fallback 으로 실행하던 버그 (Phase 2 / `/autobot:plan`·`/autobot:mvp`).** `agents/ux-designer.md` 본문은 `mcp__stitch__*` MCP 도구를 primary 경로로, `npx @_davideast/stitch-mcp ...` 를 "MCP 사용 불가 시 fallback" 으로 지시했지만, frontmatter `tools:` 가 `Read, Write, Bash, Glob, Grep` 로 제한돼 **MCP 도구를 한 번도 호출할 수 없었다** — Stitch MCP 서버가 세션에 연결돼 있어도 에이전트는 매번 Bash→npx 로 강제됐다. Claude Code 는 서브에이전트의 MCP 접근을 `tools:` 에 `mcp__<server>__<tool>` 전체 이름으로 나열했을 때만 부여한다(와일드카드 미지원). ux-designer 가 (스킬 포함) 사용하는 Stitch 도구 9종을 `tools:` 에 명시 추가. 최소권한 유지를 위해 `tools:` 생략(전체 상속) 대신 명시 부여 선택.
+  - 회귀 가드 `tests/test_agent_mcp_tool_grants.py` — `tools:` 를 선언한 에이전트는 본문이 참조하는 모든 `mcp__…` 도구를 grant 해야 한다(일반 규칙). 수정 전 상태에서 정확히 5개 미부여 도구를 검출함을 확인.
+  - (관찰만, 미변경) `scripts/detect-plugins.sh` 의 Stitch 감지는 `npx … doctor` 기반 — 라이브 MCP 레지스트리를 셸이 못 보므로 caller 가 `STITCH_AVAILABLE` 을 선주입하는 게 정설. 실행 경로 버그는 `tools:` grant 로 해소되며, `autobot-ux-design/SKILL.md` 의 "방법 1: `mcp__stitch__*` 도구 존재 확인(권장)" 감지와 이제 정합.
+
 ## [0.7.2] — 2026-05-30
 
 `/autobot:plan` 명령 + Phase 2.5 (Plan Preview HTML) 신설. mvp 자율 흐름의 취약점 — architect/ux-designer 의 첫 패스 결과가 사람 검토 없이 Phase 3–5 의 코드로 곧장 변환되는 것 — 을 막는 게이트. 새 명령은 Phase 0–2 까지만 빌드하고 `designs/preview/index.html` (self-contained 모바일 갤러리 + 기획 요약 + nav flow + token swatch + LLM critique) 을 브라우저로 자동 표면화. OK 면 `/autobot:resume` 으로 Phase 3 진입.

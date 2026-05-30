@@ -122,3 +122,11 @@
   - `spec/pipeline.json`의 `phases.<id>.agents` 배열에 등록
   - `fileOwnership.agents.<name>.writes` 선언
   - agent-sandbox.sh가 자동으로 enforce
+
+## dogfood에서 발견 (2026-05-31)
+
+### 23. agent `tools:` allowlist가 본문 지시와 모순 → 조용한 CLI fallback 강제
+- **실패 모드**: `ux-designer.md` 본문은 `mcp__stitch__*` MCP 도구를 primary, `npx @_davideast/stitch-mcp` 를 "MCP 불가 시 fallback" 으로 지시. 그러나 frontmatter `tools: Read, Write, Bash, Glob, Grep` 가 MCP 도구를 미부여 → 에이전트가 MCP를 *한 번도* 호출 못 하고 매 빌드 Bash→npx 로 강제. Stitch MCP 서버가 연결돼 있어도 동일. 사용자가 "왜 npx 로 도느냐" 로 발견.
+- **검출 신호**: "primary 경로가 한 번도 안 잡히고 항상 fallback". 도구 목록(`tools:`)에 본문이 부르는 도구가 없음.
+- **방지 규칙**: 에이전트 본문이 호출하라고 지시하는 모든 도구는 `tools:` 에 부여돼야 한다. MCP 도구는 `mcp__<server>__<tool>` **전체 이름**으로 나열(와일드카드 미지원). `tools:` 생략 시 전체 상속이지만 최소권한이 깨지므로 명시 부여 선호. 플러그인 에이전트는 `mcpServers`/`hooks`/`permissionMode` frontmatter 무시됨 — `tools:` 만이 MCP grant 경로.
+- **회귀 가드**: `tests/test_agent_mcp_tool_grants.py` — `tools:` 선언 에이전트는 본문 참조 `mcp__…` 도구를 전부 grant (일반 규칙, 미래 에이전트도 보호).
