@@ -79,3 +79,43 @@
 2. **declarative gate primitive 일반화** — gate_runner.py lazy import 라우팅을 spec 의 `gate.primitives` 등록표로 외부화하면 신규 primitive 추가 시 코드 변경 0.
 3. **learning effect_score 자동 회귀** — `learning_impact.py` 가 5빌드 이상 누적될 때 effect_score 분포를 기반으로 한 학습 제거 추천 기능.
 4. **peer-review verdict 캐싱** — 동일 input_hash 의 phase 재실행 시 peer-review 재호출 절약 (API/요금 비용 절감).
+
+---
+
+# 계약 동결 (frozen-by-default contracts) — resume drift 차단
+
+목적: 검증된 약점 #4 수정. `/autobot:resume 1`(또는 `--force`/구 빌드)이 비결정적 architect 를 재실행해 타입 계약(Models/ServiceProtocols)을 갈아끼우면, 이미 작성된 downstream Views/Services 가 옛 심볼명을 참조한 채 조용히 컴파일이 깨진다. snapshot 까지 덮어써 되돌릴 수도 없다.
+
+## 설계 결정 (Working Notes)
+
+1. **input_hash 와 직교.** input_hash 는 "입력 불변 → phase skip"(architect 안 돔). 동결은 architect 가 *실제로 재실행될* 상황(force/입력변경/hash 미저장)에서 downstream 보호. 둘은 겹치지 않음.
+2. **결정은 결정적 스크립트에.** 정책(frozen 판정)은 `contract_freeze.py`, resume.md 는 호출만 (lessons #5 — 정책은 산문이 아니라 엔진에).
+3. **downstream 탐지는 spec.fileOwnership SSOT 에서 도출** — Phase-4 agent writes 의 dir 중 .swift 보유. backend/·Assets 는 .swift 없어 자동 제외 (하드코딩 0).
+4. **frozen-by-default + opt-in.** 위험한 재생성은 `--regenerate-contracts` 명시할 때만. git `--force` 패턴.
+5. **복원 실패 → halt.** 동결해야 하는데 snapshot 복원 실패 시 silent regenerate 금지 (`action: error`). 막으려던 drift 를 fallback 으로 일으키지 않음.
+6. **재생성은 forward pass 로 cascade.** `--regenerate-contracts` 시 Models 체크섬 변경 → 이후 phase input_hash miss → Phase 4 가 새 계약에 맞춰 재생성. 추가 코드 불필요.
+
+## 작업
+
+- [x] `scripts/contract_freeze.py` — decide/apply + CLI
+- [x] `spec/pipeline.json` logEvents.contracts_frozen
+- [x] `scripts/pipeline.sh` freeze-contracts passthrough + USAGE/comment
+- [x] `commands/resume.md` Phase 1 재개 freeze-aware + --regenerate-contracts 파싱
+- [x] `CHANGELOG.md` [Unreleased]
+- [x] `tests/test_contract_freeze.py` — decide matrix + apply 복원/로그 + pipeline.sh passthrough
+- [x] Verify: contract_freeze 8/8 PASS, verify_spec_docs 전부 PASS (prose drift 포함)
+- [x] adversarial review (advisor) 2건 반영: `--regenerate-contracts` 가 skip 루프보다 먼저 평가돼 조용한 no-op 되는 버그 → force 동일 취급으로 수정 / 동결 분기에 `completed→in_progress`(allow-terminal-restart) 명시
+
+## 성공 기준 (DoD) — 결과
+
+- [x] snapshot+downstream+¬regen → frozen=true, Models 가 snapshot 으로 복원 (drift 된 내용 사라짐) — `test_apply_restores_models_from_snapshot`
+- [x] --regenerate-contracts → frozen=false, Models 손대지 않음 — `test_apply_leaves_models_untouched_when_regenerate` + skip 루프가 force 로 phase 1 재실행 보장 (building block: should_skip force=True → skip=False)
+- [x] downstream 없음 / snapshot 없음 → frozen=false — `test_no_downstream_not_frozen` / `test_no_snapshot_not_frozen`
+- [x] 동결 시 검증된 `contracts_frozen` 이벤트 1건 append — apply 테스트 + event_log 검증(detail 누락 시 거부)
+- [x] 회귀 슈트 + verify_spec_docs PASS — 신규 8/8, 전체 385 중 2 실패는 **pre-existing**(phase 2.5, stash 격리 확인, 내 변경 무관)
+
+## 후속 (이번 범위 밖)
+
+- 더 강한 enforcement: architect sandbox 가 resume-with-downstream 에서 Models/ 쓰기를 거부 (현재는 resume.md 호출 의존). v1 은 결정 로직만 엔진화.
+- feature-spec.json drift (현재 Models snapshot 만 동결; feature-spec 은 functional gate 영향, 컴파일 아님).
+- **별건 pre-existing red (main @ 0.7.2)**: `test_phase_advance_fallback_timing` 2건 실패 + verify_spec_docs 경고 1건 (orchestrator SKILL.md phase 표 8행 vs spec 9 phase). 전부 phase 2.5 도입 부산물, 이 변경과 무관 — 빠른 후속으로 분리 처리 권장.

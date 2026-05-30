@@ -316,6 +316,13 @@
         "detail"
       ]
     },
+    "contracts_frozen": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": []
+    },
     "lock_acquired": {
       "required": [],
       "optional": [

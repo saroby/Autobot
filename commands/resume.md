@@ -1,7 +1,7 @@
 ---
 name: resume
 description: "중단된 Autobot 빌드를 이어서 실행합니다. Phase 번호를 지정하면 해당 Phase부터, 생략하면 마지막 실패/중단 지점부터 재개합니다."
-argument-hint: "[phase번호] (예: /autobot:resume 5)"
+argument-hint: "[phase번호] [--force] [--regenerate-contracts] (예: /autobot:resume 5, /autobot:resume 1 --regenerate-contracts)"
 allowed-tools:
   - Read
   - Write
@@ -131,9 +131,16 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 재개 지점이 결정되면 그 phase 부터 다음 미완료 phase 까지 순회하면서, 각 phase 의 input 이 마지막 성공 시점과 동일하면 **재실행 없이 skip** 한다. 사용자 아이디어 / spec 슬라이스 / owned 파일 체크섬 / upstream 파일 체크섬 중 하나라도 바뀌었으면 그 phase 부터 재실행.
 
 ```bash
+# 사용자가 resume 를 --force 또는 --regenerate-contracts 와 함께 호출했으면 skip 을 비활성화한다.
+# (resume 호출 인자를 직접 확인해 아래 SKIP_FORCE 를 채운다 — 환경변수가 아니라 사용자 입력 기준.)
+# --regenerate-contracts 는 새 계약을 의도하므로 전체 재빌드가 필요 → force 와 동일 효과.
+# 이게 없으면 입력 불변 시 Phase 1 이 skip 되어 freeze-contracts 가 호출조차 안 되고,
+# --regenerate-contracts 가 조용한 no-op 이 된다.
+SKIP_FORCE=""   # 사용자가 --force 또는 --regenerate-contracts 를 줬으면 "--force" 로 설정
+
 # 후보 phase 가 정말 다시 돌릴 필요가 있는지 먼저 확인
 for PHASE_ID in $(seq "$RESUME_FROM" 7); do
-  RESULT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" input-hash should-skip --phase "$PHASE_ID")
+  RESULT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" input-hash should-skip --phase "$PHASE_ID" $SKIP_FORCE)
   if echo "$RESULT" | grep -q '"skip": true'; then
     echo "INFO: Phase $PHASE_ID skipped — $(echo $RESULT | python3 -c 'import json,sys;print(json.load(sys.stdin)[\"reason\"])')"
     continue
@@ -144,7 +151,7 @@ for PHASE_ID in $(seq "$RESUME_FROM" 7); do
 done
 ```
 
-`--force` 옵션 (`/autobot:resume <N> --force` 또는 운영자 의도가 명확할 때) 은 skip 을 비활성화하고 무조건 재실행한다. phase 가 성공으로 마킹되는 시점에 `pipeline.sh advance-phase` 가 새 hash 를 다시 기록하므로, 다음 resume 부터 다시 cache 가 적중한다.
+`--force` 옵션 (`/autobot:resume <N> --force` 또는 운영자 의도가 명확할 때) 은 skip 을 비활성화하고 무조건 재실행한다. `--regenerate-contracts` 도 동일하게 skip 을 끈다 — 끄지 않으면 입력 불변 시 Phase 1 이 skip 되어 계약 재생성 요청이 조용히 무시된다. phase 가 성공으로 마킹되는 시점에 `pipeline.sh advance-phase` 가 새 hash 를 다시 기록하므로, 다음 resume 부터 다시 cache 가 적중한다.
 
 ## Step 3: 컨텍스트 복원
 
@@ -191,11 +198,29 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase <N> --detail 
 - 환경 준비를 다시 수행 (플러그인 감지, 학습 데이터 로드)
 - 앱 이름은 `build-state.json`에서 가져온다 (재생성하지 않음)
 
-### Phase 1 재개
+### Phase 1 재개 — 계약 동결 (frozen-by-default)
 
-- architect 에이전트를 다시 실행
-- 기존 `.autobot/architecture.md`와 `Models/` 파일은 **덮어쓴다** (architect가 처음부터 다시 설계)
-- 완료 후 `.autobot/contracts/phase-1-models/` snapshot과 체크섬을 다시 저장한다
+Phase 1 은 타입 계약(`<App>/Models/*.swift` + `Models/ServiceProtocols.swift`)을 만들고, 이후 Phase 4 코드(Views/ViewModels/App/Services/Utilities)가 그 심볼명에 의존한다. architect 출력은 **비결정적**이라, 이미 downstream 코드가 작성된 상태에서 architect 를 다시 돌리면 필드명이 미묘하게 바뀌어 **조용한 컴파일 깨짐**이 나고 snapshot 까지 덮어써 되돌릴 수 없다. 그래서 resume 는 **기본적으로 계약을 동결**한다.
+
+architect 를 다시 실행하기 **전에** 먼저 동결 여부를 결정한다:
+
+```bash
+# 사용자가 resume 를 --regenerate-contracts 와 함께 호출했으면 REGEN="--regenerate", 아니면 빈 값.
+# (호출 인자를 직접 확인해 채운다 — 위 skip 루프의 SKIP_FORCE 와 같은 판단.)
+REGEN=""   # 사용자가 --regenerate-contracts 를 줬으면 "--regenerate" 로 설정
+
+FREEZE=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" freeze-contracts apply --phase 1 $REGEN)
+echo "$FREEZE"
+```
+
+결과의 `action` 에 따라 분기:
+
+- **`"frozen": true`** (snapshot 존재 + downstream 코드 존재 + `--regenerate-contracts` 없음): `Models/` 가 snapshot 에서 복원됐고 architect 는 **재실행하지 않는다**. 이미 작성된 Views/Services 가 의존하는 계약이 그대로 유지된다(`contracts_frozen` 이벤트 기록). architect dispatch 를 건너뛴다. 이때 Phase 1 은 Step 4 의 `start-phase --phase 1 ... --allow-terminal-restart`(completed→in_progress) 를 이미 거친 상태여야 하며, 그 위에서 `advance-phase 1` 로 gate 1→2 를 재검증한다 (`completed` 에서 `advance-phase` 를 직접 호출하면 transition 이 거부된다). 통과 후 Phase 2 로 진행.
+  - 사용자 보고: *"기존 타입 계약을 유지했습니다(downstream 보호). 아이디어를 바꿔 계약을 새로 설계하려면 `/autobot:resume 1 --regenerate-contracts` 로 재실행하세요 — 이 경우 Phase 4 가 새 계약에 맞춰 코드를 다시 생성합니다."*
+- **`"action": "regenerate"`** (downstream 없음 · `--regenerate-contracts` 명시 · snapshot 없음 중 하나): architect 를 다시 실행한다. 기존 `.autobot/architecture.md`/`Models/` 를 덮어쓰고, 완료 후 `.autobot/contracts/phase-1-models/` snapshot 과 체크섬을 재저장한다.
+- **`"action": "error"`** (동결해야 하는데 snapshot 복원 실패): **중단**하고 사용자에게 복원 실패를 알린다. architect 가 계약을 덮어쓰게 두지 않는다.
+
+> input_hash skip 과 직교한다 — 입력이 안 바뀌었으면 input_hash 가 Phase 1 자체를 skip 하므로 architect 가 애초에 안 돈다. 동결은 `--force`/입력 변경/구 빌드(hash 미저장)처럼 **architect 가 재실행될 상황에서 downstream 을 보호**한다.
 
 ### Phase 2 재개
 

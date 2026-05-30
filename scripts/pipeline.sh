@@ -16,6 +16,7 @@
 #   bash pipeline.sh write-run-summary    (write artifacts/<buildId>/run-summary.{json,md})
 #   bash pipeline.sh grade-learnings      --build-id <id>   (update learning effect_score)
 #   bash pipeline.sh input-hash           compute|should-skip --phase N [--force]
+#   bash pipeline.sh freeze-contracts     decide|apply --phase 1 [--regenerate]
 #   bash pipeline.sh context-pack         --phase N --agent <name> [--budget N] [--format text|json]
 #   bash pipeline.sh error-signature      check|record|normalize --phase N [--stderr-file ...|--signature ...]
 #   bash pipeline.sh design-spec          validate|synthesize|ensure ...
@@ -28,7 +29,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${SCRIPT_DIR}/runtime.py"
 
-USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|env-snapshot|write-run-summary|grade-learnings|input-hash|context-pack|error-signature|design-spec|sandbox|build-lock> [options]"
+USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|error-signature|design-spec|sandbox|build-lock> [options]"
 
 if [[ -z "$MODE" ]]; then
   echo "$USAGE" >&2
@@ -73,6 +74,10 @@ EOF
   input-hash)
     SUBCMD="${1:-should-skip}"; shift || true
     exec python3 "${SCRIPT_DIR}/input_hash.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
+    ;;
+  freeze-contracts)
+    SUBCMD="${1:-apply}"; shift || true
+    exec python3 "${SCRIPT_DIR}/contract_freeze.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
     ;;
   context-pack)
     exec python3 "${SCRIPT_DIR}/context_pack.py" --project-dir "$PROJECT_DIR" "$@"

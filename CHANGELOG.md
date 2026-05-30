@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added
+- **계약 동결 (frozen-by-default) — `/autobot:resume 1` 의 비결정적 계약 drift 차단.** Phase 1(architect)은 타입 계약(`Models/*.swift` + `ServiceProtocols.swift`)을 만들고 Phase 4 코드가 그 심볼명에 의존한다. architect 출력은 비결정적이라, downstream 코드가 이미 있는 상태에서 `/autobot:resume 1`(또는 `--force`, 또는 hash 미저장 구 빌드)이 architect 를 재실행하면 필드명이 바뀌어 조용히 컴파일이 깨지고 snapshot 까지 덮어써 되돌릴 수 없었다. 이제 resume 는 **계약을 기본 동결**: snapshot 이 있고 downstream 코드가 존재하면 architect 를 재실행하지 않고 snapshot 을 복원해 계약을 보존한다. 새 계약이 필요하면 `--regenerate-contracts` 로 명시 opt-in (Phase 4 가 새 계약에 맞춰 재생성하도록 forward pass 로 cascade). `input_hash` 의 "입력 불변 시 skip" 과 직교하는 보호 — architect 가 실제로 재실행될 상황에서만 동작.
+  - `scripts/contract_freeze.py` — `decide`/`apply`. `frozen = snapshot 존재 ∧ downstream .swift 존재 ∧ ¬regenerate`. downstream 디렉토리는 `spec.fileOwnership` 의 Phase-4 agent writes 에서 도출(SSOT, backend/·Assets 는 .swift 없어 자동 제외). 동결 시 `snapshot-contracts.sh restore` 위임 + 검증된 `contracts_frozen` 로그 이벤트. 복원 실패 시 silent regenerate 금지 — `action: error` 로 호출자 halt 유도.
+  - `spec/pipeline.json` `logEvents` 에 `contracts_frozen` (required: phase, detail) 추가.
+  - `scripts/pipeline.sh` `freeze-contracts decide|apply --phase 1 [--regenerate]` passthrough.
+  - `commands/resume.md` Phase 1 재개 를 freeze-aware 로 교체 + `--regenerate-contracts` 인자 파싱.
+  - `tests/test_contract_freeze.py` — decide 결정 매트릭스(snapshot×downstream×regenerate) + apply 복원/로그 + pipeline.sh passthrough.
+
 ## [0.7.2] — 2026-05-30
 
 `/autobot:plan` 명령 + Phase 2.5 (Plan Preview HTML) 신설. mvp 자율 흐름의 취약점 — architect/ux-designer 의 첫 패스 결과가 사람 검토 없이 Phase 3–5 의 코드로 곧장 변환되는 것 — 을 막는 게이트. 새 명령은 Phase 0–2 까지만 빌드하고 `designs/preview/index.html` (self-contained 모바일 갤러리 + 기획 요약 + nav flow + token swatch + LLM critique) 을 브라우저로 자동 표면화. OK 면 `/autobot:resume` 으로 Phase 3 진입.
