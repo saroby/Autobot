@@ -151,8 +151,11 @@ def check_phase_count(spec: dict) -> list[str]:
     spec_count = len(spec.get("phases", {}))
     content = skill_md.read_text(encoding="utf-8")
 
-    # Count table rows that start with "| N |" where N is a digit
-    table_rows = re.findall(r"^\|\s*\d+\s*\|", content, re.MULTILINE)
+    # Count table rows that start with "| N |" where N is an integer ("2") or
+    # fractional ("2.5") phase id. Fractional ids arrived with Phase 2.5 in
+    # 0.7.2; the prior \d+-only pattern silently under-counted by dropping the
+    # "| 2.5 |" row, producing a spurious 8-vs-9 mismatch.
+    table_rows = re.findall(r"^\|\s*\d+(?:\.\d+)?\s*\|", content, re.MULTILINE)
     if table_rows and len(table_rows) != spec_count:
         return [
             f"SKILL.md phase table has {len(table_rows)} rows "

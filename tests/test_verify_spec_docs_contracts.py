@@ -28,6 +28,16 @@ class TestVerifySpecDocsContracts(unittest.TestCase):
 
         self.assertEqual([], errors)
 
+    def test_phase_count_handles_fractional_ids(self):
+        # Guards the 0.7.2 fractional-phase-id fix: the row counter must include
+        # "| 2.5 |". A regression to a \d+-only pattern (or a dropped 2.5 row in
+        # SKILL.md) would resurface the spurious 8-vs-9 mismatch.
+        spec = verify_spec_docs.load_spec()
+
+        errors = verify_spec_docs.check_phase_count(spec)
+
+        self.assertEqual([], errors)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,4 +118,8 @@
 
 - 더 강한 enforcement: architect sandbox 가 resume-with-downstream 에서 Models/ 쓰기를 거부 (현재는 resume.md 호출 의존). v1 은 결정 로직만 엔진화.
 - feature-spec.json drift (현재 Models snapshot 만 동결; feature-spec 은 functional gate 영향, 컴파일 아님).
-- **별건 pre-existing red (main @ 0.7.2)**: `test_phase_advance_fallback_timing` 2건 실패 + verify_spec_docs 경고 1건 (orchestrator SKILL.md phase 표 8행 vs spec 9 phase). 전부 phase 2.5 도입 부산물, 이 변경과 무관 — 빠른 후속으로 분리 처리 권장.
+- ~~**별건 pre-existing red (main @ 0.7.2)**~~ **[FIXED]**: phase 2.5 도입 부산물 2건을 root-cause 로 수정.
+  - `test_phase_advance_fallback_timing` 2건 실패 → **stale 픽스처** (state 인라인 phases 가 2.5 누락; `init_state`/`default_phases` 는 2.5 를 seed 하고 state validation 이 모든 spec phase 를 요구). 픽스처에 `"2.5": {"status":"pending"}` 추가. (다른 인라인 phases 픽스처는 grep 으로 0건 확인.)
+  - verify_spec_docs `check_phase_count` 경고 → **checker 의 regex 버그**. `^\|\s*\d+\s*\|` 가 정수 id 만 매치해 `| 2.5 |` 행을 누락(8행), spec 은 9 → spurious. 0.7.2 의 `render_pipeline_docs int→float` 수정 때 같이 안 고쳐진 곳. regex 를 `\d+(?:\.\d+)?` 로 일반화. SKILL.md 표 자체는 정상(9행, auto-rendered)이었음.
+  - 회귀 가드: `test_verify_spec_docs_contracts.test_phase_count_handles_fractional_ids` (regex 회귀 또는 2.5 행 손실 즉시 검출).
+  - 검증: 전체 슈트 386 tests OK, verify_spec_docs "All checks passed" (경고 0).

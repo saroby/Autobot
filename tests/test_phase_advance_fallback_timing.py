@@ -32,7 +32,7 @@ class TestFallbackPropagatesIntoGate(unittest.TestCase):
             "bundleId": "x.x", "backendRequired": False,
             "phases": {
                 "0": {"status": "completed"}, "1": {"status": "completed"},
-                "2": {"status": "in_progress"},
+                "2": {"status": "in_progress"}, "2.5": {"status": "pending"},
                 "3": {"status": "pending"}, "4": {"status": "pending"},
                 "5": {"status": "pending"}, "6": {"status": "pending"},
                 "7": {"status": "pending"},
