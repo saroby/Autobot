@@ -35,6 +35,19 @@ MIN_SCREENSHOT_BYTES = 4096
 MIN_PIXEL_VARIANCE = 90  # below this the screen is effectively monochrome
 HEX_RE = re.compile(r"#?([0-9a-fA-F]{6})\b")
 
+# --- Screen-occupancy (the "꽉찬 / fills the screen" floor) ------------------
+# The deterministic teeth behind the quality loop: when the user's own idea
+# asks for a screen-filling / full-screen layout, a rendered UI whose content
+# spans only a small fraction of the device frame (a fixed-size window
+# letterboxed in black — the 13%-of-screen Winamp) is a HARD failure, not a
+# passing "not blank" screenshot. Guarded by layout-intent so apps that never
+# asked for full-screen are unaffected. Content vs background is measured by
+# bounding-box SPAN per axis (not pixel density) so a legitimately full-screen
+# app with a sparse/dark layout is not false-flagged.
+CONTENT_DELTAE = 24            # a pixel is "content" if this far from the bg color
+FILL_DEFAULT_MIN_EXTENT = 0.6  # idea says "fill" but no explicit min → span >= 60% of axis
+_OCC_W, _OCC_H = 80, 160       # downsample grid for occupancy (tall = phone-shaped)
+
 
 def _disabled() -> bool:
     return os.environ.get("AUTOBOT_DISABLE_VISUAL_CONTRACT") == "1"
@@ -185,6 +198,114 @@ def _default_screenshot(project_root: Path) -> Path:
     return project_root / ".autobot" / "phase-5" / "runtime-smoke" / "screenshot.png"
 
 
+def _occupancy_stats(path: Path) -> dict | None:
+    """Measure how much of the device frame the app's UI actually spans.
+
+    Returns {occupancy, verticalExtent, horizontalExtent, background} or None
+    when Pillow is unavailable. `background` is the modal color of the outer
+    border ring (the letterbox / device matte); a pixel is "content" when it is
+    > CONTENT_DELTAE from that background. verticalExtent / horizontalExtent are
+    the fraction of rows / columns that contain ANY content — i.e. the content
+    bounding box span per axis. A small fixed-size window pinned to the top of a
+    tall screen yields a low verticalExtent (the exact 꽉찬 violation), while a
+    full-screen app — even a dark, sparse one — spans most of both axes.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        with Image.open(path) as img:
+            small = img.convert("RGB").resize((_OCC_W, _OCC_H))
+            try:
+                px = list(small.get_flattened_data())  # current Pillow API
+            except AttributeError:
+                px = list(small.getdata())             # older Pillow
+    except Exception:
+        return None
+    if not px or len(px) != _OCC_W * _OCC_H:
+        return None
+
+    def q(p: tuple[int, int, int]) -> tuple[int, int, int]:
+        return (p[0] // 16, p[1] // 16, p[2] // 16)
+
+    border: list[tuple[int, int, int]] = []
+    for x in range(_OCC_W):
+        border.append(px[x])
+        border.append(px[(_OCC_H - 1) * _OCC_W + x])
+    for y in range(_OCC_H):
+        border.append(px[y * _OCC_W])
+        border.append(px[y * _OCC_W + _OCC_W - 1])
+    counts: dict[tuple[int, int, int], int] = {}
+    for p in border:
+        k = q(p)
+        counts[k] = counts.get(k, 0) + 1
+    bgq = max(counts, key=lambda k: counts[k])
+    bg = (bgq[0] * 16 + 8, bgq[1] * 16 + 8, bgq[2] * 16 + 8)
+
+    rows: set[int] = set()
+    cols: set[int] = set()
+    n_content = 0
+    for i, p in enumerate(px):
+        if _delta_e_approx(p, bg) > CONTENT_DELTAE:
+            n_content += 1
+            rows.add(i // _OCC_W)
+            cols.add(i % _OCC_W)
+    return {
+        "occupancy": round(n_content / len(px), 3),
+        "verticalExtent": round(len(rows) / _OCC_H, 3) if rows else 0.0,
+        "horizontalExtent": round(len(cols) / _OCC_W, 3) if cols else 0.0,
+        "background": list(bg),
+    }
+
+
+def _raw_idea(project_root: Path) -> str:
+    state = project_root / ".autobot" / "build-state.json"
+    if state.is_file():
+        try:
+            idea = json.loads(state.read_text(encoding="utf-8")).get("idea")
+            if isinstance(idea, str):
+                return idea
+        except (json.JSONDecodeError, OSError):
+            pass
+    return ""
+
+
+def _fill_requirement(project_root: Path) -> dict | None:
+    """Return {min, axis, source} when the build is REQUIRED to fill the screen.
+
+    Priority: an explicit `occupies_screen_fraction` acceptance in feature-spec
+    (the architect encoded it — gate 1->2 forces this when the idea has a layout
+    clause) → use its params. Else a layout-intent phrase in the raw idea → a
+    conservative default min. Else None (no fill requirement → occupancy is
+    informational and never fails the gate).
+    """
+    try:
+        from intent_spec import layout_intent_signal, load_feature_spec
+    except Exception:
+        return None
+
+    features = load_feature_spec(project_root) or []
+    for feat in features:
+        for acc in getattr(feat, "acceptance", ()):  # type: ignore[attr-defined]
+            pc = getattr(acc, "postcondition", None)
+            if pc is not None and pc.kind == "occupies_screen_fraction":
+                params = pc.params if isinstance(pc.params, dict) else {}
+                try:
+                    minv = float(params.get("min", FILL_DEFAULT_MIN_EXTENT))
+                except (TypeError, ValueError):
+                    minv = FILL_DEFAULT_MIN_EXTENT
+                axis = params.get("axis", "both")
+                if axis not in ("both", "width", "height"):
+                    axis = "both"
+                return {"min": minv, "axis": axis, "source": f"feature-spec:{getattr(feat,'id','?')}"}
+
+    phrase = layout_intent_signal(_raw_idea(project_root))
+    if phrase:
+        return {"min": FILL_DEFAULT_MIN_EXTENT, "axis": "both", "source": f"idea-signal:{phrase}"}
+    return None
+
+
 def evaluate(project_root: Path, screenshot: Path | None = None) -> dict:
     if _disabled():
         return _result("skipped", skipReason="visual_contract_disabled")
@@ -216,11 +337,32 @@ def evaluate(project_root: Path, screenshot: Path | None = None) -> dict:
             "tolerance": DOMINANT_COLOR_TOLERANCE_DELTAE,
         }
 
+    # Screen-occupancy: does the rendered UI actually fill the frame the way the
+    # user asked? Measured always (informational); enforced as a HARD failure
+    # only when the build is REQUIRED to fill the screen (idea layout clause or
+    # an occupies_screen_fraction acceptance). This is deterministic, so unlike
+    # the LLM visual_judge it can legitimately block.
+    occ = _occupancy_stats(screenshot)
+    fill_req = _fill_requirement(project_root)
+    fill_eval: dict | None = None
+    if fill_req is not None and occ is not None:
+        axis = fill_req["axis"]
+        measured = (
+            occ["verticalExtent"] if axis == "height"
+            else occ["horizontalExtent"] if axis == "width"
+            else min(occ["verticalExtent"], occ["horizontalExtent"])
+        )
+        fill_eval = {
+            "required": fill_req, "measuredExtent": round(measured, 3),
+            "occupancy": occ["occupancy"], "met": measured >= fill_req["min"],
+        }
+
     # Hard failures (only structural problems that we're confident about
     # without first-build calibration data):
     #   - screenshot too small (already returned above)
     #   - dimensions absurdly small (caught here)
     #   - all-monochrome (variance below threshold)
+    #   - REQUIRED to fill the screen but content spans only a small fraction
     #
     # Color-match (deltaE vs design tokens) is recorded but NOT a fail signal.
     # The deltaE tolerance was picked from one synthetic fixture — we need
@@ -231,6 +373,14 @@ def evaluate(project_root: Path, screenshot: Path | None = None) -> dict:
         hard_findings.append(f"dimensions {dims[0]}x{dims[1]} are smaller than any iPhone simulator")
     if variance is not None and variance < MIN_PIXEL_VARIANCE:
         hard_findings.append(f"low luminance variance ({variance:.1f}) — screen looks monochrome")
+    if fill_eval is not None and not fill_eval["met"]:
+        hard_findings.append(
+            f"screen-fill requirement unmet: the idea asks the UI to fill the screen "
+            f"({fill_req['source']}, min span {fill_req['min']} on '{fill_req['axis']}') but "
+            f"content spans only {fill_eval['measuredExtent']:.2f} (occupancy {occ['occupancy']:.2f}) "
+            f"— the window is letterboxed, not filling the screen. Scale the UI to fill the frame "
+            f"(and/or stack sub-windows) and re-render."
+        )
 
     if hard_findings:
         return _result(
@@ -241,6 +391,8 @@ def evaluate(project_root: Path, screenshot: Path | None = None) -> dict:
             variance=variance,
             dominant=list(dominant) if dominant else None,
             paletteMatch=palette_match,
+            occupancy=occ,
+            fillRequirement=fill_eval,
         )
 
     # Informational note about palette mismatch when present, but never fails.
@@ -259,6 +411,8 @@ def evaluate(project_root: Path, screenshot: Path | None = None) -> dict:
         dominant=list(dominant) if dominant else None,
         paletteMatch=palette_match,
         paletteWarning=palette_warning,
+        occupancy=occ,
+        fillRequirement=fill_eval,
         notes="metadata-only" if variance is None else "full-pillow-analysis",
     )
 

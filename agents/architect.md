@@ -155,10 +155,13 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 
 1. **screen 접지**: 모든 `feature.screen` 값은 architecture.md `## Screens` 에 실재하는 화면 이름을 그대로 가리킨다. 매칭되는 screen 이 없으면 그 feature 를 만들지 않는다.
 2. **anchor 접지**: 모든 P0/P1 `feature.anchor` 와 acceptance step 의 `anchor` 는 `app-intent.json.requiredAnchors` 에 있거나, ui-builder 가 그 화면에 반드시 부여할 수 있는 `autobot.*` 식별자여야 한다. anchor 를 비워두면 Gate 1→2 (`feature_spec_quality`) 에서 fail.
-3. **postcondition 접지**: 모든 P0/P1 acceptance 의 `postcondition.kind` 는 다음 6 개 중 하나여야 하고, `## Data Models` 의 emitted Model 또는 emitted screen 에서 **실제로 관찰 가능한** 결과를 가리켜야 한다 — `count_increased`, `count_decreased`, `value_persisted_after_relaunch`, `navigated_to`, `artifact_generated`, `setting_stored`. 예: `count_increased` 는 화면에 카운트 라벨 anchor 가 존재할 때만, `value_persisted_after_relaunch` 는 SwiftData `@Model` 로 영속되는 값일 때만 쓴다. anchor 가 렌더됐다는 것만으로는 postcondition 이 될 수 없다 (anchor-only acceptance 는 invalid).
-4. **acceptance.kind**: UI 탭/내비게이션으로 검증되면 `"flow"`, 모델/로직 단위로 검증되면 `"logic"`. cycle 1 에서 step `action` 은 항상 `"tap"`.
-5. **표현 불가능 → P2 다운그레이드**: 위 1–3 을 만족하는 grounded postcondition 을 만들 수 없는 기능은 `priority` 를 `"P2"` 로 낮춘다. P2 는 acceptance 가 비어 있어도 Gate 1→2 가 통과시킨다 (aspirational stub 허용). P0/P1 으로 남기려면 반드시 grounded acceptance 1 개 이상.
-6. **최소 보장**: P0 기능은 최소 1 개의 `"flow"` acceptance 를 가진다 — 빌드의 핵심 약속은 런타임에서 실제로 클릭되어 검증돼야 한다.
+3. **postcondition 접지**: 모든 P0/P1 acceptance 의 `postcondition.kind` 는 다음 중 하나여야 하고, `## Data Models` 의 emitted Model / emitted screen / 렌더된 레이아웃에서 **실제로 관찰 가능한** 결과를 가리켜야 한다:
+   - 데이터/네비 상태: `count_increased`, `count_decreased`, `value_persisted_after_relaunch`, `navigated_to`, `artifact_generated`, `setting_stored`.
+   - **공간/비주얼** (레이아웃·충실도 요구 전용): `occupies_screen_fraction` (`params:{min:0..1, axis:"both"|"width"|"height"}` — 렌더된 UI 가 화면을 얼마나 채우는지를 Phase 5 가 스크린샷에서 결정적으로 측정), `matches_visual_reference` (`params:{reference}`).
+   예: `count_increased` 는 화면에 카운트 라벨 anchor 가 존재할 때만; `occupies_screen_fraction` 는 사용자가 "화면을 꽉 채우는 / full-screen / edge-to-edge / 그대로(픽셀 충실)" 류를 요구할 때 쓴다. anchor 가 렌더됐다는 것만으로는 postcondition 이 될 수 없다 (anchor-only acceptance 는 invalid).
+4. **acceptance.kind**: UI 탭/내비게이션·스크린샷으로 검증되면 `"flow"`, 모델/로직 단위로 검증되면 `"logic"`. cycle 1 에서 step `action` 은 항상 `"tap"` (공간 postcondition 은 step 이 비어 있어도 된다 — 렌더 자체가 측정 대상).
+5. **레이아웃/충실도 요구는 절대 P2 로 강등 금지 (GATE-ENFORCED)**: 사용자의 한 줄 아이디어에 화면 점유/풀스크린/픽셀충실 절(예: "탭없이 화면을 꽉 채우는", "fills the screen", "edge-to-edge", "그대로")이 있으면, 그 요구를 담은 **P0 feature 1 개 이상** 을 반드시 `occupies_screen_fraction` (또는 `matches_visual_reference`) acceptance 와 함께 만든다. Gate 1→2 의 `idea_layout_requirements_captured` 가 이를 강제한다 — 누락 시 fail. 동시에 **architecture.md / Design Direction 의 레이아웃이 그 요구를 부정하면 안 된다**: 예컨대 "화면을 꽉 채운다" 와 "275×116 을 floor(width/baseWidth) 정수배로 스케일 + 남는 영역 레터박스" 를 동시에 적으면 폰에서 floor=1 → 13% 만 차지하는 모순이 된다. 풀스크린 요구에는 폭/높이에 맞춰 채우는(fit-to-screen, 분수 스케일 또는 sub-window 스택으로 세로 채움) 전략을 명시하라. (위 1–3 을 만족하는 grounded postcondition 을 *진짜로* 만들 수 없는 부가 기능만 `"P2"` 로 낮춘다 — P2 는 빈 acceptance 허용.)
+6. **최소 보장**: P0 기능은 최소 1 개의 `"flow"` acceptance 를 가진다 — 빌드의 핵심 약속은 런타임에서 실제로 클릭/렌더되어 검증돼야 한다.
 
 스키마 SSOT 는 위 JSON 블록 + `scripts/intent_spec.py` 의 `FeatureSpec`/`Acceptance`/`Postcondition` 데이터클래스다. 검증기: `validate_feature_spec` (구조), `assess_feature_spec_quality` (postcondition 품질).
 

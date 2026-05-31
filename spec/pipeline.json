@@ -110,6 +110,14 @@
       "abortOnSignatureRepeat": true,
       "abortStrategy": "snapshot_restore_then_handoff"
     },
+    "qualityRefineLoop": {
+      "enabled": true,
+      "appliesTo": [
+        "5"
+      ],
+      "maxAttempts": 2,
+      "comment": "Phase 5 render -> judge-against-the-raw-idea -> fix -> re-render loop (autobot-integration-build Step 9b/9e). A deterministic screen-fill (occupancy) miss or an explicit user-clause violation routes into the buildFixLoop as a layout defect, bounded by maxAttempts; on exhaustion the build advances and the deterministic visual_contract gate hard-fails honestly (badge UNVERIFIED) rather than laundering a low-quality build to DEGRADED. The non-deterministic vision verdict stays DEGRADED-only; only the deterministic occupancy floor blocks."
+    },
     "peerArchitectureReview": {
       "enabled": true,
       "maxAttempts": 2,
@@ -1027,6 +1035,11 @@
           "type": "procedural",
           "name": "feature_spec_quality",
           "label": "feature_spec_quality"
+        },
+        {
+          "type": "procedural",
+          "name": "idea_layout_requirements_captured",
+          "label": "idea_layout_requirements_captured"
         },
         {
           "type": "state_field_contains",

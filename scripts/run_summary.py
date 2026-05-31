@@ -191,14 +191,42 @@ def _overall_status(state: dict) -> str:
     return "in_progress"
 
 
+def _gate56_findings(state: dict) -> tuple[list[dict], list[dict]]:
+    """Return (failed, degraded) check findings from gate 5->6's recorded
+    evidence, each as {check, message}. Lets the badge name the ACTUAL reason
+    (e.g. visual_contract screen-fill unmet) instead of a hardcoded
+    "axe unavailable" — so "verified-and-bad" is never laundered as "missing tool".
+    """
+    gate = (state.get("gates", {}) or {}).get("5->6") or {}
+    groups = (gate.get("detail") or {}).get("checks") or []
+    failed: list[dict] = []
+    degraded: list[dict] = []
+    for grp in groups:
+        if not isinstance(grp, dict) or grp.get("passed"):
+            continue
+        msgs = [
+            str(sc.get("message"))
+            for sc in (grp.get("sub_checks") or [])
+            if isinstance(sc, dict) and not sc.get("passed") and sc.get("message")
+        ]
+        finding = {"check": grp.get("check"), "message": ("; ".join(msgs))[:240] or grp.get("check")}
+        (degraded if grp.get("degraded") else failed).append(finding)
+    return failed, degraded
+
+
 def _functional_verification(state: dict) -> dict:
     """Derive the shipping-verification badge from gate 5->6's recorded verdict.
 
     badge:
       VERIFIED   — gate 5->6 status == 'passed' (functional flows ran + passed)
-      DEGRADED   — gate 5->6 status == 'degraded' (flows unverified: no sim/axe)
-      UNVERIFIED — gate 5->6 status is soft_failed/failed/absent
+      DEGRADED   — gate 5->6 status == 'degraded' (a degradable check could not run)
+      UNVERIFIED — gate 5->6 status is soft_failed/failed/absent (a check FAILED,
+                   e.g. visual_contract screen-fill unmet — verified-and-bad)
     Only VERIFIED is shippable. This mirrors check_functional_verification_passed.
+
+    `failedChecks` / `degradedChecks` carry the ACTUAL non-green checks so the
+    reason is honest: a tool-absence DEGRADE and a quality FAIL no longer collapse
+    into one hardcoded "install axe" message.
     """
     status = (state.get("gates", {}).get("5->6") or {}).get("status")
     if status == "passed":
@@ -207,10 +235,13 @@ def _functional_verification(state: dict) -> dict:
         badge = "DEGRADED"
     else:
         badge = "UNVERIFIED"
+    failed, degraded = _gate56_findings(state)
     return {
         "badge": badge,
         "gate56Status": status,
         "shippable": badge == "VERIFIED",
+        "failedChecks": failed,
+        "degradedChecks": degraded,
     }
 
 
@@ -279,16 +310,24 @@ def render_markdown(summary: dict) -> str:
 
     lines.append("## Verification")
     lines.append("")
+    def _reasons(items: list[dict]) -> str:
+        return "; ".join(
+            f"`{it.get('check')}` — {it.get('message')}" for it in (items or []) if it
+        )
     if badge == "VERIFIED":
         lines.append("- **functional verification**: ✅ VERIFIED "
                      f"(gate 5->6 = `{fv.get('gate56Status')}`) — shippable")
     elif badge == "DEGRADED":
+        why = _reasons(fv.get("degradedChecks")) or "a degradable check could not run (simulator/axe/xcodebuild unavailable)"
         lines.append("- **functional verification**: ⚠️ **DEGRADED (functional unverified)** "
-                     f"(gate 5->6 = `{fv.get('gate56Status')}`) — NOT shippable: "
-                     "flows could not run (simulator/axe/xcodebuild unavailable)")
+                     f"(gate 5->6 = `{fv.get('gate56Status')}`) — NOT shippable. Degraded checks: {why}")
     else:
+        why = _reasons(fv.get("failedChecks"))
+        # A FAILED quality/build check (e.g. visual_contract screen-fill unmet) is a
+        # real product defect — name it, don't imply "just install a tool".
+        suffix = f". Failed checks: {why}" if why else ""
         lines.append("- **functional verification**: ❌ **UNVERIFIED** "
-                     f"(gate 5->6 = `{fv.get('gate56Status')}`) — NOT shippable")
+                     f"(gate 5->6 = `{fv.get('gate56Status')}`) — NOT shippable{suffix}")
     lines.append("")
 
     # Capability coverage — surface every silent limit (downgraded features,

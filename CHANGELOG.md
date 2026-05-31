@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-31
+
+### Added — 품질 스파인: 레이아웃/충실도 요구를 *캡처·차단·반복*한다
+지금까지 ~15개 게이트는 거의 전부 *내부 정합성*(파일 존재·형식·build-vs-spec)만 봤고, "사용자가 요구한 대로 보이는가 / 화면을 채우는가"를 검사 가능한 단언으로 담는 곳이 입력·계약·판정 어디에도 없었다. 그 결과 사용자가 "화면을 꽉 채우는"을 명시했는데도 화면의 13%만 차지하는 빌드가 **모든 게이트 초록**으로 출하됐다(visual_judge 는 letterbox 를 *처방한* 자기-저작 design-spec 에 "일치"로 합격). 이 릴리스는 그 구멍을 닫는다.
+
+- **공간/비주얼 postcondition 문법** (`scripts/intent_spec.py`): `POSTCONDITION_KINDS` 에 `occupies_screen_fraction`(`params:{min,axis}`) + `matches_visual_reference` 추가. CRUD 6종만으로는 표현 불가능해 P2 stub 으로 증발하던 레이아웃/충실도 요구가 이제 1급 acceptance 로 산다. `layout_intent_signal()`(KR+EN: 꽉/가득/전체화면/풀스크린/그대로/픽셀/fill/full-screen/edge-to-edge) + `assess_idea_layout_capture()`.
+- **Gate 1→2 intake 캡처 게이트** (`idea_layout_requirements_captured`, `gate_checks/capability.py`): 사용자 verbatim 아이디어에 화면-점유/풀스크린/픽셀충실 절이 있으면 feature-spec 이 공간 postcondition 으로 그것을 인코딩해야 한다 — 누락 시 **코드 작성 전에** fail. 결함을 50개 파일이 생기기 전 출처에서 잡는다. (요구가 없으면 benign-pass — 풀스크린 안 시킨 앱엔 무관.)
+- **결정적 화면-fill floor** (`scripts/visual_contract.py`): 렌더 스크린샷의 content bounding-box 축별 span(밀도 아님 — 어두운 풀스크린 앱 오탐 방지)을 측정. fill 요구가 있는데 span < min 이면 **HARD-FAIL**(letterboxed window). 결정적이라 비결정적 visual_judge 와 달리 출하를 막아도 정당하다. fill 요구 없는 앱은 informational 만.
+- **품질 반복 루프** (`policies.qualityRefineLoop` + `autobot-integration-build` Step 9b/9e): visual_judge 가 이제 **사용자 원문을 1순위 oracle** 로 절(clause)별 met/unmet 판정(자기-저작 design-spec 자기-인증 제거). occupancy fail / 명시적 사용자-절 위반은 build-fix 루프로 라우팅돼 레이아웃을 고치고 재렌더(maxAttempts=2). 소진 시 정직하게 UNVERIFIED.
+- **architect 가이드** (`agents/architect.md`): fill/충실도 아이디어 절은 P0 `occupies_screen_fraction` acceptance 로 강제 인코딩 + architecture/design-spec 이 요구를 부정하는 레이아웃(floor 정수배+letterbox 같은)을 적지 말 것 — fit-to-screen 전략 명시.
+- `tests/test_screen_fill_gate.py` — layout 신호(KR+EN)·intake 캡처·occupancy 게이트(letterbox hard-fail / 풀스크린 pass / 미요구 무영향) 9종. 실제 13%-fill 산출물에 대해 hard-fail 검증.
+
+### Changed
+- **배지 정직성** (`scripts/run_summary.py`): DEGRADED/UNVERIFIED 사유를 "axe 부재" 하드코딩이 아니라 gate 5→6 의 *실제 비-초록 체크*에서 도출(`_gate56_findings`). occupancy hard-fail 은 이제 배지를 **UNVERIFIED**(품질 결함)로 떨어뜨려 "도구만 깔면 됨(DEGRADED)"으로 위장되지 않는다 — "검증 못함"과 "검증했는데 나쁨"을 분리.
+
 ## [0.8.0] — 2026-05-31
 
 ### Added

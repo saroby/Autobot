@@ -143,6 +143,35 @@ def check_feature_spec_quality(proj: Path, app: str, state: dict) -> list[dict]:
     )]
 
 
+def check_idea_layout_requirements_captured(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 1→2 INTAKE — catch requirement-capture loss at the source.
+
+    When the user's verbatim idea contains an explicit layout / screen-fill /
+    pixel-fidelity clause ("탭없이 화면을 꽉 채우는", "edge-to-edge", "pixel-exact"),
+    the feature-spec MUST carry it as an acceptance with a spatial postcondition
+    (occupies_screen_fraction / matches_visual_reference). Otherwise the very
+    property that defines the app evaporates into prose nobody checks, the
+    architect is free to spec a contradicting layout (floor-scale + letterbox),
+    and a 13%-of-screen build ships with every gate green. Failing HERE forces
+    the fix before 50 files exist — far cheaper than fighting the spec at Phase 5.
+
+    Benign-passes when the idea has no such clause (we never impose a layout
+    acceptance on an app that didn't ask for one).
+    """
+    from intent_spec import assess_idea_layout_capture
+
+    ok, problems = assess_idea_layout_capture(proj)
+    if ok:
+        return [_ok(
+            "idea_layout_requirements_captured", True,
+            "no un-encoded layout/screen-fill clause in the idea (or none requested)",
+        )]
+    return [_ok(
+        "idea_layout_requirements_captured", False,
+        "; ".join(problems[:2]),
+    )]
+
+
 def check_intent_anchors_in_ui(proj: Path, app: str, state: dict) -> list[dict]:
     """Phase 4→5 — every anchor the architect promised must appear in the UI tree.
 

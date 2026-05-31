@@ -52,6 +52,7 @@ from gate_checks.capability import (  # noqa: E402,F401
     check_app_intent_declared,
     check_feature_spec_declared,
     check_feature_spec_quality,
+    check_idea_layout_requirements_captured,
     check_intent_anchors_in_ui,
     check_primary_cta_visibility,
     check_ios_capability_safe
@@ -126,6 +127,7 @@ GATE_CHECKS: dict[str, Any] = {
     "app_intent_declared": check_app_intent_declared,
     "feature_spec_declared": check_feature_spec_declared,
     "feature_spec_quality": check_feature_spec_quality,
+    "idea_layout_requirements_captured": check_idea_layout_requirements_captured,
     "intent_anchors_in_ui": check_intent_anchors_in_ui,
     # Gate 2→3
     "design_spec_sections_complete": check_design_spec_sections_complete,

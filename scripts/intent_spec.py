@@ -153,9 +153,113 @@ POSTCONDITION_KINDS = (
     "navigated_to",
     "artifact_generated",
     "setting_stored",
+    # Spatial / visual postconditions. The original six are all data-state
+    # deltas — there was no grammar for "the UI must LOOK like X / FILL the
+    # screen", so layout/fidelity requirements (e.g. "탭없이 화면을 꽉 채우는")
+    # had nowhere to live and silently dropped to un-checked P2 stubs. These
+    # let a layout requirement be a first-class, runtime-checkable acceptance.
+    "occupies_screen_fraction",   # params: {min: 0..1, axis: "both"|"width"|"height"}
+    "matches_visual_reference",   # params: {reference: "<path or design clause>"}
 )
 
 _POLICED_PRIORITIES = ("P0", "P1")
+
+# Keyword families (KR + EN) that signal the user asked for a SPECIFIC layout /
+# screen-occupancy / fidelity property — the class of requirement the CRUD
+# postconditions cannot express. Guarded so we never impose a layout acceptance
+# on an app that didn't ask for one.
+# NOTE on narrowness: these must fire ONLY on a true layout/fill/fidelity
+# clause. A bare `fill` / `그대로` / `픽셀` is far too common in unrelated ideas
+# ("fill out the form", "메모를 그대로 저장", "픽셀 아트 드로잉") — a false match
+# forces a bogus occupies_screen_fraction P0 at gate 1->2 (HARD FAIL if the
+# architect omits it) and a 0.6 fill floor at gate 5->6 (UNVERIFIED), halting an
+# app that never asked to fill the screen. So `그대로`/`픽셀` are admitted only in
+# an explicit layout context, and `fill` only as `fill(s) [the] screen`.
+_LAYOUT_INTENT_PATTERNS = (
+    r"꽉\s*찬", r"꽉\s*채", r"가득", r"전체\s*화면", r"화면.{0,6}채",
+    r"풀\s*스크린", r"full[\s-]?screen", r"fills?\s+(?:the\s+)?screen",
+    r"edge[\s-]?to[\s-]?edge", r"전체를\s*차지",
+    r"(?:화면|UI|레이아웃|디자인|스킨|모양)\s*[를을]?\s*.{0,4}그대로",
+    r"픽셀\s*(?:완벽|단위|동일|충실|퍼펙트)",
+    r"pixel[\s-]?(?:perfect|exact)",
+    # `exactly like` is a fidelity clause ("looks exactly like Winamp"); the
+    # `exactly the` branch was dropped — it fired on "save exactly the same data".
+    r"exact(?:ly)?\s+like",
+)
+_LAYOUT_POSTCONDITION_KINDS = ("occupies_screen_fraction", "matches_visual_reference")
+
+
+def layout_intent_signal(*texts: str) -> str | None:
+    """Return the first matched layout-intent phrase across `texts`, or None.
+
+    A non-None result means the user's own words asked for a screen-occupancy /
+    pixel-fidelity property — so the build must ENCODE that as an acceptance
+    (gate 1->2) and VERIFY it on the screen (gate 5->6 occupancy), rather than
+    letting it evaporate into prose nobody checks.
+    """
+    import re as _re
+    for text in texts:
+        if not text:
+            continue
+        for pat in _LAYOUT_INTENT_PATTERNS:
+            m = _re.search(pat, text, _re.IGNORECASE)
+            if m:
+                return m.group(0)
+    return None
+
+
+def _raw_idea(project_root: Path) -> str:
+    """The user's verbatim one-line idea, the SSOT oracle for what was asked.
+
+    Read from build-state.json `idea`; fall back to app-intent.json `promise`.
+    """
+    state = project_root / ".autobot" / "build-state.json"
+    if state.is_file():
+        try:
+            data = json.loads(state.read_text(encoding="utf-8"))
+            idea = data.get("idea")
+            if isinstance(idea, str) and idea.strip():
+                return idea
+        except (json.JSONDecodeError, OSError):
+            pass
+    intent = load_app_intent(project_root)
+    return intent.promise if intent else ""
+
+
+def assess_idea_layout_capture(project_root: Path) -> tuple[bool, list[str]]:
+    """Gate 1->2 INTAKE check — catch the requirement-capture loss at the source.
+
+    If the user's verbatim idea contains an explicit layout / screen-occupancy /
+    pixel-fidelity clause, the feature-spec MUST encode at least one acceptance
+    with a spatial postcondition (occupies_screen_fraction / matches_visual_
+    reference). Otherwise the requirement that defines the app ("화면을 꽉 채우는")
+    has no carrier and will never be checked — exactly how the 13%-of-screen
+    Winamp shipped with every gate green.
+
+    Returns (ok, problems). Benign-passes (ok=True) when no layout clause is
+    detected — we never force a layout acceptance on an app that didn't ask.
+    """
+    signal = layout_intent_signal(_raw_idea(project_root))
+    if signal is None:
+        return True, []
+
+    features = load_feature_spec(project_root)
+    if not features:
+        return False, [
+            f"idea has a layout/fidelity clause ('{signal}') but feature-spec.json "
+            f"is absent — it must carry it as an acceptance"
+        ]
+    for feat in features:
+        for acc in feat.acceptance:
+            if acc.postcondition.kind in _LAYOUT_POSTCONDITION_KINDS:
+                return True, []
+    return False, [
+        f"idea explicitly asks for a layout/screen-fill/fidelity property "
+        f"('{signal}') but NO feature acceptance encodes it (need a postcondition "
+        f"kind in {list(_LAYOUT_POSTCONDITION_KINDS)}, e.g. occupies_screen_fraction "
+        f"{{min:0.85, axis:'both'}}). Without it the look/fill requirement is never "
+        f"verified — add a P0 feature acceptance that carries it."
+    ]
 
 
 @dataclass
