@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-01
+
 ### Changed — `/plan` 스토리보드 품질: preview 가 *순서 없는 그리드 + 텍스트 덤프* → *번호 매긴 화면-흐름 보드*
 근본 진단: `build_preview.py` 가 architect 가 이미 emit 하는 구조화 산출물(`architecture.json`, design-spec.md 의 `## Screen Designs`·상태 섹션)을 **하나도 안 읽고** architecture.md 산문을 regex 로 긁어 흐름을 재구성했다. 그 결과 화면이 순서 없이 나열되고, nav 는 `<pre>` 텍스트 덤프였으며, critique 가 판정해야 할 하단 safe-area 를 preview 자신이 잘라 숨겼다.
 
@@ -13,6 +15,17 @@
 - **권위 있는 화면↔PNG 매칭**: design-spec.md `## Screen Designs` 표(`Screen | Design File`)를 1순위로 사용하고 stem 휴리스틱은 fallback. Stitch 가 화면명과 다른 파일명을 써도 안 깨진다. PNG 없는 화면은 placeholder 카드로 표시(번호 정합 + 미생성 화면 가시화).
 - **critique 화면 딥링크** (`skills/autobot-plan-preview/SKILL.md`): critique 항목 계약에 `화면: N` 필드 추가 → `→ 화면 N` 칩으로 렌더되어 해당 갤러리 카드(`#screen-N`)로 점프(`:target` 하이라이트). 앱 전반 항목은 `—`. 산문 critique 를 화면별 액션으로 전환 — 사용자가 "어느 화면의 어디"를 눈대중하지 않는다.
 - `tests/test_build_preview.py` — crop·정렬·번호·flow·상태·권위매핑·딥링크 앵커·마커 보존·graceful fallback·FATAL 14종. (의도적 범위 밖: Stitch 자동 재생성 루프 — Phase 2.5 read-only non-goal + Stitch 신뢰성, 재생성은 기존 `/autobot:resume 2 --force` 사용자 경로 유지. vision-judge pre-code — 빌드된 앱 대상 Phase 5 게이트라 Phase 2.5 엔 부적용.)
+
+### Fixed — CI 가 모든 푸시에서 빨강이었다 (단위 슈트가 Xcode/시뮬레이터에 hard-coupling)
+`ci.yml` 은 "Fast, no Xcode required" 라며 `ubuntu-latest` 에서 단위 슈트를 돌리는데, 공통 fixture(`conftest.IsolatedProjectCase.setUp`)가 `advance-phase --phase 0` 를 실행하고 Gate 0 의 `environment_ready`(`gate_checks/setup.py`)가 `xcrun simctl` / `xcode-select` 를 **live probe 로 hard-fail** 했다. 시뮬레이터가 없는 Ubuntu 에선 11개 fixture 기반 테스트 파일이 setUp 에서 전부 깨져 **0.7.2 이후 ~5릴리스 내내 CI 가 빨강**이었다(회귀 슈트가 사실상 CI 에서 검증되지 않음). 맥(Xcode 보유)에선 초록이라 드러나지 않았다.
+
+- **Gate 0 가 기존 disable 플래그를 존중** (`scripts/gate_checks/setup.py`): `AUTOBOT_DISABLE_SIMULATOR` / `AUTOBOT_DISABLE_XCODEBUILD` 가 설정되면 해당 하드웨어 probe 를 **degraded-skip**(hard-fail 아님)으로 처리 — 이미 `sim_runtime.py` / `xcodebuild_runner.py` 가 쓰던 관례를 Gate 0 에도 적용. **프로덕션(플래그 미설정)은 live fail-fast probe 그대로 유지.**
+- **fixture 분리** (`tests/conftest.py`): `_scoped_env` 가 두 플래그를 모든 subprocess 에 주입 → Gate 0 이 degrade-skip → 슈트가 mac/Linux 무관 **hermetic**, 무-Xcode CI 에서 초록. (다른 하드웨어 의존 테스트는 이미 전부 mock 이라 무영향.)
+- `tests/test_environment_gate_ci.py` — 플래그 없을 때 hard-fail(=probe 가 진짜), 있을 때 degraded-skip, conftest 가 플래그 주입을 잠금. **무-Xcode 시뮬레이션(xcrun·xcodebuild·simctl 가림)에서 전체 슈트 443 OK 검증** (수정 전이면 ~51 실패).
+
+### Fixed — 버전/문서 드리프트
+- `pyproject.toml` 가 `0.7.1` 로 멈춰 `plugin.json`(0.9.0)과 어긋나 있던 것을 릴리스 버전과 동기화 — 이번 릴리스로 둘 다 `0.10.0`.
+- `README.md` 의 stale `# 185 tests` 제거 — 이전 사이클에 `ci.yml` 에선 지웠으나 README 에 남아 있던 같은 문자열. ci.yml 과 동일하게 숫자를 빼 drift 를 영구 제거.
 
 ## [0.9.0] — 2026-05-31
 

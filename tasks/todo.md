@@ -1,3 +1,27 @@
+# CI 빨강 수정 — 단위 슈트의 Xcode/시뮬레이터 hard-coupling 제거 (외부 모델 검수 #1·#2·#3)
+
+목적: 외부 모델이 짚은 약점 검증 후 수정. #1+#2 는 근본 원인 1개 — `conftest.IsolatedProjectCase.setUp` 이 `advance-phase 0` 를 돌리고 Gate 0 `environment_ready`(`gate_checks/setup.py`)가 `xcrun`/`xcode-select` 를 live probe 로 hard-fail → 무-Xcode Ubuntu CI 가 0.7.2 이후 ~5릴리스 빨강(맥에선 초록이라 안 보임). #3 버전/README drift.
+
+## 검증 (1차 증거)
+- `gh run list`: 최근 CI **5/5 failure**, 각 25–29초(즉시 실패). xcrun shim 으로 로컬 재현 → conftest setUp `AssertionError 1!=0`.
+- 다른 hw 테스트는 전부 mock(`test_integration_build_destination`=mock.patch, `test_sim_runtime_selection`=which mock) → breaker 는 fixture Gate 0 단 하나.
+
+## 수정 — 결과
+- [x] `gate_checks/setup.py`: Gate 0 가 기존 `AUTOBOT_DISABLE_SIMULATOR`/`AUTOBOT_DISABLE_XCODEBUILD` 를 degraded-skip 으로 존중(sim_runtime/xcodebuild_runner 관례 일관). 프로덕션 live fail-fast 는 플래그 미설정 시 그대로.
+- [x] `tests/conftest.py` `_scoped_env`: 두 플래그를 모든 subprocess 에 주입 → 슈트 hermetic, 무-Xcode CI 초록.
+- [x] `pyproject.toml` 0.7.1 → 0.9.0. `README.md` stale `# 185 tests` 제거(ci.yml 처럼 숫자 삭제).
+- [x] `tests/test_environment_gate_ci.py` 4종(무-플래그 hard-fail / 플래그 degraded-skip / conftest 주입).
+- [x] CHANGELOG [Unreleased] Fixed 2건.
+
+## 검증 결과
+- **무-Xcode 시뮬레이션(xcrun·xcodebuild·simctl 가림) 전체 슈트 443 OK** (수정 전이면 ~51 실패). 맥 정상 443 OK. verify_spec_docs + render PASS.
+- 설계 판단: 프로덕션 Gate 0 의 live 시뮬레이터 검사를 약화하지 않음(약화하면 실유저가 무-시뮬레이터에서 Phase 5 까지 갔다 더 비싸게 실패). 단위 컨텍스트만 분리 = advisor 권고안.
+
+## 범위 밖 (recurrence 가드, 후속 제안)
+- plugin.json ↔ pyproject 버전 동기 강제하는 verify_spec_docs 체크 추가(재드리프트 방지). ci.yml 에 `env:` 명시는 in-process `test_sim_runtime` 와 충돌해 미채택(conftest 가 정확한 seam).
+
+---
+
 # /plan 스토리보드 품질 강화 (preview = 번호 매긴 화면-흐름 보드)
 
 목적: `/autobot:plan` 의 preview(`designs/preview/index.html`)를 *순서 없는 그리드 + 텍스트 덤프* 에서 *번호 매긴 화면-흐름 스토리보드* 로. 근본 진단: 빌더가 architect 가 이미 emit 하는 구조화 산출물(architecture.json / feature-spec.json / design-spec.md 의 Screen Designs·states 섹션)을 안 읽고 architecture.md 산문을 regex 로 긁음.

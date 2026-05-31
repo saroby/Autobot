@@ -328,7 +328,7 @@ Autobot은 위험도 기준으로 동작합니다:
 테스트는 stdlib `unittest`만 사용하므로 추가 의존성 설치 없이 실행할 수 있습니다.
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_*.py'   # 185 tests
+python3 -m unittest discover -s tests -p 'test_*.py'   # stdlib only, no pytest
 python3 scripts/verify_spec_docs.py                     # spec ↔ docs 드리프트 검증
 ```
 

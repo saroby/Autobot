@@ -6,6 +6,7 @@ All check signatures: ``(project_dir: Path, app: str, state: dict) -> list[dict]
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -40,15 +41,28 @@ def check_environment_ready(proj: Path, app: str, state: dict) -> list[dict]:
         _file_exists(proj / ".autobot" / "build-state.json", "build_state_file"),
     ]
 
-    # Xcode CLI Tools
-    ok, out = _run_cmd(["xcode-select", "-p"])
-    results.append(_ok("xcode_cli_tools", ok, out if ok else "Xcode CLI Tools not installed"))
+    # Xcode CLI Tools — honor AUTOBOT_DISABLE_XCODEBUILD (CI / no-Xcode envs),
+    # consistent with xcodebuild_runner.py. Degraded skip, not a hard fail.
+    if os.environ.get("AUTOBOT_DISABLE_XCODEBUILD") == "1":
+        results.append(_ok("xcode_cli_tools", False,
+                           "skipped (AUTOBOT_DISABLE_XCODEBUILD=1) — DEGRADED",
+                           skipped=True, degraded=True))
+    else:
+        ok, out = _run_cmd(["xcode-select", "-p"])
+        results.append(_ok("xcode_cli_tools", ok, out if ok else "Xcode CLI Tools not installed"))
 
-    # iOS Simulator runtime
-    ok, out = _run_cmd(["xcrun", "simctl", "list", "runtimes"])
-    has_ios = ok and "iOS" in out
-    results.append(_ok("ios_simulator_runtime", has_ios,
-                       "iOS runtime found" if has_ios else "No iOS Simulator runtime"))
+    # iOS Simulator runtime — honor AUTOBOT_DISABLE_SIMULATOR (CI / no-Xcode envs),
+    # consistent with sim_runtime.py. Degraded skip so the gate still advances;
+    # production (flag unset) keeps the live fail-fast probe.
+    if os.environ.get("AUTOBOT_DISABLE_SIMULATOR") == "1":
+        results.append(_ok("ios_simulator_runtime", False,
+                           "skipped (AUTOBOT_DISABLE_SIMULATOR=1) — DEGRADED",
+                           skipped=True, degraded=True))
+    else:
+        ok, out = _run_cmd(["xcrun", "simctl", "list", "runtimes"])
+        has_ios = ok and "iOS" in out
+        results.append(_ok("ios_simulator_runtime", has_ios,
+                           "iOS runtime found" if has_ios else "No iOS Simulator runtime"))
 
     # python3
     ok, out = _run_cmd(["python3", "--version"])

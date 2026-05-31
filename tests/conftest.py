@@ -36,6 +36,13 @@ def _scoped_env(project_dir: Path, extra: dict | None = None) -> dict:
     """
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(project_dir)
+    # Unit tests must not require Xcode/iOS simulator. Gate 0 (environment_ready)
+    # and the Phase 5 build/runtime paths honor these to degrade-skip hardware
+    # probes (gate_checks/setup.py, sim_runtime.py, xcodebuild_runner.py). Keeps
+    # the suite hermetic across mac/Linux and green on no-Xcode CI (ubuntu-latest).
+    # A test that needs the live probe can override via `extra`.
+    env["AUTOBOT_DISABLE_SIMULATOR"] = "1"
+    env["AUTOBOT_DISABLE_XCODEBUILD"] = "1"
     env.pop("AUTOBOT_ACTIVE_AGENT", None)
     env.pop("AUTOBOT_APP_NAME", None)
     if extra:
