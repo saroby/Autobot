@@ -7,9 +7,16 @@ PROJECT_DIR="${CLAUDE_PLUGIN_ROOT:-.}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 
 # ── Step 1: .env 파일 탐색 ──
+# 우선순위: 프로젝트 → 전역 ~/.autobot/.env (config.json 옆, /autobot:setup 이 기록)
+# → legacy ~/.config/autobot/.env. deploy 스크립트의 source 순서(전역→프로젝트)와
+# 방향이 반대인 건 의도적: 여기선 "어디든 creds 가 있나"를 보이는 게 목적이라 가장
+# 구체적인(프로젝트) 것부터 본다.
 ENV_FILE=""
+AUTOBOT_GLOBAL_ENV="${AUTOBOT_CONFIG_DIR:-$HOME/.autobot}/.env"
 if [ -f "${PROJECT_DIR}/.env" ]; then
   ENV_FILE="${PROJECT_DIR}/.env"
+elif [ -f "$AUTOBOT_GLOBAL_ENV" ]; then
+  ENV_FILE="$AUTOBOT_GLOBAL_ENV"
 elif [ -f "${HOME}/.config/autobot/.env" ]; then
   ENV_FILE="${HOME}/.config/autobot/.env"
 fi

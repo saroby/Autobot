@@ -1,3 +1,35 @@
+# 전역 ASC 자격증명 — set-once (deploy 가 전역 `.env` 를 읽도록)
+
+목적: `/autobot:setup` 한 번으로 ASC creds 를 전역에 넣으면 모든 프로젝트의 deploy(register/upload/invite)가 그걸 읽는다. 현재는 매 프로젝트 `.env` 에 다시 넣어야 함(set-once 마찰). 보안 경계(autobot-setup/SKILL.md:17 — 시크릿은 .env, 식별자는 config.json, 절대 합치지 않음)는 유지: `.env` 를 **프로젝트-로컬→전역**으로 올릴 뿐 config.json 에 시크릿을 넣지 않는다.
+
+## 검증된 현재 상태
+- ASC creds(`ASC_API_KEY_ID/ISSUER_ID/KEY_PATH`)는 **register-app.sh / upload.sh / invite.sh 3개 모두** env 에서 읽음. testflight.md:54 Step 0c 가 env 변수만 검사("set in .env").
+- **어떤 `.env` 도 source 하지 않음** — 사용자가 직접 export 가정.
+- Team ID 는 이미 config fallback(`register-app.sh:160-164` `--team-id > $DEVELOPMENT_TEAM > config.json:developmentTeam`), testerEmails 도 config 사용 → deploy 가 config 를 통째 무시하진 않음. **ASC creds 만 전역화 안 됨.**
+- 전역 dir: `~/.autobot/`(`$AUTOBOT_CONFIG_DIR` override, dir 700/file 600, config.sh 소유). 기존 전역 `.env` 관례는 `~/.config/autobot/.env`(load-learnings.sh:13) — **디렉토리 불일치**.
+- load-learnings `env_has_key` 는 `^[[:space:]]*KEY=` 매칭 → `export KEY=` 는 탐지 못 함. → 전역 `.env` 는 **`KEY='value'`(export 없이)** 로 써야 `set -a` source + load-learnings 탐지 둘 다 만족.
+
+## 설계 (A 정제판 — 경계 유지)
+- 표준 전역 `.env` = **`~/.autobot/.env`**(config.json 옆, 700 dir). `~/.config/autobot/.env` 는 legacy 로 계속 탐지.
+- `/autobot:setup` 이 ASC creds 를 물어 `~/.autobot/.env` 에 기록(chmod 600). config.json 은 식별자만.
+- deploy 스크립트가 `${AUTOBOT_CONFIG_DIR:-$HOME/.autobot}/.env` → 프로젝트 `.env` 순으로 self-source(에이전트 컨텍스트 무관). 프로젝트가 전역 override.
+
+## 작업 (슬라이스) — 결과
+- [x] S1 config.sh: `env-path`/`set-env`/`get-env`. `KEY='value'`(single-quote escape) upsert + dir 700/file 600. round-trip·escape·upsert·600·grep 호환 모두 검증.
+- [x] S2 setup.md §3.7 (ASC creds → `config.sh set-env`, 시크릿이라 config.json 아님) + §4 set-env 기록 + SKILL.md Storage 재작성(두 파일 역할·경계·set-once·`AUTOBOT_ENV_FILE`).
+- [x] S3 register-app.sh / upload.sh / invite.sh: **don't-clobber 루프**(단순 `set -a` 폐기). precedence **inherited env > project ./.env > 전역 ~/.autobot/.env**. testflight Step 0c / app-review: 전역→프로젝트 source + 안내 갱신.
+  - 정정 1: 단순 `set -a; source` 는 files-win 이라 전역 `.env` 가 test 의 env-주입 creds 를 덮어 비-hermetic → don't-clobber(env 이김)로 교체.
+  - 정정 2: `_k="${_line%%=*}"` 는 `export KEY=`(signing-guide 권장)를 skip → leading-ws + `export ` prefix strip 추가.
+- [x] S4 load-learnings.sh: ENV_FILE 탐색 = 프로젝트 → ~/.autobot/.env → legacy ~/.config/autobot/.env.
+- [x] S5 `tests/test_global_env_secrets.py` 13종(config.sh 10 + deploy precedence/export-form). 전체 슈트 414 OK + CHANGELOG + verify_spec_docs/render PASS.
+
+## 보안 (결과)
+- 시크릿은 `~/.autobot/.env`(700/600)만, `.p8` 는 디스크에 그대로(경로만 기록). config.json 엔 시크릿 0 (경계 유지).
+- deploy 스크립트가 self-source(에이전트 컨텍스트 무관). 명시적 export 가 항상 이김(precedence) → 테스트 hermetic + 사용자 의도 존중.
+- 깨진 .env 라인은 `eval` 실패 → `set -e` loud fail (사용자 자기 파일, silent 보다 나음).
+
+---
+
 # Autobot 구조 개선 — 검수 보고서 기반 작업
 
 목적: 검수 리포트에서 식별된 P0~P2 결함 전부 수정. 더이상 수정이 불필요한 상태로 만들기.

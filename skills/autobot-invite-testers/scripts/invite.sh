@@ -19,6 +19,24 @@
 #   5  one or more invitations failed (partial)
 set -euo pipefail
 
+# ── Load ASC secrets from .env WITHOUT clobbering already-set vars ──
+# Precedence: inherited env > project ./.env > global ~/.autobot/.env. Secrets
+# live in .env only (never config.json); /autobot:setup writes the global one so
+# one setup serves every project. Lines are KEY='value' (config.sh set-env), so
+# eval honours their quoting. An explicitly-exported var always wins.
+for _ef in ".env" "${AUTOBOT_CONFIG_DIR:-$HOME/.autobot}/.env"; do
+  [ -f "$_ef" ] || continue
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    _line="${_line#"${_line%%[![:space:]]*}"}"   # strip leading whitespace
+    case "$_line" in ''|\#*) continue;; esac
+    _line="${_line#export }"                      # tolerate `export KEY=val`
+    _k="${_line%%=*}"
+    case "$_k" in *[!A-Za-z0-9_]*|'') continue;; esac
+    [ -n "${!_k:-}" ] && continue
+    eval "export ${_line}"
+  done < "$_ef"
+done
+
 log_info()  { printf 'INFO: %s\n'  "$*"; }
 log_ok()    { printf 'OK: %s\n'    "$*"; }
 log_warn()  { printf 'WARN: %s\n'  "$*" >&2; }

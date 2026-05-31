@@ -50,11 +50,19 @@ if [ "$PHASE_5_STATUS" != "completed" ]; then
   exit 1
 fi
 
-# 0c. ASC 자격증명
-if [ -z "$ASC_API_KEY_ID" ] || [ -z "$ASC_API_ISSUER_ID" ] || [ -z "$ASC_API_KEY_PATH" ]; then
-  echo "ERROR: ASC API credentials not set in .env"
+# 0c. ASC 자격증명 — 전역(`~/.autobot/.env`, /autobot:setup 이 기록) → 프로젝트 .env 순으로 로드.
+#     deployer 가 도는 register/upload/invite 스크립트도 같은 순서로 self-source 하므로,
+#     이 사전 검사는 그들이 보게 될 값을 그대로 반영한다.
+AUTOBOT_ENV_DIR="${AUTOBOT_CONFIG_DIR:-$HOME/.autobot}"
+set -a
+[ -f "$AUTOBOT_ENV_DIR/.env" ] && . "$AUTOBOT_ENV_DIR/.env"
+[ -f .env ] && . .env
+set +a
+if [ -z "${ASC_API_KEY_ID:-}" ] || [ -z "${ASC_API_ISSUER_ID:-}" ] || [ -z "${ASC_API_KEY_PATH:-}" ]; then
+  echo "ERROR: ASC API credentials not found."
   echo "Required: ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH"
-  echo "See: skills/autobot-upload-build/references/signing-guide.md"
+  echo "Set them once for all projects: /autobot:setup  (writes ~/.autobot/.env)"
+  echo "Or per-project: create ./.env. See skills/autobot-upload-build/references/signing-guide.md"
   exit 1
 fi
 
@@ -208,7 +216,7 @@ com.axi.MyApp 은 다른 Apple Developer team 이 선점했습니다.
 ## Error Handling
 
 - **Phase 5 미완료**: Step 0b 에서 차단. 사용자에게 `/autobot:resume` 안내.
-- **ASC 자격증명 누락**: Step 0c 에서 차단. `.env` 설정 안내.
+- **ASC 자격증명 누락**: Step 0c 에서 차단. `/autobot:setup` (전역 `~/.autobot/.env`) 또는 프로젝트 `.env` 설정 안내. deployer 스크립트가 전역→프로젝트 순으로 self-source 하므로 한 번만 setup 하면 모든 프로젝트가 읽는다.
 - **앱 미등록**: deployer 의 Step 1 (register) 이 자동 등록 시도. 충돌 시 archive 시작 전 즉시 중단 + 사용자 안내.
 - **archive 실패**: signing/provisioning 진단. `xcodebuild` 로그 첨부.
 - **upload 5xx**: archive 보존됨. 같은 archive 로 재호출하면 immediate retry (export 안 다시 함).

@@ -9,12 +9,18 @@ Autobot 빌드는 사용자별로 일정한 메타데이터 — bundle ID prefix
 
 ## Storage
 
-- **위치**: `~/.autobot/config.json` (사용자 홈, 권한 600)
-- **디렉토리 권한**: 700
+두 파일을 같은 디렉토리(`~/.autobot/`, 권한 700)에 둔다 — 역할이 다르므로 절대 합치지 않는다:
+
+- **`~/.autobot/config.json`** (권한 600): **공개 가능한 식별자/기본값** — bundleIdPrefix, developmentTeam, companyName, deploymentTarget, testerEmails, gitRemotePrefix.
+- **`~/.autobot/.env`** (권한 600): **시크릿** — ASC API Key(`ASC_API_KEY_ID` / `ASC_API_ISSUER_ID` / `ASC_API_KEY_PATH`), Apple ID 비밀번호 등. `config.sh set-env`/`get-env`/`env-path` 로 관리. `KEY='value'` 형식(no `export`)이라 `set -a` source + `^KEY=` 탐지 둘 다 호환. `.p8` 파일 자체는 디스크에 두고 **경로만** 기록.
+
 - **환경변수 오버라이드**:
-  - `AUTOBOT_CONFIG_DIR` — 디렉토리 변경 (테스트/샌드박스용)
-  - `AUTOBOT_CONFIG_FILE` — 파일 경로 직접 지정
-- **`.env`와의 관계**: `.env`는 **시크릿(ASC API Key, Apple ID 비밀번호 등)** 전용. `config.json`은 **공개 가능한 식별자/기본값** 전용. 두 파일은 절대 합치지 않는다.
+  - `AUTOBOT_CONFIG_DIR` — 디렉토리 변경 (config.json + .env 둘 다 따라감; 테스트/샌드박스용)
+  - `AUTOBOT_CONFIG_FILE` — config.json 경로 직접 지정
+  - `AUTOBOT_ENV_FILE` — .env 경로 직접 지정
+
+- **시크릿 경계 (불변)**: 시크릿은 **`.env` 에만**, 식별자는 **`config.json` 에만**. 두 파일을 합치지 않는다. `config.json` 에 시크릿(API Key id/issuer 등)을 넣지 않는다 — `config.json` 의 "공유 가능" 전제가 깨지기 때문.
+- **set-once / 전역 우선**: `/autobot:setup` 이 `~/.autobot/.env` 를 한 번 채우면, 모든 프로젝트의 deploy(register/upload/invite, `/autobot:testflight`, `/autobot:app-review`)가 **전역 `.env` → 프로젝트 `.env`** 순으로 source 해 읽는다(프로젝트가 override). 매 프로젝트 `.env` 를 다시 만들 필요가 없다.
 
 ## Schema (v1)
 

@@ -43,9 +43,15 @@ if [ "$P5" != "completed" ]; then
   exit 1
 fi
 
+# ASC 자격증명: 전역(`~/.autobot/.env`, /autobot:setup 이 기록) → 프로젝트 .env 순 로드.
+AUTOBOT_ENV_DIR="${AUTOBOT_CONFIG_DIR:-$HOME/.autobot}"
+set -a
+[ -f "$AUTOBOT_ENV_DIR/.env" ] && . "$AUTOBOT_ENV_DIR/.env"
+[ -f .env ] && . .env
+set +a
 for v in ASC_API_KEY_ID ASC_API_ISSUER_ID ASC_API_KEY_PATH; do
   if [ -z "${!v:-}" ]; then
-    echo "ERROR: $v missing in .env"
+    echo "ERROR: $v missing. Set once via /autobot:setup (~/.autobot/.env) or per-project ./.env"
     echo "See: skills/autobot-upload-build/references/signing-guide.md"
     exit 1
   fi

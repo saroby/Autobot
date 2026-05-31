@@ -86,6 +86,16 @@ fi
 - 질문: "git remote URL prefix 를 입력하세요 (예: `github.com/saroby`). 건너뛰려면 'Skip'."
 - 검증: 공백 없는 문자열
 
+### 3.7 App Store Connect API 자격증명 (선택, TestFlight 업로드·심사 제출 시 필수)
+
+ASC API Key 3종은 **시크릿**이라 `config.json` 이 아니라 전역 `.env`(`~/.autobot/.env`, 권한 600)에 기록한다 — `config.json` 은 공유 가능한 식별자 전용이라는 경계를 지킨다. 한 번 넣으면 **모든 프로젝트의 deploy(register/upload/invite)가 읽는다** (매 프로젝트 `.env` 불필요). Key 는 App Store Connect → Users and Access → Integrations → App Store Connect API 에서 생성(역할 ≥ App Manager).
+
+- 질문: "App Store Connect API Key 를 입력하시겠습니까? TestFlight 업로드·심사 제출에 필요합니다. 로컬 시뮬레이터 빌드만 한다면 'Skip'."
+  - **Key ID** — 10자 영숫자 대문자 (예: `ABC123XYZ0`)
+  - **Issuer ID** — UUID (예: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`)
+  - **`.p8` 경로** — 다운로드한 AuthKey 파일 경로 (예: `~/.appstoreconnect/private_keys/AuthKey_ABC123XYZ0.p8`). 파일 자체는 그 자리에 두고 **경로만** 기록한다.
+- 검증: Key ID `^[A-Z0-9]{10}$` 권장, Issuer ID UUID 형태, `.p8` 경로는 `~` 확장 후 `[ -r ]` 로 읽기 가능 확인. 셋 중 하나라도 비면 전체 Skip(부분 자격증명은 무의미).
+
 ## 4. 기록
 
 수집한 값을 환경변수로 export 후 `config.sh init --force` 호출:
@@ -99,6 +109,15 @@ export AUTOBOT_SETUP_DEPLOYMENT_TARGET="<입력값 or 26.0>"
 [ -n "<git>" ] && export AUTOBOT_SETUP_GIT_REMOTE="<입력값>"
 
 bash "$CONFIG_SH" init --force
+```
+
+§3.7 의 ASC 자격증명은 **시크릿이라 config.json 이 아니라 전역 `.env`** 에 기록한다 (3종 모두 입력됐을 때만):
+
+```bash
+# config.sh set-env 가 ~/.autobot/.env 에 KEY='value' 로 upsert (권한 600).
+bash "$CONFIG_SH" set-env ASC_API_KEY_ID    "<key id>"
+bash "$CONFIG_SH" set-env ASC_API_ISSUER_ID "<issuer id>"
+bash "$CONFIG_SH" set-env ASC_API_KEY_PATH  "<.p8 경로>"
 ```
 
 `--force` 는 기존 파일을 덮어쓰기 위함. `--reset` 분기가 아니더라도 부분 변경 시 사용한다 (현재값이 모두 환경변수로 export 되므로 손실 없음).

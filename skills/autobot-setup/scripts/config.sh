@@ -13,6 +13,9 @@
 #   validate [--require k1,k2]  # Check required keys exist and are non-empty
 #   show                        # Pretty-print config
 #   bundle-id <AppName>         # Compose <prefix>.<lowercase AppName>
+#   env-path                    # Print global secrets .env path (~/.autobot/.env)
+#   set-env <KEY> <VALUE>       # Upsert KEY='value' into the global .env (chmod 600)
+#   get-env <KEY>               # Print value of KEY from the global .env, exit 1 if missing
 #
 # Keys (schema v1):
 #   bundleIdPrefix      string  e.g. "com.axi"
@@ -21,10 +24,18 @@
 #   deploymentTarget    string  e.g. "26.0"
 #   testerEmails        array<string>
 #   gitRemotePrefix     string  e.g. "github.com/saroby"
+#
+# Secrets boundary: config.json holds shareable identifiers ONLY. Secrets
+# (ASC API Key id/issuer/.p8 path, Apple ID password) live in the global
+# .env at ~/.autobot/.env (set-env / get-env) — never in config.json. Deploy
+# scripts source that .env (then a project-local .env override) so a single
+# /autobot:setup makes credentials available to every project. See
+# autobot-setup/SKILL.md.
 set -euo pipefail
 
 CONFIG_DIR="${AUTOBOT_CONFIG_DIR:-$HOME/.autobot}"
 CONFIG_FILE="${AUTOBOT_CONFIG_FILE:-$CONFIG_DIR/config.json}"
+ENV_FILE="${AUTOBOT_ENV_FILE:-$CONFIG_DIR/.env}"
 SCHEMA_VERSION=1
 
 REQUIRED_KEYS_DEFAULT="bundleIdPrefix,deploymentTarget"
@@ -188,6 +199,67 @@ cmd_bundle_id() {
   echo "${prefix}.${lower}"
 }
 
+# ── Global secrets .env (set-once via /autobot:setup) ──
+# Stored as `KEY='value'` (no `export`) so it is both sourced with `set -a`
+# (auto-export) and matched by load-learnings.sh's `^KEY=` detection.
+
+_valid_env_key() {
+  printf '%s' "$1" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'
+}
+
+py_set_env() {
+  local key="$1" value="$2"
+  ensure_python3
+  ensure_config_dir
+  AUTOBOT_ENV_KEY="$key" AUTOBOT_ENV_VALUE="$value" python3 - "$ENV_FILE" <<'PY'
+import os, sys
+path = sys.argv[1]
+key = os.environ["AUTOBOT_ENV_KEY"]
+value = os.environ["AUTOBOT_ENV_VALUE"]
+# bash single-quote escaping: ' -> '\'' so the line survives `set -a; . file`.
+esc = value.replace("'", "'\\''")
+line = f"{key}='{esc}'"
+try:
+    with open(path) as f:
+        lines = f.read().splitlines()
+except FileNotFoundError:
+    lines = []
+out, replaced = [], False
+for ln in lines:
+    if (not replaced) and ln.lstrip().startswith(key + "="):
+        out.append(line)
+        replaced = True
+    else:
+        out.append(ln)
+if not replaced:
+    out.append(line)
+with open(path, "w") as f:
+    f.write("\n".join(out) + ("\n" if out else ""))
+PY
+  chmod 600 "$ENV_FILE" 2>/dev/null || true
+}
+
+cmd_env_path() {
+  echo "$ENV_FILE"
+}
+
+cmd_set_env() {
+  [[ $# -ge 2 ]] || die "usage: config.sh set-env <KEY> <VALUE>"
+  _valid_env_key "$1" || die "invalid env key '$1' (must match [A-Za-z_][A-Za-z0-9_]*)"
+  py_set_env "$1" "$2"
+}
+
+cmd_get_env() {
+  [[ $# -ge 1 ]] || die "usage: config.sh get-env <KEY>"
+  _valid_env_key "$1" || die "invalid env key '$1'"
+  [[ -f "$ENV_FILE" ]] || exit 1
+  # Source in a subshell and indirect-expand — reads exactly what consumers see.
+  local val
+  val="$(set -a; . "$ENV_FILE" 2>/dev/null; set +a; printf '%s' "${!1:-}")"
+  [[ -n "$val" ]] || exit 1
+  printf '%s\n' "$val"
+}
+
 cmd_init() {
   # Non-interactive init from AUTOBOT_SETUP_* env vars.
   # Required: AUTOBOT_SETUP_BUNDLE_PREFIX
@@ -235,7 +307,7 @@ print(json.dumps(items))
 
 main() {
   local cmd="${1:-}"
-  [[ -n "$cmd" ]] || die "usage: config.sh <path|exists|init|get|get-or|set|set-json|validate|show|bundle-id>"
+  [[ -n "$cmd" ]] || die "usage: config.sh <path|exists|init|get|get-or|set|set-json|validate|show|bundle-id|env-path|set-env|get-env>"
   shift
   case "$cmd" in
     path)       cmd_path "$@" ;;
@@ -248,6 +320,9 @@ main() {
     validate)   cmd_validate "$@" ;;
     show)       cmd_show "$@" ;;
     bundle-id)  cmd_bundle_id "$@" ;;
+    env-path)   cmd_env_path "$@" ;;
+    set-env)    cmd_set_env "$@" ;;
+    get-env)    cmd_get_env "$@" ;;
     *)          die "unknown command: $cmd" ;;
   esac
 }
