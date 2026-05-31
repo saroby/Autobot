@@ -15,7 +15,9 @@
 
 ## 검증 결과
 - **무-Xcode 시뮬레이션(xcrun·xcodebuild·simctl 가림) 전체 슈트 443 OK** (수정 전이면 ~51 실패). 맥 정상 443 OK. verify_spec_docs + render PASS.
+- **실제 CI 초록 관측** (시뮬레이션 아님): push 후 run `26719020928` (커밋 0993713) — `unit-and-drift in 25s`, `Unit regression (stdlib unittest)` ✓, EXIT=0. 직전 5/5 빨강이던 워크플로가 초록으로 전환됨.
 - 설계 판단: 프로덕션 Gate 0 의 live 시뮬레이터 검사를 약화하지 않음(약화하면 실유저가 무-시뮬레이터에서 Phase 5 까지 갔다 더 비싸게 실패). 단위 컨텍스트만 분리 = advisor 권고안.
+- 비차단 관측: CI 에 Node.js 20 actions deprecation 경고(checkout@v4 / setup-python@v5, 2026-06-16 강제 전환 예정) — 이번 범위 밖, 후속.
 
 ## 범위 밖 (recurrence 가드, 후속 제안)
 - plugin.json ↔ pyproject 버전 동기 강제하는 verify_spec_docs 체크 추가(재드리프트 방지). ci.yml 에 `env:` 명시는 in-process `test_sim_runtime` 와 충돌해 미채택(conftest 가 정확한 seam).

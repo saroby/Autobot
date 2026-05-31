@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **CI GitHub Actions Node 20 → Node 24** — `actions/checkout@v4`→`@v6`, `actions/setup-python@v5`→`@v6`, `actions/upload-artifact@v4`→`@v5`(node24 범프, 기능 비파괴). 3개 워크플로(ci/e2e-verify/smoke-e2e) 전부. 2026-06-16 GitHub 의 Node 20 강제 종료 전 선제 대응. (직전 0.10.0 CI 런의 deprecation 경고 해소.)
+
 ## [0.10.0] — 2026-06-01
 
 ### Changed — `/plan` 스토리보드 품질: preview 가 *순서 없는 그리드 + 텍스트 덤프* → *번호 매긴 화면-흐름 보드*
