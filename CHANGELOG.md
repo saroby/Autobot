@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-31
+
 ### Added
 - **전역 ASC 자격증명 — set-once via `/autobot:setup`.** ASC API Key 3종(`ASC_API_KEY_ID`/`ISSUER_ID`/`KEY_PATH`)을 매 프로젝트 `.env` 에 다시 넣어야 했던 마찰 제거. 이제 `/autobot:setup` 이 전역 `~/.autobot/.env`(권한 600)에 한 번 기록하면 모든 프로젝트의 deploy(register/upload/invite, `/autobot:testflight`, `/autobot:app-review`)가 읽는다. 시크릿 경계(autobot-setup/SKILL.md — 시크릿은 `.env`, 식별자는 `config.json`, 절대 합치지 않음)는 유지: `.env` 를 프로젝트-로컬에서 전역으로 올릴 뿐 `config.json` 에 시크릿을 넣지 않는다(key_id/issuer_id 는 "공유 가능" framing 을 깨므로 config 에 부적합).
   - `skills/autobot-setup/scripts/config.sh` — `env-path` / `set-env <KEY> <VALUE>` / `get-env <KEY>`. 전역 `.env` 쓰기의 SSOT. `KEY='value'`(no `export`, single-quote 이스케이프) upsert + chmod 600. 이 포맷이라 `set -a` source 와 load-learnings 의 `^KEY=` 탐지 둘 다 호환.
