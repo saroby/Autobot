@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Changed — `/plan` 스토리보드 품질: preview 가 *순서 없는 그리드 + 텍스트 덤프* → *번호 매긴 화면-흐름 보드*
+근본 진단: `build_preview.py` 가 architect 가 이미 emit 하는 구조화 산출물(`architecture.json`, design-spec.md 의 `## Screen Designs`·상태 섹션)을 **하나도 안 읽고** architecture.md 산문을 regex 로 긁어 흐름을 재구성했다. 그 결과 화면이 순서 없이 나열되고, nav 는 `<pre>` 텍스트 덤프였으며, critique 가 판정해야 할 하단 safe-area 를 preview 자신이 잘라 숨겼다.
+
+- **화면 PNG crop 제거** (`scripts/build_preview.py`): `.iphone-png` 가 `object-fit: cover` + `object-position: top` → `contain` + letterbox. 하단 home-indicator/탭바 safe-area(critique 계약이 HIGH 로 판정하라고 *명시한* 바로 그 영역)가 더 이상 잘리지 않는다.
+- **번호 매긴 화면-흐름 스토리보드**: `architecture.json` 의 `rootScreens`/`featureModules` + Screens 표 `Tab` 열로 화면을 진입→탭그룹 순서로 정렬, **1..N 번호**(①②③) 부여, lane 별 flow 다이어그램 렌더. 원본 Navigation Structure 는 `<details>` 로 보존. 화면 목록·flow 노드·갤러리 카드가 같은 번호를 공유.
+- **상태 & 인터랙션 표면화**: design-spec.md 의 `## Empty, Loading, Error States` + `## Interaction Feel` 를 preview 에 노출(기존엔 색·타이포 토큰만 추출, 가장 풍부한 UX 콘텐츠가 안 보였음).
+- **권위 있는 화면↔PNG 매칭**: design-spec.md `## Screen Designs` 표(`Screen | Design File`)를 1순위로 사용하고 stem 휴리스틱은 fallback. Stitch 가 화면명과 다른 파일명을 써도 안 깨진다. PNG 없는 화면은 placeholder 카드로 표시(번호 정합 + 미생성 화면 가시화).
+- **critique 화면 딥링크** (`skills/autobot-plan-preview/SKILL.md`): critique 항목 계약에 `화면: N` 필드 추가 → `→ 화면 N` 칩으로 렌더되어 해당 갤러리 카드(`#screen-N`)로 점프(`:target` 하이라이트). 앱 전반 항목은 `—`. 산문 critique 를 화면별 액션으로 전환 — 사용자가 "어느 화면의 어디"를 눈대중하지 않는다.
+- `tests/test_build_preview.py` — crop·정렬·번호·flow·상태·권위매핑·딥링크 앵커·마커 보존·graceful fallback·FATAL 14종. (의도적 범위 밖: Stitch 자동 재생성 루프 — Phase 2.5 read-only non-goal + Stitch 신뢰성, 재생성은 기존 `/autobot:resume 2 --force` 사용자 경로 유지. vision-judge pre-code — 빌드된 앱 대상 Phase 5 게이트라 Phase 2.5 엔 부적용.)
+
 ## [0.9.0] — 2026-05-31
 
 ### Added — 품질 스파인: 레이아웃/충실도 요구를 *캡처·차단·반복*한다

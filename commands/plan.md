@@ -24,7 +24,7 @@ allowed-tools:
 > Phase 정의·상태 전이·Gate·Retry 의 SSOT 는 **`spec/pipeline.json`**, 실행 절차는 **`autobot-orchestrator` 스킬**과 **`autobot-plan-preview` 스킬**이 소유한다.
 
 - **입력** — 앱 아이디어 한 줄
-- **결과물** — `.autobot/designs/preview/index.html` (모바일 프레임 갤러리 + 기획 요약 + nav flow + 토큰 swatch + 아이콘 + **LLM critique**) + 브라우저 자동 표면화
+- **결과물** — `.autobot/designs/preview/index.html` (기획 요약 + **번호 매긴 화면-흐름 스토리보드** + 화면 갤러리 + 상태/인터랙션 + 토큰 swatch + 아이콘 + **LLM critique — 화면별 딥링크**) + 브라우저 자동 표면화
 
 `/autobot:plan <아이디어>` 는 **Phase 0 → 1 → 2 → 2.5** 까지만 실행하고 정지한다. Phase 3 이후 (코드 생성, 통합 빌드, TestFlight) 는 사용자가 검토 후 `/autobot:resume` 또는 `/autobot:mvp` 로 명시 트리거.
 

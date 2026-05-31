@@ -1,3 +1,38 @@
+# /plan 스토리보드 품질 강화 (preview = 번호 매긴 화면-흐름 보드)
+
+목적: `/autobot:plan` 의 preview(`designs/preview/index.html`)를 *순서 없는 그리드 + 텍스트 덤프* 에서 *번호 매긴 화면-흐름 스토리보드* 로. 근본 진단: 빌더가 architect 가 이미 emit 하는 구조화 산출물(architecture.json / feature-spec.json / design-spec.md 의 Screen Designs·states 섹션)을 안 읽고 architecture.md 산문을 regex 로 긁음.
+
+## 핵심 결정 (Working Notes)
+- **화면 번호 1개 메커니즘이 A1(순서)+C2(critique 앵커) 동시 해결.** 정렬된 화면에 ①②③ → 갤러리 카드 `id="screen-N"` → critique 가 `→ 화면 N` 점프 링크.
+- preview/index.html **다운스트림 결합 없음** — Gate 2.5→3 은 파일 *존재*만 검사(`spec/pipeline.json:1098`). HTML 내부 자유 재구성 가능. `<!-- CRITIQUE_PLACEHOLDER -->` 마커만 보존(skill Step 3 Edit 의존).
+- 정렬 = rootScreens(진입) 먼저 → Tab 그룹(featureModules 순 → 첫등장 순) → 무탭 순. 탭 내부는 원본 Screens 표 순서.
+
+## 작업 — 결과
+- [x] **B** crop 제거 — `.iphone-png object-fit: cover/top` → `contain` + letterbox(`--shot-letterbox`). 하단 safe-area 안 잘림.
+- [x] **A1** `_load_arch_json` + `_order_screens`(진입→탭그룹, featureModules 순) + `_flow_html`(lane 다이어그램). 원본 nav `<details>` 보존. 렌더 확인: 진입[1.Home]→Feed[2.Feed→3.Detail]→Settings[4.Settings].
+- [x] **A2** `_parse_states` + `_parse_interaction` + `_states_section_html`(둘 다 없으면 섹션 생략).
+- [x] **A3** `_parse_screen_design_map` 우선, `_build_cards` 가 stem 휴리스틱 fallback. PNG 없는 화면 = placeholder.
+- [x] **C2** SKILL.md `화면: N` 필드 + `→ 화면 N` 칩 계약 + 카드 `id="screen-N"` + `:target` 하이라이트 + `.critique-screen` 스타일.
+- [x] 회귀 테스트 `tests/test_build_preview.py` 14종.
+- [x] CHANGELOG [Unreleased] + plan.md 산문 갱신.
+
+## 검증 결과
+- test_build_preview 14/14 OK. 전체 슈트 **439 OK** (회귀 0).
+- verify_spec_docs 전체 PASS (Prose contract drift PASS), render_pipeline_docs --check OK.
+- fixture 렌더: 4화면 정렬·번호·flow·states(2)·crop-fix(`object-fit: contain`, `cover` 0건)·`screen-1..4` id 확인. FeedView 가 `scr_feed_v2.png`(휴리스틱 불가)로 매칭 = 권위 매핑 작동.
+
+## 범위 밖 (의도적 — 메인테이너 기존 설계 존중)
+- **C1 Stitch 자동 재생성 루프**: Phase 2.5 read-only non-goal + Stitch timeout·no-retry 신뢰성 위험. 재생성은 기존 `/autobot:resume 2 --force` 사용자 경로 유지. C2 가 화면별로 무엇을 다시 받을지 정밀 안내.
+- **C3 vision-judge pre-code**: vision-judge 는 *빌드된 앱* 대상 Phase 5 게이트(`gate_checks/build.py:95`). Phase 2.5 엔 앱 없음.
+
+## 성공 기준 (DoD) — 결과
+- [x] test_build_preview 14/14 green + 전체 슈트 439 OK (회귀 0).
+- [x] fixture 로 HTML 생성 시 순서·번호·flow·states·crop-fix·`screen-N` id 확인.
+- [x] `<!-- CRITIQUE_PLACEHOLDER -->` 마커 보존. architecture.json/design-spec 섹션 부재 시 graceful fallback 확인.
+- [x] **시각 검증 (advisor 지적 반영)**: 구조 문자열만이 아니라 실제 폰 비율(393×852) 목업으로 헤드리스 Chrome 스크린샷 → 하단 탭바/CTA(=cover+top 이 자르던 safe-area) 온전히 표시, ordinal 배지가 status bar 와 겹치지 않음, off-aspect letterbox 우아하게 degrade 확인.
+
+---
+
 # 전역 ASC 자격증명 — set-once (deploy 가 전역 `.env` 를 읽도록)
 
 목적: `/autobot:setup` 한 번으로 ASC creds 를 전역에 넣으면 모든 프로젝트의 deploy(register/upload/invite)가 그걸 읽는다. 현재는 매 프로젝트 `.env` 에 다시 넣어야 함(set-once 마찰). 보안 경계(autobot-setup/SKILL.md:17 — 시크릿은 .env, 식별자는 config.json, 절대 합치지 않음)는 유지: `.env` 를 **프로젝트-로컬→전역**으로 올릴 뿐 config.json 에 시크릿을 넣지 않는다.

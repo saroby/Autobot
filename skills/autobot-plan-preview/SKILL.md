@@ -23,7 +23,9 @@ Phase 2.5 스킬: Phase 1 (architect) 과 Phase 2 (ux-designer + app-icon) 의 �
 
 | 파일 | 내용 |
 |------|------|
-| `.autobot/designs/preview/index.html` | self-contained 1 페이지 HTML (외부 CDN 없음). 모바일 프레임 갤러리 + 기획 요약 + nav flow + 토큰 swatch + 아이콘 + **critique 패널** |
+| `.autobot/designs/preview/index.html` | self-contained 1 페이지 HTML (외부 CDN 없음). 기획 요약 + **번호 매긴 화면-흐름 스토리보드**(진입→탭그룹 순서, ①②③) + 화면 갤러리(각 카드 `id="screen-N"`) + 상태/인터랙션 + 토큰 swatch + 아이콘 + **critique 패널** |
+
+> 빌더(`build_preview.py`)가 화면을 스토리보드 순서로 정렬해 **1..N 번호**를 부여한다 (화면 목록·flow 노드·갤러리 카드가 같은 번호). critique 의 각 항목은 이 번호로 해당 화면 카드(`#screen-N`)에 딥링크된다.
 
 ## Execution
 
@@ -67,12 +69,14 @@ PNG 화면들과 design-spec.md 의 토큰을 보고 다음을 찾는다:
 
 ```
 <severity> <축> <제목>
+화면: <N 또는 —>
 영향: <왜 문제인가>
 개선: <구체 액션 1줄>
 ```
 
 - severity: `high` (코드 생성 진입 전 반드시 수정), `medium` (수정 권장), `low` (참고)
 - 축: `기획` 또는 `디자인`
+- **화면**: 그 항목이 가리키는 화면의 **스토리보드 번호** (preview 의 갤러리 카드·화면 목록·flow 노드에 ①②③ 로 표시된 그 숫자). 특정 화면 1개를 지목하는 디자인/HIG 항목은 그 번호를, 앱 전반에 걸친 기획 항목(예: 누락 기능, 화면 수 과다)은 `—` 를 쓴다. **이 번호로 critique 가 해당 화면 카드(`#screen-N`)에 딥링크된다** — 사용자가 "어느 화면의 어디"를 눈대중하지 않게 하는 핵심.
 - 총 항목 수: **3–8 개 범위**. 너무 많으면 사용자가 무시. 너무 적으면 게이트 가치 없음
 
 발견할 게 없으면 정직하게 비워두지 말고 `<positive>` 항목 1–2 개 (왜 좋은 결정인지) + medium/low 1–2 개 (개선 가능한 nuance) 를 적는다.
@@ -81,19 +85,28 @@ PNG 화면들과 design-spec.md 의 토큰을 보고 다음을 찾는다:
 
 `<!-- CRITIQUE_PLACEHOLDER -->` 와 그 직후 placeholder 문단을 critique HTML 로 교체한다.
 
-critique HTML 형식:
+critique HTML 형식 (특정 화면을 지목하면 `→ 화면 N` 딥링크 칩을 넣고, 앱 전반 항목이면 칩을 생략):
 
 ```html
 <ul class="critique-list">
   <li class="critique-item">
-    <span class="critique-badge severity-high">HIGH · 기획</span>
+    <span class="critique-badge severity-high">HIGH · 디자인</span>
     <strong>{제목}</strong>
+    <a class="critique-screen" href="#screen-{N}">→ 화면 {N}</a>
+    <p class="muted">영향: {영향}</p>
+    <p>개선: {개선}</p>
+  </li>
+  <li class="critique-item">
+    <span class="critique-badge severity-medium">MEDIUM · 기획</span>
+    <strong>{앱 전반 항목 제목}</strong>
     <p class="muted">영향: {영향}</p>
     <p>개선: {개선}</p>
   </li>
   ...
 </ul>
 ```
+
+`href="#screen-{N}"` 의 `N` 은 위 critique 항목의 `화면:` 번호와 동일해야 한다 (`.critique-screen` 클래스 스타일은 빌더가 이미 주입). `화면: —` 인 항목은 `<a class="critique-screen">` 줄을 넣지 않는다.
 
 배지 색 (스킬이 작성하는 HTML 안에 inline style 으로 포함, 외부 CSS 변경 금지):
 
