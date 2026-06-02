@@ -46,6 +46,13 @@ allowed-tools:
   **DEGRADED** 로 기록(출하 차단). hard fail 은 retryCount→circuit breaker 를 건드려
   자율 빌드를 멈추므로 쓰지 않는다.
 - 디자인이 Stitch fallback 이어도 최소 1 개의 실제 mockup PNG 를 요구(없으면 DEGRADED).
+- P0 logic acceptance 에 대응 named 테스트가 없으면 **DEGRADED**(기본 모드는 warning).
+- backend_required 앱의 Release.xcconfig 가 아직 `$(PRODUCTION_HOST)` placeholder/localhost
+  면 **DEGRADED**(배포된 서버 호스트 미설정 — AI/LLM 호출이 출하 후 실패).
+
+> 위 4개는 모두 *결정적* 검사(파일/grep)라 DEGRADED 로 올려도 거짓양성으로 circuit
+> breaker 를 태우지 않는다. 비결정적 판정(visual judge·critique)은 quality-max 에서도
+> DEGRADED 천장을 유지하고 차단 게이트로 올리지 않는다.
 
 플래그 해석은 진입점(이 문서)이 안내하고, 실제 `set-flag` 실행과 게이트 분기는
 orchestrator·spec·gate_checks 가 소유한다.

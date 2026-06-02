@@ -1257,6 +1257,11 @@
         },
         {
           "type": "procedural",
+          "name": "backend_deploy_readiness",
+          "label": "backend_deploy_readiness"
+        },
+        {
+          "type": "procedural",
           "name": "runtime_smoke",
           "label": "runtime_smoke"
         },

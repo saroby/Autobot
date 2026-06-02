@@ -22,6 +22,7 @@ from gate_checks.review import (  # noqa: E402
     check_peer_review_acceptable,
 )
 from gate_checks.design import check_design_assets_exist_or_fallback  # noqa: E402
+from gate_checks.build import check_backend_deploy_readiness  # noqa: E402
 
 APP = "App"
 PROJ = Path("/tmp")  # axiom/peer skip paths don't touch disk
@@ -110,6 +111,46 @@ class TestDesignFallbackQualityMax(unittest.TestCase):
         r = check_design_assets_exist_or_fallback(self.proj, APP, self._state(True))[0]
         self.assertTrue(r["passed"])
         self.assertFalse(r.get("degraded", False))  # has a real mockup → satisfied
+
+
+class TestBackendDeployReadinessQualityMax(unittest.TestCase):
+    """backend_required app's Release.xcconfig must point at a deployed host in
+    quality-max (else the shipped app's auth/AI calls fail). Default mode is
+    benign; quality-max → DEGRADED. Skips entirely when no backend needed."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.proj = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _xcconfig(self, value: str):
+        (self.proj / "Release.xcconfig").write_text(f"API_BASE_URL = {value}\n")
+
+    def test_no_backend_skips(self):
+        r = check_backend_deploy_readiness(self.proj, APP, {"backend_required": False})[0]
+        self.assertTrue(r["passed"])
+        self.assertTrue(r["skipped"])
+        self.assertFalse(r.get("degraded", False))
+
+    def test_placeholder_default_is_benign(self):
+        self._xcconfig("https://$(PRODUCTION_HOST)")
+        r = check_backend_deploy_readiness(self.proj, APP, {"backend_required": True})[0]
+        self.assertTrue(r["passed"])
+        self.assertFalse(r.get("degraded", False))  # default: localhost OK pre-deploy
+
+    def test_placeholder_quality_max_is_degraded(self):
+        self._xcconfig("https://$(PRODUCTION_HOST)")
+        r = check_backend_deploy_readiness(self.proj, APP, {"backend_required": True, "qualityMax": True})[0]
+        self.assertTrue(r["passed"])       # not a hard fail
+        self.assertTrue(r.get("degraded"))  # shipping-blocked
+
+    def test_real_host_quality_max_passes(self):
+        self._xcconfig("https://api.myapp.com")
+        r = check_backend_deploy_readiness(self.proj, APP, {"backend_required": True, "qualityMax": True})[0]
+        self.assertTrue(r["passed"])
+        self.assertFalse(r.get("degraded", False))  # deploy-ready
 
 
 class TestQualityMaxFlagAllowed(unittest.TestCase):

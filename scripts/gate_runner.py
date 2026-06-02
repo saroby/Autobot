@@ -96,7 +96,8 @@ from gate_checks.build import (  # noqa: E402,F401
     check_metadata_readiness,
     check_app_uses_real_repositories,
     check_service_stubs_preserved,
-    check_first_launch_seeded
+    check_first_launch_seeded,
+    check_backend_deploy_readiness
 )
 from gate_checks.deploy import (  # noqa: E402,F401
     check_deployment_attempt_recorded
@@ -160,6 +161,7 @@ GATE_CHECKS: dict[str, Any] = {
     "metadata_readiness": check_metadata_readiness,
     "service_stubs_preserved": check_service_stubs_preserved,
     "first_launch_seeded": check_first_launch_seeded,
+    "backend_deploy_readiness": check_backend_deploy_readiness,
     "logic_tests_pass": check_logic_tests_pass,
     "functional_flows_pass": check_functional_flows_pass,
     # Gate 6→7

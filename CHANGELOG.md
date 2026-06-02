@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added — quality 모드 결정적 게이트 2종 (2차 품질 보고서 채택분)
+2차 외부 품질 보고서의 갭 중 **결정적**(grep/파일 검사 — 거짓양성 없음)이라 quality-max 에서 DEGRADED 로 올려도 circuit breaker 를 안 태우는 둘만 채택. 비결정적 판정(visual judge·critique)은 quality 에서도 DEGRADED 천장 유지(차단 게이트로 안 올림 — 결정적/비결정적 승격 선).
+
+- **#4 P0 logic acceptance 테스트 완전성** (`gate_checks/functional.py` `_completeness_subcheck`): 기본은 비차단 warning, `qualityMax` 면 named 테스트 없는 P0 logic acceptance → **DEGRADED**(출하 차단, hard fail 아님).
+- **#6 backend 배포 준비** (`gate_checks/build.py` `check_backend_deploy_readiness`, Gate 5→6 신규): `backend_required` 앱의 `Release.xcconfig` 가 `$(PRODUCTION_HOST)` placeholder/localhost 면 `qualityMax` 에서 **DEGRADED** — 출하 후 auth/AI 호출이 죽는 것(AI 앱 치명)을 막는다. 기본 모드는 benign(capability_coverage 가 이미 localhost caveat 보고).
+- `commands/mvp.md` quality mode 섹션에 두 게이트 + 결정적/비결정적 승격 선 명시.
+- 신규 테스트 7종(#4 completeness 3 + #6 backend 4) on/off 양경로. 전체 **486 OK 회귀 0**.
+- (보류: visual/P0-logic 의 *비결정* 강화, unsupported 자동 구현, 외부 신호 루프 — 마지막은 실 출시 앱 + ASC 인증이 필요해 이 환경에서 검증 불가.)
+
 ## [0.11.0] — 2026-06-02
 
 ### Added — #4 flow DSL: text_input/swipe/long_press + P1 hard mode (quality-max)

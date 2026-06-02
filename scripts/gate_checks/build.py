@@ -269,6 +269,41 @@ def check_service_stubs_preserved(proj: Path, app: str, state: dict) -> list[dic
     return [_file_exists(proj / app / "App" / "ServiceStubs.swift", "stubs_for_preview")]
 
 
+def check_backend_deploy_readiness(proj: Path, app: str, state: dict) -> list[dict]:
+    """For backend_required apps, is the Release build pointed at a real host?
+
+    The scaffold writes ``Release.xcconfig`` as ``API_BASE_URL = https://$(PRODUCTION_HOST)``
+    — a placeholder the operator must fill after deploying the server. If it's
+    still the placeholder (or localhost, or empty) the shipped app's auth/AI calls
+    fail — fatal for an AI/LLM app.
+
+    Default mode: benign (the autonomous build legitimately ends pre-deploy;
+    capability_coverage already reports the localhost caveat). quality-max:
+    DEGRADED (shipping-blocked) — deterministic xcconfig check, NOT a hard fail.
+    Skips entirely when the app needs no backend.
+    """
+    if not state.get("backend_required"):
+        return [_ok("backend_deploy_readiness", True,
+                    "backend not required", skipped=True)]
+    qmax = bool(state.get("qualityMax"))
+    rel = proj / "Release.xcconfig"
+    if not rel.is_file():
+        return [_ok("backend_deploy_readiness", True,
+                    "backend_required but Release.xcconfig missing — cannot confirm deploy host",
+                    skipped=True, degraded=qmax)]
+    content = rel.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"API_BASE_URL\s*=\s*(.+)", content)
+    val = m.group(1).strip() if m else ""
+    not_ready = (not val) or ("localhost" in val) or ("$(PRODUCTION_HOST)" in val) or ("PRODUCTION_HOST" in val)
+    if not_ready:
+        return [_ok("backend_deploy_readiness", True,
+                    f"Release API_BASE_URL not deploy-ready ({val or 'empty'}) — set PRODUCTION_HOST "
+                    f"to the deployed server before shipping"
+                    + (" — quality-max: DEGRADED" if qmax else ""),
+                    skipped=True, degraded=qmax)]
+    return [_ok("backend_deploy_readiness", True, f"Release API_BASE_URL points at {val}")]
+
+
 def check_first_launch_seeded(proj: Path, app: str, state: dict) -> list[dict]:
     """Enforce the architect's seed policy on the built app.
 

@@ -134,12 +134,15 @@ def _p0_logic_features(project_dir: Path) -> list[_FeatureLite]:
 
 def _completeness_subcheck(
     project_dir: Path, bundle: Path | None, features: list[_FeatureLite],
+    *, quality_max: bool = False,
 ) -> dict:
-    """NON-blocking warning when a P0 logic acceptance has no matching test.
+    """P0 logic acceptance ↔ authored test coverage.
 
-    Always passed=True (never blocks, never degraded). When a P0 logic
-    acceptance id has no correspondingly-named authored test, the message is
-    prefixed WARNING so run-summary surfaces it.
+    Default mode: NON-blocking WARNING (passed=True, never degraded) — the
+    autonomous /mvp path is not blocked by missing tests.
+    quality-max: a P0 logic acceptance with no named test becomes DEGRADED
+    (shipping-blocked) — deterministic (named-test grep), so this is a safe
+    gate to raise; still NOT a hard fail (no circuit-breaker risk).
     """
     if not features:
         return _ok("logic_test_completeness", True, "no P0 logic acceptances declared")
@@ -152,7 +155,10 @@ def _completeness_subcheck(
     if missing:
         return _ok(
             "logic_test_completeness", True,
-            f"WARNING: {len(missing)} P0 logic acceptance(s) without a named test: {missing}",
+            f"{len(missing)} P0 logic acceptance(s) without a named test: {missing}"
+            + (" — quality-max: DEGRADED (add a named test per P0 logic acceptance)"
+               if quality_max else " (WARNING)"),
+            skipped=quality_max, degraded=quality_max,
         )
     return _ok("logic_test_completeness", True,
                f"all {sum(len(f.logic_acceptance_ids) for f in features)} P0 logic acceptance(s) have a named test")
@@ -209,7 +215,7 @@ def check_logic_tests_pass(
             "logic_tests_pass", True,
             f"xcodebuild test passed: {passed}/{total} authored test(s) green",
         )
-        return [primary, _completeness_subcheck(project_dir, bundle, features)]
+        return [primary, _completeness_subcheck(project_dir, bundle, features, quality_max=bool(state.get("qualityMax")))]
 
     # Tests ran but failed, or summary unparseable, or build/test command failed.
     if summary is not None:
@@ -225,7 +231,7 @@ def check_logic_tests_pass(
             f"could not parse .xcresult at {bundle})"
         )
     primary = _ok("logic_tests_pass", False, msg)
-    return [primary, _completeness_subcheck(project_dir, bundle, features)]
+    return [primary, _completeness_subcheck(project_dir, bundle, features, quality_max=bool(state.get("qualityMax")))]
 
 
 def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]:

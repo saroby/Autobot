@@ -124,5 +124,38 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
         self.assertIn("quality-max", r["message"].lower())
 
 
+class TestLogicTestCompleteness(unittest.TestCase):
+    """_completeness_subcheck — P0 logic acceptance ↔ named test coverage.
+
+    Default: missing test = non-blocking WARNING (passed, not degraded).
+    quality-max: missing test = DEGRADED (shipping-blocked, deterministic, not
+    a hard fail). bundle=None → no authored tests resolved → every acceptance
+    is 'missing', isolating the quality_max branch.
+    """
+    from pathlib import Path as _P
+
+    def _feat(self):
+        return functional._FeatureLite(
+            feature_id="log-workout", priority="P0", logic_acceptance_ids=["calc-streak"]
+        )
+
+    def test_default_missing_is_warning_not_degraded(self):
+        r = functional._completeness_subcheck(self._P("/tmp"), None, [self._feat()], quality_max=False)
+        self.assertTrue(r["passed"])
+        self.assertFalse(r.get("degraded", False))
+
+    def test_quality_max_missing_is_degraded(self):
+        r = functional._completeness_subcheck(self._P("/tmp"), None, [self._feat()], quality_max=True)
+        self.assertTrue(r["passed"])          # not a hard fail
+        self.assertTrue(r.get("skipped"))
+        self.assertTrue(r.get("degraded"))    # shipping-blocked
+        self.assertIn("quality-max", r["message"].lower())
+
+    def test_no_features_is_clean(self):
+        r = functional._completeness_subcheck(self._P("/tmp"), None, [], quality_max=True)
+        self.assertTrue(r["passed"])
+        self.assertFalse(r.get("degraded", False))
+
+
 if __name__ == "__main__":
     unittest.main()
