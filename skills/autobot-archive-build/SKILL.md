@@ -1,5 +1,6 @@
 ---
 name: autobot-archive-build
+user-invocable: false
 description: Use when archiving an iOS app via `xcodebuild archive` to produce an `.xcarchive` ready for export/upload. Single-responsibility skill — does archive only, no ASC registration and no upload. Auto-detects DEVELOPMENT_TEAM from the .xcodeproj if not supplied. Also use when troubleshooting "No signing certificate found", "Provisioning profile doesn't match", "BUILD FAILED" during archive, or when an archive needs to be regenerated for a re-upload.
 ---
 

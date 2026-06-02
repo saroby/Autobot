@@ -1,5 +1,6 @@
 ---
 name: autobot-peer-review-bridge
+user-invocable: false
 description: "Use when Autobot needs the opposite AI runtime to review generated artifacts: Codex-hosted runs ask Claude, Claude-hosted runs ask Codex. Soft-skips when the peer tool is unavailable."
 ---
 

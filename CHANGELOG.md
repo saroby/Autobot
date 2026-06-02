@@ -45,6 +45,7 @@ flow acceptance 의 step `action` 을 `tap` 1종 → `tap`/`text_input`/`swipe`/
 - `tests/test_first_launch_seeded.py` 8종(seeded 호출 有/無, empty, legacy, 파일 부재, garbled JSON, 다른 App 파일의 seam, registry 등록). 전체 슈트 **451 OK**(443→451, 회귀 0).
 
 ### Changed
+- **내부 전용 스킬 11종을 사용자 슬래시 목록에서 숨김** (`user-invocable: false`) — 오케스트레이터·에이전트가 Skill 도구로만 호출하는 순수 내부 스킬에 frontmatter 한 줄 추가 → 사용자 `/autobot:` 자동완성·`/help` 에서 제외(모델 호출은 유지). 사용자 진입점은 commands 7개로 충분. 숨김: orchestrator·ios-scaffold·integration-build·axiom-bridge·peer-review-bridge·archive-build·upload-build·register-app·invite-testers·ux-design·plan-preview. 노출 유지(손수 부를 여지): build-report·retrospective·generate-metadata·upload-metadata·app-icon·setup·app-review.
 - **CI GitHub Actions Node 20 → Node 24** — `actions/checkout@v4`→`@v6`, `actions/setup-python@v5`→`@v6`, `actions/upload-artifact@v4`→`@v5`(node24 범프, 기능 비파괴). 3개 워크플로(ci/e2e-verify/smoke-e2e) 전부. 2026-06-16 GitHub 의 Node 20 강제 종료 전 선제 대응. (직전 0.10.0 CI 런의 deprecation 경고 해소.)
 
 ## [0.10.0] — 2026-06-01

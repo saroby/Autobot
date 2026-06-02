@@ -1,5 +1,6 @@
 ---
 name: autobot-axiom-bridge
+user-invocable: false
 description: Use in Phase 5 (after a clean build) to run Axiom critical auditors as a Gate-5 quality net, and in Phase 7 to attach a full Axiom health-check to the build retrospective. Soft-skips when Axiom is not installed.
 ---
 

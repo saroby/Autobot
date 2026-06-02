@@ -1,5 +1,6 @@
 ---
 name: autobot-invite-testers
+user-invocable: false
 description: Use when creating a TestFlight beta tester group on App Store Connect and inviting testers by email after an upload has succeeded. Single-responsibility skill — generates an ES256 JWT, calls `POST /v1/betaGroups` to create the internal group (idempotent), then `POST /v1/betaTesters` for each email. Idempotent on existing testers. Also use when troubleshooting "Bundle ID not found", "401 Unauthorized" JWT issues, or when invitations fail silently after a TestFlight upload.
 ---
 

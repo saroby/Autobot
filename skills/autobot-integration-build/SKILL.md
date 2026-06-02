@@ -1,5 +1,6 @@
 ---
 name: autobot-integration-build
+user-invocable: false
 description: Use when validating and fixing an Autobot-generated iOS app build (Phase 5), wiring service stubs to real repositories, fixing compilation errors iteratively, resolving SPM dependencies, verifying Docker backends, or writing basic tests. Also use when the quality-engineer agent needs guidance on build-fix iteration strategy, error diagnosis, or when the same compilation error keeps recurring across fix attempts.
 ---
 

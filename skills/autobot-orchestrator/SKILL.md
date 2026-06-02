@@ -1,5 +1,6 @@
 ---
 name: autobot-orchestrator
+user-invocable: false
 description: Use when orchestrating a full iOS app build from an idea, coordinating parallel agents, managing build phases, or when the user invokes "/autobot:mvp" or "/autobot:resume". Also use when a build stalls, needs error recovery, or requires phase-level retry coordination.
 ---
 
