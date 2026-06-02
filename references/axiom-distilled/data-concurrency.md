@@ -209,18 +209,53 @@ Task.detached(priority: .background) {
 
 **주의**: `async` 함수가 *자동으로 백그라운드는 아니다*. 호출자의 actor 에서 suspend 됐다가 같은 actor 에서 resume.
 
-### 규칙 4: 콜백/델리게이트 — 격리 명시
+### 규칙 4: 콜백/델리게이트 — **전달 스레드에 따라** 격리를 정한다
+
+시스템 콜백은 두 종류이고, **반대 처방**이 필요하다. 하나로 뭉뚱그리면 크래시한다.
+
+#### (A) 델리게이트 메서드 — API 가 *정해진 큐*(보통 메인)로 전달 → `@MainActor` OK
 
 ```swift
 final class LocationService: NSObject, CLLocationManagerDelegate {
-    @MainActor                                  // 또는 함수에 @MainActor
+    // CLLocationManager 를 메인에서 생성했으면 델리게이트도 메인 런루프로 전달된다.
+    @MainActor
     func locationManager(_ m: CLLocationManager, didUpdateLocations: [CLLocation]) {
-        // 시스템 콜백이지만 명시적으로 메인에서 처리
+        // 메인에서 처리 OK
     }
 }
 ```
 
-시스템 콜백(CLLocationManager, AVAudioPlayerDelegate, WKNavigationDelegate 등) 은 *명시적 isolation 없이* 호출되면 Swift 6 런타임 크래시 (`_swift_task_checkIsolatedSwift`). 항상 `@MainActor` 또는 actor 메서드.
+#### (B) Completion-handler closure — 시스템이 *임의 백그라운드 큐*에서 호출 → `@MainActor` 금지, `@Sendable` 사용
+
+`SFSpeechRecognizer.requestAuthorization`, `SFSpeechRecognizer.recognitionTask(with:)`,
+TCC 권한 콜백, 구형 `AVAudioSession.requestRecordPermission`, `URLSession` completion handler 등은
+**백그라운드 스레드**에서 호출된다. 이때 closure 가 (바깥 타입이 `@MainActor` 라서) `@MainActor` 로
+격리 추론되면, 런타임이 closure 진입 시 메인 큐 여부를 단언하다 **`_dispatch_assert_queue_fail` 로 즉사**한다
+— closure 본문이 무엇을 하든 상관없다. 격리 *자체*가 원인이다.
+
+```swift
+@MainActor
+final class SpeechService: SpeechTranscriptionServiceProtocol {
+    func requestPermission() async -> CapturePermission {
+        await withCheckedContinuation { continuation in
+            // ✅ @Sendable = nonisolated. 어느 스레드에서 호출돼도 안전.
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in
+                continuation.resume(returning: Self.map(status))   // 순수 매핑만
+            }
+        }
+    }
+
+    // 매핑은 nonisolated static — @MainActor 상태를 일절 건드리지 않는다.
+    nonisolated private static func map(_ s: SFSpeechRecognizerAuthorizationStatus) -> CapturePermission {
+        switch s { case .authorized: .granted; case .notDetermined: .notDetermined; default: .denied }
+    }
+}
+```
+
+`@Sendable` closure 안에서 `@MainActor` 상태를 *써야* 하면 `await MainActor.run { … }` / `Task { @MainActor in … }` 로 **명시적으로 hop** 한다. continuation·NSLock 기반 가드는 백그라운드에서 그대로 호출해도 된다.
+
+> **판별법**: "이 콜백을 누가 어느 스레드에서 부르는가?" 메인 보장이 없으면 (B), 즉 `@Sendable`.
+> 가능하면 애초에 completion-handler 대신 **async 버전 API**(`AVAudioApplication.requestRecordPermission()` 등)를 써서 이 함정을 통째로 피한다.
 
 ### 규칙 5: Task { } 안에서 self 캡처
 
@@ -247,8 +282,8 @@ final class FeedModel {
 
 | 크래시 메시지 | 원인 | 해결 |
 |---|---|---|
-| `_dispatch_assert_queue_fail` | @MainActor 격리된 메서드가 백그라운드 큐에서 호출됨 | 콜백/델리게이트에 @MainActor 추가 |
-| `_swift_task_checkIsolatedSwift` | 시스템 콜백 격리 불일치 | 위와 동일 |
+| `_dispatch_assert_queue_fail` | `@MainActor` 격리 closure/메서드가 백그라운드 큐에서 호출됨 | **전달 스레드로 판별** (규칙 4): 메인 전달 델리게이트면 `@MainActor` 유지 · 백그라운드 전달 completion-handler(`SFSpeechRecognizer.requestAuthorization`/`recognitionTask`, TCC, URLSession 등)면 closure 를 `@Sendable`(nonisolated)로 + 상태는 `MainActor.run` 으로 hop |
+| `_swift_task_checkIsolatedSwift` | 시스템 콜백 격리 불일치 (대개 위와 동일 패턴) | 위와 동일 — 백그라운드 전달이면 `@MainActor` 가 *원인*이다. `@Sendable` 로 바꾼다 |
 | `Fatal error: ModelContext is not the main context` | 백그라운드에서 메인 ModelContext 사용 | ModelActor 분리 또는 Task { @MainActor in } |
 | `... no such column ...` | SwiftData migration 누락 | VersionedSchema + MigrationStage |
 | `Failed to load NSManagedObject` (CloudKit) | 필수 필드가 optional 아님 | 모든 필드 optional 또는 기본값 |
