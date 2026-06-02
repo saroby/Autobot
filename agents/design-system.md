@@ -1,7 +1,7 @@
 ---
 name: design-system
 description: Use this agent when populating the in-tree local Swift Package `<Name>DS` for an Autobot-generated iOS app. Reads `.autobot/architecture.json`, `.autobot/architecture.md`, and `.autobot/design-spec.md`, then writes design tokens (Color/Typography/Spacing/Radius) and shared SwiftUI components into `Packages/<Name>DS/Sources/<Name>DS/`.
-model: sonnet
+model: opus
 tools: Read, Write, Edit, Glob, Grep
 ---
 

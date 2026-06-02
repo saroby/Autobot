@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added — 시각 동질성 상류 차단: design-system opus + architect Signature Layout 품질 강화
+생성 앱 AI slop(모든 앱이 닮아 보이는 *시각 동질성*)을 **게이트가 아니라 intent 단계 생성 품질**에서 줄인다. 미적 품질은 이진 게이트로 측정 불가(Goodhart) — 게이트는 동질성을 *감지*만 할 뿐 다양성을 *생성*하지 못한다. 그래서 다양성은 상류에서 주입한다. 게이트/circuit breaker 무손상(프롬프트 `.md` 3파일만 변경 → 자율 `/mvp` 경로·hard-fail 철칙 정합).
+
+- **design-system 에이전트 sonnet→opus** (`agents/design-system.md`): 디자인 토큰(Color/Typography/Spacing/Radius)·공유 컴포넌트의 *재료*를 만드는 단계가 한 티어 낮아 다양성/깊이가 제한됐다(architect/ui-builder/quality-engineer 는 이미 opus). 빌드당 1회 호출이라 비용 증가는 제한적.
+- **architect Signature Layout 품질 강화** (`agents/architect.md`, `skills/.../architecture-template.md`): heading 존재만 보는 Gate 1→2 는 제네릭 한 줄로 통과 가능 → 상류 프롬프트로 품질을 끌어올린다. ❌무효/✅유효 4행 대조표 + "앱 이름·도메인 명사를 가려도 어느 앱인지 식별되나" 자가 판별 추가, 위 예시(여행앱)와 *다른 도메인*(피트니스 트래커)으로 대조해 원칙이 도메인을 넘어 성립함을 보임(한 도메인 복붙은 앵커를 키워 역효과라 의도적 분리), 화면 차별화를 "primary+2순위"에서 "주요 화면 전체"로 확장.
+- **정직한 효과 구분**: `/plan` 은 프롬프트+Phase 2.5 critique 2단 방어. `/mvp` 자율 경로는 critique 가 `manual:true` 라 안 돌아 self-check(프롬프트 텍스트)가 유일한 품질 장치 — 새 backstop 이 아니라 "더 날카로운 프롬프트 + self-check nudge" 한 겹. 게이트 없이 줄 수 있는 정직한 최대치.
+- 코드 변경 0(`.md` 3파일). 테스트 영향 없음 — 효과는 다음 빌드 `architecture.md` 의 Signature Layout 품질로 드러난다.
+
 ### Added — External Signal Loop 설계 스파이크 (`docs/external-signal-loop.md`, 미구현)
 최고 leverage(외부 ground-truth)를 명문화한 **설계 문서 — 코드 0**. 출시된 앱 + (일부) ASC 인증 환경에서 구현한다. 조사 결과: 리뷰/평점 회수는 `mcp-appstore` public 스크래핑(**인증 불필요**, bundle ID 만), 비공개 메트릭(crash/retention)만 ASC Key(이미 `setup` §3.7 이 받음 — setup 수정 불필요). 핵심 미해결 = *글로벌* learnings 저장소 아키텍처(현재 프로젝트별이라 재빌드 드물어 leverage 낮음). 자가-judge Goodhart 천장을 뚫는 유일한 외부 닻 — 우선순위 최상위지만 느린 베팅.
 
