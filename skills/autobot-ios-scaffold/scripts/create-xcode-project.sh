@@ -64,7 +64,22 @@ if [ "${#DESIGN_SYSTEM_MODULE}" -gt 30 ]; then
 fi
 
 if [ -z "$BUNDLE_ID" ]; then
-  BUNDLE_ID="com.axi.$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')"
+  # App-name segment stays PascalCase (matches the registered app identifier),
+  # e.g. DreamMemo -> com.axi.DreamMemo (not com.axi.dreammemo).
+  BUNDLE_ID="com.axi.${APP_NAME}"
+fi
+
+# Fall back to the user-wide Apple Team ID when no --team-id was passed and no
+# DEVELOPMENT_TEAM env var is set. Without this, the xcodegen path emits a
+# project with no DEVELOPMENT_TEAM and signing is unconfigured.
+if [ -z "$TEAM_ID" ] || [ "$TEAM_ID" = "AUTO" ]; then
+  AUTOBOT_CONFIG="${HOME}/.autobot/config.json"
+  if [ -f "$AUTOBOT_CONFIG" ]; then
+    CONFIG_TEAM=$(python3 -c "import json,sys; print(json.load(open('$AUTOBOT_CONFIG')).get('developmentTeam',''))" 2>/dev/null || echo "")
+    if [ -n "$CONFIG_TEAM" ]; then
+      TEAM_ID="$CONFIG_TEAM"
+    fi
+  fi
 fi
 
 # --project-dir가 지정되면 기존 디렉토리를 사용 (Phase 0에서 이미 생성됨)
@@ -399,11 +414,25 @@ fi
 
 # Check if xcodegen is available for project generation
 if command -v xcodegen &>/dev/null; then
-  # Derive bundleIdPrefix safely with a fallback if BUNDLE_ID doesn't end with the lowercase app name
-  APP_NAME_LOWER=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
-  BUNDLE_PREFIX="${BUNDLE_ID%.${APP_NAME_LOWER}}"
+  # Derive bundleIdPrefix by stripping the app-name segment. Try the PascalCase
+  # app name first (current convention: com.axi.DreamMemo), then the legacy
+  # lowercase form, then fall back.
+  BUNDLE_PREFIX="${BUNDLE_ID%.${APP_NAME}}"
+  if [ "$BUNDLE_PREFIX" = "$BUNDLE_ID" ]; then
+    APP_NAME_LOWER=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]')
+    BUNDLE_PREFIX="${BUNDLE_ID%.${APP_NAME_LOWER}}"
+  fi
   if [ "$BUNDLE_PREFIX" = "$BUNDLE_ID" ] || [ -z "$BUNDLE_PREFIX" ]; then
     BUNDLE_PREFIX="com.axi"
+  fi
+
+  # DEVELOPMENT_TEAM line for the xcodegen settings block. Emitted only when a
+  # real team id is known (not the "AUTO" sentinel), so signing is configured
+  # on the primary xcodegen path — not just the generate-pbxproj.py fallback.
+  if [ -n "$TEAM_ID" ] && [ "$TEAM_ID" != "AUTO" ]; then
+    DEV_TEAM_LINE="        DEVELOPMENT_TEAM: ${TEAM_ID}"
+  else
+    DEV_TEAM_LINE=""
   fi
 
   # Create project.yml for xcodegen (Folder Reference mode)
@@ -447,6 +476,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}
+${DEV_TEAM_LINE}
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
