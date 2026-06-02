@@ -42,6 +42,8 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 
 `## Overview` / `## Features` (P0–P2) / `## Screens` / `## Navigation Structure` / `## Design Direction` / `## Data Models` / `## Integration Map` / `## Privacy API Categories` / `## Required Permissions` / `## Entitlements` / `## Dependencies` / `## File Structure`. `backend_required == true` 면 `## Backend Requirements` + `## API Contract` + `## iOS Configuration` 추가.
 
+**`## Out of Scope` (조건부 — 미지원 카테고리 명시 제외):** 아이디어가 파이프라인이 생성하지 않는 iOS 카테고리(StoreKit/IAP·구독, WidgetKit 위젯, Push/APNs, Background tasks, App Clips, WebSocket 실시간/협업, CloudKit 동기화, watchOS)를 요구하면, `## Out of Scope` 섹션을 추가해 그 카테고리를 **명시적으로 제외**한다고 기록한다(자동 구현하지 않으므로 — 명시 제외만 한다). capability_coverage 가 이 섹션을 읽어 "의도적 제외"와 "모르고 누락"을 구별한다: 명시하면 *excluded by design*, 누락하면 사용자에게 *silent gap* 경고로 표면화된다. 해당 요구가 없으면 이 섹션은 생략한다.
+
 규칙 요약 (상세는 `references/architecture-template.md` 와 `axiom-distilled/design.md`):
 - **Design Direction**: 도메인 default 색상 (system blue / health green) 금지. 사용자 아이디어 텍스트의 무드/테마 힌트가 1순위. Primary 색상 HSB Brightness 30–70% (Liquid Glass 호환). `axiom-distilled/design.md` 자가 체크리스트 6 항목을 끝에 그대로 붙인다.
 - **Signature Layout (필수 — 시각 동질성 방지)**: `## Design Direction` 안에 `### Signature Layout` 하위 섹션을 반드시 넣는다. 4종 Layout Personality 는 *출발 힌트*로만 쓰고, 이 앱만의 **hero element · 정보 위계 · density · 화면 간 차별화**를 구체적으로 명시한다 (추상어 "modern/clean" 금지). 모든 화면을 동일 `List`/`LazyVStack` 카드로 채우지 않는다 — 최소 primary 와 2순위 화면은 시각적으로 구별되는 레이아웃을 가진다. 표 형식은 `references/architecture-template.md` 의 *Signature Layout* 참조. Gate 1→2 `design_direction_complete` 가 이 heading 을 강제하고, Phase 2.5 critique(디자인 축)가 "templated/제네릭/화면 간 동일"을 점검한다.

@@ -115,11 +115,17 @@ def check_axiom_critical_audit_acceptable(proj: Path, app: str, state: dict) -> 
     )
 
     if not axiom_installed:
+        # quality-max: a missing audit is no longer "good enough" — record DEGRADED
+        # (NOT hard fail: that would trip the circuit breaker and halt the build).
+        qmax = bool(state.get("qualityMax"))
+        qnote = " — quality-max: install axiom for the critical audit" if qmax else ""
         if audit is None:
             return [_ok("axiom_audit_skipped_env", True,
-                        "environment.axiom=false; critical audit not required", skipped=True)]
+                        f"environment.axiom=false; critical audit not required{qnote}",
+                        skipped=True, degraded=qmax)]
         return [_ok("axiom_audit_recorded_without_env", True,
-                    "metadata present though environment.axiom=false; trusting metadata", skipped=True)]
+                    "metadata present though environment.axiom=false; trusting metadata",
+                    skipped=True, degraded=qmax)]
 
     if audit is None:
         return [_ok("axiom_audit_missing", False,
@@ -213,8 +219,13 @@ def check_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict
                         f"environment.peerReviewAvailable=true but skipReason={reason!r} "
                         f"is not a runtime failure. Allowed when available: "
                         f"{sorted(_PEER_REVIEW_ALLOWED_SKIP_WHEN_AVAILABLE)}")]
+        # quality-max: a skipped peer review (tool unavailable or runtime failure)
+        # is recorded DEGRADED so the build is not shippable until a real review ran.
+        qmax = bool(state.get("qualityMax"))
         return [_ok("peer_review_skipped", True,
-                    f"{host}->{peer} skipped: {reason}", skipped=True)]
+                    f"{host}->{peer} skipped: {reason}"
+                    + (" — quality-max: peer review did not actually run" if qmax else ""),
+                    skipped=True, degraded=qmax)]
 
     blocking = review.get("blockingFindingsCount")
     if blocking is None:

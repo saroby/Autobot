@@ -8,7 +8,7 @@ The anti-laundering branch depends on whether a runtime screenshot exists on
 disk, so each test runs in a tmp project dir and opts a screenshot in/out.
 
 Policy under test (DEGRADED-only, never a hard fail):
-  allowVisualDrift set              → pass (operator waived gating)
+  allowVisualDrift == buildId       → pass (release-scoped waiver for THIS build)
   verdict=pass                      → pass
   verdict=fail                      → DEGRADED (skipped+degraded)
   no/garbled verdict + screenshot   → DEGRADED (anti-laundering)
@@ -36,7 +36,10 @@ def _state(visual_judge=None, allow_drift=None) -> dict:
         meta["visualJudge"] = visual_judge
     state: dict = {"buildId": BUILD_ID, "phases": {"5": {"metadata": meta}}}
     if allow_drift is not None:
-        state["allowVisualDrift"] = allow_drift
+        # waiver is buildId-scoped: True means "waive THIS build" → bind to buildId.
+        # Any other value (e.g. a stale build id) is left as-is so tests can assert
+        # the waiver does NOT apply to a different build.
+        state["allowVisualDrift"] = BUILD_ID if allow_drift is True else allow_drift
     return state
 
 
@@ -165,6 +168,18 @@ class TestCheckVisualJudge(unittest.TestCase):
 
     def test_allow_drift_false_still_degrades_fail(self):
         r = self._run(_state(visual_judge={"verdict": "fail", "summary": "drifted"}, allow_drift=False))
+        self.assertFalse(r["passed"])
+        self.assertTrue(r.get("degraded"))
+
+    def test_allow_drift_stale_buildid_does_not_waive(self):
+        # Waiver bound to a DIFFERENT build id → release-scoped expiry: it must NOT
+        # launder this build. A stale waiver from a prior build degrades like an
+        # unwaived fail (this is the whole point of buildId-scoping vs persistent).
+        self._add_screenshot()
+        r = self._run(_state(
+            visual_judge={"verdict": "fail", "summary": "drifted"},
+            allow_drift="some-other-build",
+        ))
         self.assertFalse(r["passed"])
         self.assertTrue(r.get("degraded"))
 

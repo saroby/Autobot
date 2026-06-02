@@ -61,19 +61,20 @@ echo $$ > "$LOCK_FILE"
 
 ## Step 0.5: override 플래그 처리 (`--allow-visual-drift`)
 
-사용자가 `--allow-visual-drift` 와 함께 호출했으면, **Phase 5 를 재실행하기 전에** 영속 플래그를 세팅한다. 이 플래그는 Gate 5→6 의 `visual_judge` 체크가 읽어, 빌드된 앱이 디자인 의도와 어긋난다는 vision judge 판정(verdict=fail)을 **DEGRADED 대신 통과(green)**로 강등한다 — 운영자가 그 드리프트를 의도적으로 수용하고 출하하겠다는 선언이다.
+사용자가 `--allow-visual-drift` 와 함께 호출했으면, **Phase 5 를 재실행하기 전에** override 플래그를 **현재 빌드 id 로** 세팅한다(boolean `true` 가 아니다 — 아래 *왜 buildId-scoped 인가* 참조). 이 플래그는 Gate 5→6 의 `visual_judge` 체크가 읽어, 빌드된 앱이 디자인 의도와 어긋난다는 vision judge 판정(verdict=fail)을 **DEGRADED 대신 통과(green)**로 강등한다 — 운영자가 그 드리프트를 의도적으로 수용하고 출하하겠다는 선언이다.
 
 ```bash
 # (resume 호출 인자를 직접 확인해 아래를 채운다 — 환경변수가 아니라 사용자 입력 기준.)
 # 사용자가 --allow-visual-drift 를 줬으면 다음을 실행한다 (안 줬으면 건너뛴다):
+BUILD_ID=$(python3 -c "import json,sys; print(json.load(open('.autobot/build-state.json')).get('buildId',''))")
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag \
-  --key allowVisualDrift --value true \
-  --reason "operator accepted visual drift via /autobot:resume --allow-visual-drift"
+  --key allowVisualDrift --value "$BUILD_ID" \
+  --reason "operator accepted visual drift for build $BUILD_ID via /autobot:resume --allow-visual-drift"
 ```
 
-> **왜 영속 플래그인가** (freeze-contracts 의 one-shot `--regenerate-contracts` 와 의도적으로 다름): `/autobot:testflight` 의 anti-laundering 단계가 업로드 직전 Gate 5→6 을 **플래그 없이 신선 재실행**한다. override 가 build-state 에 영속돼 있어야 그 재실행이 `allowVisualDrift` 를 존중해 업로드가 진행된다. one-shot 이면 업로드 시점에 override 가 사라져 출하가 다시 막힌다. 세팅은 `flag_changed` 이벤트로 감사된다.
+> **왜 buildId-scoped 인가** (release-scoped exception): `/autobot:testflight` 의 anti-laundering 단계가 업로드 직전 Gate 5→6 을 **플래그 없이 신선 재실행**한다. override 가 build-state 에 남아 있어야 그 재실행이 존중되는데, 영속 boolean `true` 는 *이후의 모든 빌드까지* 조용히 면제해 세탁 위험이 된다. 그래서 override 를 **현재 빌드 id 에 바인딩**한다: `visual_judge` 는 `allowVisualDrift == buildId` 일 때만 면제하므로 — **같은 빌드의 testflight 재검증은 그대로 통과**(업로드 진행), **새 빌드(새 buildId)는 자동으로 면제가 만료**(다시 의도적으로 `--allow-visual-drift` 를 줘야 함). 세팅은 `flag_changed` 이벤트로 감사된다.
 >
-> 드리프트 수용을 **취소**하려면 `set-flag --key allowVisualDrift --value false` 로 되돌린다.
+> 드리프트 수용을 **즉시 취소**하려면 `set-flag --key allowVisualDrift --value false` 로 되돌린다(어떤 buildId 와도 매칭되지 않아 면제가 사라진다).
 
 ## Step 1: 빌드 상태 로드
 

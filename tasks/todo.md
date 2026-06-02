@@ -1,3 +1,46 @@
+# 품질 보고서 "타당한 부분" 구현 — quality-max 모드 + flow DSL (4 슬라이스)
+
+목적: 외부 품질 보고서 7개 중 *타당*으로 판정된 것만 구현. 보류: 자동 재실행/재작업/
+구현·context7 필수(자율성·circuit breaker 충돌). 사용자 합의 범위 = "모두".
+
+## 핵심 설계 원칙 (평결에서)
+- **기본 자율 경로(`/mvp`)는 무손상.** 엄격함은 `--quality=max` **opt-in** 으로만.
+- **hard fail 금지, DEGRADED 사용.** hard fail 은 retryCount→전역 circuit breaker(합 3)
+  trip→자율 빌드 정지(`transitions.py:53`, `build.py:119-122` 가 명시). DEGRADED 는
+  출하만 차단(배지). benign skip(skipped only)은 green 유지(`gate_runner.py:344`).
+- qualityMax 는 `allowVisualDrift` 와 동일 패턴: `spec.allowedFlags` + `set-flag` +
+  게이트가 `state.get("qualityMax")` 분기.
+
+## 슬라이스
+- [x] **B 모드 골격**: spec.allowedFlags 에 qualityMax 추가 + mvp.md `--quality=max`
+      섹션(argument-hint 갱신) + orchestrator 가 Phase 0 후 set-flag 실행. ✅
+- [x] **C 모드 첫 효과 (#2·#6)**: review.py — qualityMax 면 axiom/peer 미가용 skip →
+      DEGRADED(degraded=qmax). design.py — qualityMax 면 fallback 0 mockup → DEGRADED.
+      `test_quality_max_mode.py` 8종(on/off 양경로 + flag allowed). 462 OK 회귀 0. ✅
+- [x] **A 독립 fix (모드 무관, 자율 무손상)**: ✅
+      - #5 unsupported 명시 제외: architect.md `## Out of Scope` 규칙 +
+        capability_coverage `_mark_acknowledged`(OoS 섹션 grep) + render 가 "의도적
+        제외 vs silent gap" 분리. `test_capability_out_of_scope.py` 5종. 자동 구현 X.
+      - #3 waiver buildId-scoped: build.py `allowVisualDrift == buildId` 면제 +
+        resume.md 가 buildId 로 set-flag + line 169 중복 제거. stale-waiver 만료
+        테스트 추가(14종). 영구 세탁 제거, testflight 동일빌드 유지.
+- [ ] **D flow DSL (#4, 가장 큼·실기기)**: intent_spec step action 에 text_input/swipe/
+      long_press + flow_runner AXe 드라이버 + P1 hard mode(qualityMax). relaunch 는
+      기존 `value_persisted_after_relaunch` 확장(추가 아님).
+
+## 보류 (평결: 자율성/breaker 충돌 또는 비용)
+- #1 HIGH critique → architect 자동 재실행 (비결정 신호 → breaker trip)
+- #3 HIGH visual → 자동 UI 재작업 루프 (visual judge 가 이미 DEGRADED 로 후퇴한 길)
+- #5 unsupported 자동 *구현* (스코프 폭발 — 명시 제외만 채택)
+- #7 context7/WebSearch 필수 조회 (axiom-distilled 정적 지식 이미 풍부 + 비결정성 비용)
+
+## Verify (슬라이스별)
+- [ ] 각 게이트 분기: qualityMax on/off 두 경로 테스트 (off=기존 동작 보존)
+- [ ] 전체 슈트 + render --check + verify_spec_docs
+- [ ] D: 시뮬레이터 동작은 단위로 못 닫음 — 명시
+
+---
+
 # 시각 동질성 깨기 — Signature Layout + critique 축 + 모델 격상 (개선축 #1)
 
 목적: 생성 앱이 "또 그 앱처럼 생김"(AI 슬롭) 에서 벗어나게. 근본 진단: Layout

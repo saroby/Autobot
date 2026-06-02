@@ -111,6 +111,27 @@ def _detect_unsupported(haystack: str) -> list[dict]:
     return hits
 
 
+def _out_of_scope_text(arch_md: str) -> str:
+    """Lowercased body of the architecture's ``## Out of Scope`` section (or '')."""
+    m = re.search(r"(?im)^#+\s*out of scope\s*$(.*?)(?=^#+\s|\Z)", arch_md, re.DOTALL)
+    return m.group(1).lower() if m else ""
+
+
+def _mark_acknowledged(hits: list[dict], arch_md: str) -> None:
+    """Flag each unsupported hit the architect explicitly excluded.
+
+    When the architect writes a ``## Out of Scope`` section naming an unsupported
+    category, that's a deliberate exclusion (not a silent gap) — capability
+    coverage reports it differently so the user sees "excluded by design" vs
+    "requested but missing". Mutates *hits* in place, adding ``acknowledged``.
+    """
+    oos = _out_of_scope_text(arch_md)
+    by_cat = {e["category"]: e["patterns"] for e in _UNSUPPORTED_CATEGORIES}
+    for h in hits:
+        pats = by_cat.get(h["category"], [])
+        h["acknowledged"] = bool(oos) and any(re.search(p, oos) for p in pats)
+
+
 def _verification_prereqs(env: dict) -> list[dict]:
     """Tool availability + actionable install hint for each verification prereq."""
     environment = (env or {}).get("environment") or {}
@@ -152,6 +173,7 @@ def assess(project_root: Path) -> dict:
         pass
 
     unsupported = _detect_unsupported(f"{idea}\n{arch_md}")
+    _mark_acknowledged(unsupported, arch_md)
 
     backend_required = bool(state.get("backend_required"))
     backend = None
@@ -264,10 +286,18 @@ def render(coverage: dict) -> str:
         lines.append("")
 
     unsupported = scope.get("unsupportedRequested") or []
-    if unsupported:
-        lines.append("**Requested capabilities this build does NOT include:**")
-        for u in unsupported:
+    unacknowledged = [u for u in unsupported if not u.get("acknowledged")]
+    acknowledged = [u for u in unsupported if u.get("acknowledged")]
+    if unacknowledged:
+        lines.append("**Requested capabilities this build does NOT include "
+                     "(not declared out of scope — silent gap):**")
+        for u in unacknowledged:
             _bullet(lines, f"{u['category']} — detected in your idea/architecture (\"{u['matched']}\") but not generated")
+        lines.append("")
+    if acknowledged:
+        lines.append("**Intentionally out of scope (architect declared in `## Out of Scope`):**")
+        for u in acknowledged:
+            _bullet(lines, f"{u['category']} — excluded by design")
         lines.append("")
 
     backend = scope.get("backend")

@@ -136,12 +136,18 @@ def check_visual_judge(proj: Path, app: str, state: dict) -> list[dict]:
     high = verdict_obj.get("highCount") if has_verdict else None
     high_note = f" ({high} high-severity)" if isinstance(high, int) and high else ""
 
-    # Operator opt-out: --allow-visual-drift (persisted allowVisualDrift flag)
-    # waives visual gating entirely — never blocks or degrades.
-    if bool(state.get("allowVisualDrift")):
+    # Operator opt-out: --allow-visual-drift binds the waiver to THIS build's id
+    # (release-scoped, NOT a permanent flag). It holds only while
+    # state.allowVisualDrift == state.buildId: /autobot:testflight re-runs the gate
+    # on the SAME build so the waiver still applies through upload, but a fresh
+    # build gets a new id → the waiver auto-expires and cannot silently launder
+    # later builds. (Legacy boolean `true` is intentionally NOT honored — a
+    # permanent waiver is exactly the laundering risk this scoping removes.)
+    build_id = state.get("buildId") or "unknown-build"
+    if state.get("allowVisualDrift") == build_id:
         return [_ok(
             "visual_judge", True,
-            f"visual gating waived via --allow-visual-drift{high_note}"
+            f"visual gating waived for build {build_id} via --allow-visual-drift{high_note}"
             f"{f': {summary}' if summary else ''}",
         )]
 
@@ -166,7 +172,6 @@ def check_visual_judge(proj: Path, app: str, state: dict) -> list[dict]:
     # do not launder to VERIFIED. If no screenshot exists, the simulator was
     # unavailable, so design fidelity is genuinely not verifiable here → benign
     # skip (runtime_smoke already degrades the no-simulator case separately).
-    build_id = state.get("buildId") or "unknown-build"
     screenshot_exists = (
         (proj / "artifacts" / build_id / "phase-5" / "runtime-smoke" / "screenshot.png").is_file()
         or (proj / ".autobot" / "phase-5" / "runtime-smoke" / "screenshot.png").is_file()

@@ -1,7 +1,7 @@
 ---
 name: mvp
 description: "앱 아이디어를 입력하면 질문 없이 엔터프라이즈급 iOS 26+ MVP를 로컬에서 빌드합니다. Phase 0–5 + Phase 7 까지만 실행하며, TestFlight 업로드는 /autobot:testflight 로 분리되어 있습니다."
-argument-hint: "<앱 아이디어 설명>"
+argument-hint: "[--quality=max] <앱 아이디어 설명>"
 allowed-tools:
   - Read
   - Write
@@ -34,6 +34,21 @@ allowed-tools:
 2. **병렬 우선**: Phase 4 의 ui-builder/data-engineer/(backend-engineer) 는 한 메시지에서 동시에 디스패치한다.
 3. **상태는 runtime 으로만 기록**: `.autobot/build-state.json` 직접 편집 금지. `scripts/pipeline.sh` 경로만 사용한다.
 4. **CWD 고정**: Phase 0 에서 생성한 프로젝트 디렉토리가 CWD. 에이전트/스크립트는 모두 상대 경로. `cd` 로 이탈하지 않는다.
+
+## Quality mode (선택 — `--quality=max`)
+
+`/autobot:mvp --quality=max <아이디어>` 로 호출하면 orchestrator 가 Phase 0 직후
+`pipeline.sh set-flag --key qualityMax --value true` 를 실행한다 (resume 의
+`--allow-visual-drift` 와 동일한 set-flag 패턴). 이 **opt-in** 모드에서만 아래 게이트가
+더 엄격해진다 — **기본 자율 경로(플래그 없음)는 동작이 전혀 바뀌지 않는다**:
+
+- peer review / Axiom critical audit 가 미설치·미가용으로 skip 되면 PASS 가 아니라
+  **DEGRADED** 로 기록(출하 차단). hard fail 은 retryCount→circuit breaker 를 건드려
+  자율 빌드를 멈추므로 쓰지 않는다.
+- 디자인이 Stitch fallback 이어도 최소 1 개의 실제 mockup PNG 를 요구(없으면 DEGRADED).
+
+플래그 해석은 진입점(이 문서)이 안내하고, 실제 `set-flag` 실행과 게이트 분기는
+orchestrator·spec·gate_checks 가 소유한다.
 
 ## Safety Policy
 

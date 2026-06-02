@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added — 품질 보고서 "타당한 부분": `--quality=max` opt-in 모드 + waiver 범위 축소 + unsupported 명시 제외
+외부 품질 보고서 7개 중 *타당*으로 판정된 것만 구현. **보류**(자율성·circuit breaker 충돌 또는 비용): 자동 critique 재실행·자동 UI 재작업 루프·unsupported 자동 구현·context7 필수 조회. 원칙: 기본 자율 경로(`/mvp`)는 동작 무변, 엄격함은 **opt-in**; hard fail 금지(retryCount→breaker→자율 정지 회피) → **DEGRADED**(출하만 차단).
+
+- **`--quality=max` opt-in 모드** (`spec.allowedFlags` + `commands/mvp.md` + `autobot-orchestrator`): `qualityMax` 플래그(`allowVisualDrift` 와 동일 set-flag 패턴, orchestrator 가 Phase 0 후 세팅). 이 모드에서만 게이트가 엄격해지고, 플래그 없으면 모든 게이트가 기존 자율 동작 유지.
+- **#2 peer/axiom** (`gate_checks/review.py`): qualityMax 면 peer review·Axiom critical audit 의 미가용 skip 을 PASS 가 아니라 **DEGRADED**(degraded=qmax). (이미 있던 anti-laundering — `peerReviewAvailable=true` 면 runtime-failure allowlist 만 통과 — 은 그대로.)
+- **#6 design fallback** (`gate_checks/design.py`): qualityMax 면 Stitch fallback 이어도 최소 1 개 mockup PNG 요구(0 개면 DEGRADED).
+- **#5 unsupported 명시 제외** (`agents/architect.md` + `scripts/capability_coverage.py`): architect 가 미지원 카테고리(StoreKit/Push/WidgetKit/CloudKit 등)를 `## Out of Scope` 에 명시하면 capability_coverage 가 "의도적 제외(excluded by design)"와 "silent gap(요구됐으나 누락)"을 구별해 보고. 자동 *구현*은 하지 않음(보류 — 스코프 폭발).
+- **#3 visual waiver buildId-scoped** (`gate_checks/build.py` + `commands/resume.md`): `--allow-visual-drift` 가 영속 boolean → 현재 **buildId 에 바인딩**. `visual_judge` 는 `allowVisualDrift == buildId` 일 때만 면제 → `/autobot:testflight` 동일빌드 재검증은 유지되지만(`build.py` 영속 사유 해소), 새 빌드는 자동 만료해 stale waiver 가 이후 빌드를 조용히 세탁하지 못한다.
+- 신규 테스트: `test_quality_max_mode`(8, on/off 양경로) + `test_capability_out_of_scope`(5) + visual_judge stale-waiver 만료(1). 전체 **468 OK 회귀 0**. (보류 항목 + #4 flow DSL 은 미구현 — flow DSL 은 실기기 검증이 필요한 후속 슬라이스.)
+
 ### Added — 시각 동질성 깨기: Signature Layout + critique 동질성 축 + ui-builder opus
 근본 진단: Layout Personality 가 **4종 폐쇄 분류**(`architecture-template.md`)고 ui-builder 가 그에 묶인 **고정 코드 스니펫**(`ui-builder.md`)을 적용 → 여행/레시피/뉴스 앱이 모두 content-forward 면 동일 `LazyVStack` 카드 피드. + 보이는 에이전트(ux-designer/design-system/ui-builder/data-engineer) 전부 `model: sonnet`. "전문가적 = 고유함"의 반대(AI 슬롭).
 

@@ -38,10 +38,18 @@ def _is_fallback(state: dict, phase: str) -> bool:
 
 
 def check_design_assets_exist_or_fallback(proj: Path, app: str, state: dict) -> list[dict]:
-    if _is_fallback(state, "2"):
-        return [_ok("design_assets_fallback", True, "Phase 2 fallback", skipped=True)]
     designs = proj / ".autobot" / "designs"
     matches = sorted(designs.glob("*.png")) if designs.is_dir() else []
+    if _is_fallback(state, "2"):
+        # quality-max: even a Stitch fallback must carry ≥1 real mockup, else
+        # DEGRADED (NOT hard fail — keeps the autonomous build moving, flags the gap).
+        if bool(state.get("qualityMax")) and not matches:
+            return [_ok("design_assets_fallback", True,
+                        "Phase 2 fallback with 0 mockups — quality-max requires ≥1 real "
+                        "mockup PNG; generate one or run /autobot:plan to review",
+                        skipped=True, degraded=True)]
+        return [_ok("design_assets_fallback", True,
+                    f"Phase 2 fallback ({len(matches)} mockup png)", skipped=True)]
     return [_ok("design_png_files", len(matches) > 0, f"{len(matches)} .png in designs/")]
 
 
