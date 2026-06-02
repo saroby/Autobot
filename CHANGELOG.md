@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-02
+
 ### Added — #4 flow DSL: text_input/swipe/long_press + P1 hard mode (quality-max)
 flow acceptance 의 step `action` 을 `tap` 1종 → `tap`/`text_input`/`swipe`/`long_press` 로 확장. AXe 서브커맨드 시그니처는 `axe-cli.com/docs/command-reference` **1차 출처** 기반(`type '<text>'` positional · `swipe --start-x/--start-y/--end-x/--end-y` · `touch -x -y --down --up --delay`). anchor-based 시스템이라 swipe/long_press 는 anchor 의 describe-ui frame 중심 좌표로 변환한다.
 
