@@ -130,3 +130,8 @@
 - **검출 신호**: "primary 경로가 한 번도 안 잡히고 항상 fallback". 도구 목록(`tools:`)에 본문이 부르는 도구가 없음.
 - **방지 규칙**: 에이전트 본문이 호출하라고 지시하는 모든 도구는 `tools:` 에 부여돼야 한다. MCP 도구는 `mcp__<server>__<tool>` **전체 이름**으로 나열(와일드카드 미지원). `tools:` 생략 시 전체 상속이지만 최소권한이 깨지므로 명시 부여 선호. 플러그인 에이전트는 `mcpServers`/`hooks`/`permissionMode` frontmatter 무시됨 — `tools:` 만이 MCP grant 경로.
 - **회귀 가드**: `tests/test_agent_mcp_tool_grants.py` — `tools:` 선언 에이전트는 본문 참조 `mcp__…` 도구를 전부 grant (일반 규칙, 미래 에이전트도 보호).
+
+### 24. 품질 강화 제안이 기본 자율 완주 경로를 깨는 프레이밍 오류
+- **실패 모드**: Autobot 평가에서 비결정적 critique / visual judge / P1 warning 을 기본 `/autobot:mvp` 경로의 hard-fail 또는 자동 재작업 루프로 올리자고 제안하면, "질문 없이 끝까지 빌드"라는 시스템 정체성과 충돌한다. 과거 visual judge 는 false-positive 가 circuit breaker 를 태우지 않도록 hard-fail 에서 DEGRADED-only 로 이미 후퇴했다.
+- **검출 신호**: `scripts/gate_checks/build.py` 의 visual judge 주석처럼, hard-fail 이 Phase 5 retryCount 증가와 global circuit breaker trip 으로 이어져 자율 빌드를 멈춘다는 명시적 설계 근거가 있는데도 이를 무시한 우선순위 제안.
+- **방지 규칙**: 기본 경로는 자율 완주를 보존한다. 비결정적·미보정 품질 신호는 기본 경로에서 DEGRADED/reporting 으로 제한하고, 엄격화는 `--quality=max` 같은 opt-in 모드에 격리한다. 자동 재실행은 quality-max 에서도 1회 제한 + DEGRADED fallback 으로 circuit breaker 를 보호한다.
