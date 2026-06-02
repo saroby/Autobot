@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Added — External Signal Loop 설계 스파이크 (`docs/external-signal-loop.md`, 미구현)
+최고 leverage(외부 ground-truth)를 명문화한 **설계 문서 — 코드 0**. 출시된 앱 + (일부) ASC 인증 환경에서 구현한다. 조사 결과: 리뷰/평점 회수는 `mcp-appstore` public 스크래핑(**인증 불필요**, bundle ID 만), 비공개 메트릭(crash/retention)만 ASC Key(이미 `setup` §3.7 이 받음 — setup 수정 불필요). 핵심 미해결 = *글로벌* learnings 저장소 아키텍처(현재 프로젝트별이라 재빌드 드물어 leverage 낮음). 자가-judge Goodhart 천장을 뚫는 유일한 외부 닻 — 우선순위 최상위지만 느린 베팅.
+
 ### Added — quality 모드 결정적 게이트 2종 (2차 품질 보고서 채택분)
 2차 외부 품질 보고서의 갭 중 **결정적**(grep/파일 검사 — 거짓양성 없음)이라 quality-max 에서 DEGRADED 로 올려도 circuit breaker 를 안 태우는 둘만 채택. 비결정적 판정(visual judge·critique)은 quality 에서도 DEGRADED 천장 유지(차단 게이트로 안 올림 — 결정적/비결정적 승격 선).
 
