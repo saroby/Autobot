@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added — #4 flow DSL: text_input/swipe/long_press + P1 hard mode (quality-max)
+flow acceptance 의 step `action` 을 `tap` 1종 → `tap`/`text_input`/`swipe`/`long_press` 로 확장. AXe 서브커맨드 시그니처는 `axe-cli.com/docs/command-reference` **1차 출처** 기반(`type '<text>'` positional · `swipe --start-x/--start-y/--end-x/--end-y` · `touch -x -y --down --up --delay`). anchor-based 시스템이라 swipe/long_press 는 anchor 의 describe-ui frame 중심 좌표로 변환한다.
+
+- **flow_runner step 분기** (`scripts/flow_runner.py`): text_input(anchor tap→`axe type`), swipe(frame center→direction 좌표→`axe swipe`), long_press(frame center→`axe touch --down --up --delay`). 좌표 변환(`_anchor_frame`/`_frame_center`/`_swipe_endpoint`)은 순수 함수라 단위 테스트로 닫힘.
+- **architect** (`agents/architect.md`): feature-spec step action 제약(tap only) 완화 — `text_input`(step.text)·`swipe`(step.direction)·`long_press`(step.duration) 명시.
+- **P1 hard mode** (`scripts/gate_checks/functional.py`): qualityMax 면 P1 flow 실패가 warning 이 아니라 **DEGRADED**(출하 차단). 기본 모드는 기존 warning 유지. hard fail 아님(circuit breaker 회피).
+- 신규 테스트: flow_dsl 좌표 10종 + P1 hard mode 1종. 전체 **479 OK 회귀 0**.
+- **검증 한계 (정직)**: AXe 명령 *시그니처*는 1차 문서 기반이나, *실행*(실제 swipe/type/touch 가 시뮬레이터에서 동작하는지)은 AXe 미설치 + 시뮬레이터 부재로 **이 환경에서 미검증**. 좌표 math 만 단위로 닫혔다.
+
 ### Added — 품질 보고서 "타당한 부분": `--quality=max` opt-in 모드 + waiver 범위 축소 + unsupported 명시 제외
 외부 품질 보고서 7개 중 *타당*으로 판정된 것만 구현. **보류**(자율성·circuit breaker 충돌 또는 비용): 자동 critique 재실행·자동 UI 재작업 루프·unsupported 자동 구현·context7 필수 조회. 원칙: 기본 자율 경로(`/mvp`)는 동작 무변, 엄격함은 **opt-in**; hard fail 금지(retryCount→breaker→자율 정지 회피) → **DEGRADED**(출하만 차단).
 

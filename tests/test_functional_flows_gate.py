@@ -16,11 +16,11 @@ from gate_checks import functional  # noqa: E402
 
 
 class TestCheckFunctionalFlowsPass(unittest.TestCase):
-    def _run(self, *, features, run_result):
+    def _run(self, *, features, run_result, state=None):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(functional, "load_feature_spec", return_value=features), \
                  mock.patch.object(functional, "run_flows", return_value=run_result):
-                return functional.check_functional_flows_pass(Path(tmp), "Demo", {})
+                return functional.check_functional_flows_pass(Path(tmp), "Demo", state or {})
 
     def test_no_feature_spec_is_benign_skip(self):
         out = self._run(features=None, run_result=None)
@@ -105,6 +105,23 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
         r = out[0]
         self.assertTrue(r["passed"])      # suite passed; P1 fail is a warning
         self.assertIn("warning", r["message"].lower())
+
+    def test_p1_failure_degraded_in_quality_max(self):
+        # quality-max (#4 P1 hard mode): a P1 flow failure is no longer a warning
+        # under a green badge — DEGRADED (shipping-blocked), but NOT a hard fail
+        # (that would trip the circuit breaker). Default mode is unchanged (above).
+        out = self._run(
+            features=[object()],
+            run_result={"status": "passed", "results": [
+                {"featureId": "f1", "acceptanceId": "a1", "priority": "P1",
+                 "passed": False, "message": "not navigated"}]},
+            state={"qualityMax": True},
+        )
+        r = out[0]
+        self.assertTrue(r["passed"])       # not a hard fail
+        self.assertTrue(r["skipped"])
+        self.assertTrue(r["degraded"])     # shipping-blocked
+        self.assertIn("quality-max", r["message"].lower())
 
 
 if __name__ == "__main__":

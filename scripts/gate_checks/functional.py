@@ -289,15 +289,27 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
                            for r in p0_failed) or "P0 flow failed"
         return [_ok("functional_flows_pass", False, f"P0 flow failure: {detail}")]
 
-    note = ""
-    if p1_warned:
-        note = " | warnings: " + "; ".join(
-            f"{r['featureId']}/{r['acceptanceId']}" for r in p1_warned
-        )
     passed_count = sum(1 for r in results if r["passed"])
+    if p1_warned:
+        warn_detail = "; ".join(f"{r['featureId']}/{r['acceptanceId']}" for r in p1_warned)
+        # quality-max: P1 flow failures are no longer just warnings under a green
+        # badge — DEGRADED (shipping-blocked) so the operator must address them.
+        # NOT a hard fail: that increments retryCount and could trip the circuit
+        # breaker, halting the autonomous build.
+        if bool(state.get("qualityMax")):
+            return [_ok(
+                "functional_flows_pass", True,
+                f"{passed_count}/{len(results)} flow acceptances passed; "
+                f"quality-max: P1 flow failure(s) → DEGRADED: {warn_detail}",
+                skipped=True, degraded=True,
+            )]
+        return [_ok(
+            "functional_flows_pass", True,
+            f"{passed_count}/{len(results)} flow acceptances passed | warnings: {warn_detail}",
+        )]
     return [_ok(
         "functional_flows_pass", True,
-        f"{passed_count}/{len(results)} flow acceptances passed{note}",
+        f"{passed_count}/{len(results)} flow acceptances passed",
     )]
 
 

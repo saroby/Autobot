@@ -191,6 +191,41 @@ def _anchor_ready(elements: list[dict], anchor: str, screen: dict) -> bool:
     return False
 
 
+def _anchor_frame(elements: list[dict], anchor: str) -> tuple[float, float, float, float] | None:
+    """(x, y, width, height) of *anchor*'s frame, or None if absent/malformed.
+
+    Coordinate-based actions (swipe, long_press) need a point, but AXe's tap is
+    anchor-based — so we derive the centre from describe-ui's frame. Pure given a
+    describe-ui snapshot, so the coordinate math is unit-testable; only the AXe
+    subprocess itself stays simulator-verified.
+    """
+    for e in elements:
+        if _anchor_id(e) == anchor:
+            f = e.get("frame") or {}
+            try:
+                return (float(f["x"]), float(f["y"]), float(f["width"]), float(f["height"]))
+            except (KeyError, TypeError, ValueError):
+                return None
+    return None
+
+
+def _frame_center(frame: tuple[float, float, float, float]) -> tuple[float, float]:
+    x, y, w, h = frame
+    return (x + w / 2.0, y + h / 2.0)
+
+
+_SWIPE_UNIT = {"up": (0.0, -1.0), "down": (0.0, 1.0), "left": (-1.0, 0.0), "right": (1.0, 0.0)}
+
+
+def _swipe_endpoint(cx: float, cy: float, direction: str, distance: float) -> tuple[float, float]:
+    """End point for a swipe from (cx,cy) in *direction* over *distance* px.
+
+    Note: screen y grows downward, so 'up' subtracts y. Unknown direction → up.
+    """
+    dx, dy = _SWIPE_UNIT.get(direction, _SWIPE_UNIT["up"])
+    return (cx + dx * distance, cy + dy * distance)
+
+
 def _wait_for_anchor(udid: str, anchor: str, screen: dict,
                      *, timeout: float = DEFAULT_WAIT_TIMEOUT,
                      interval: float = DEFAULT_WAIT_INTERVAL) -> tuple[bool, list[dict]]:
@@ -280,7 +315,10 @@ def _run_acceptance(
     if not ready:
         return False, f"entry anchor '{entry_anchor}' never ready within {DEFAULT_WAIT_TIMEOUT}s"
 
-    # 2) Execute each step (cycle1 action == "tap").
+    # 2) Execute each step. Actions map to AXe subcommands whose signatures are
+    #    documented at axe-cli.com/docs/command-reference (tap/type are anchor- and
+    #    text-based; swipe/touch are coordinate-based, so we derive the point from
+    #    the anchor's frame). The AXe subprocess itself is simulator-verified only.
     for step in acceptance.steps:
         step_anchor = step.get("anchor") or ""
         action = step.get("action") or "tap"
@@ -291,6 +329,35 @@ def _run_acceptance(
             rc, _, err = _run(["axe", "tap", "--id", step_anchor, "--udid", udid])
             if rc != 0:
                 return False, f"tap '{step_anchor}' failed: {err.strip()[:80]}"
+        elif action == "text_input":
+            # Focus the field (tap), then `axe type '<text>' --udid` (positional text).
+            text = str(step.get("text", ""))
+            rc, _, err = _run(["axe", "tap", "--id", step_anchor, "--udid", udid])
+            if rc != 0:
+                return False, f"focus '{step_anchor}' for text_input failed: {err.strip()[:80]}"
+            rc, _, err = _run(["axe", "type", text, "--udid", udid])
+            if rc != 0:
+                return False, f"type into '{step_anchor}' failed: {err.strip()[:80]}"
+        elif action in ("swipe", "long_press"):
+            frame = _anchor_frame(before, step_anchor)
+            if frame is None:
+                return False, f"{action} '{step_anchor}': anchor has no frame in describe-ui"
+            cx, cy = _frame_center(frame)
+            if action == "swipe":
+                direction = str(step.get("direction", "up"))
+                ex, ey = _swipe_endpoint(cx, cy, direction, float(step.get("distance", 200)))
+                rc, _, err = _run(["axe", "swipe",
+                                   "--start-x", f"{cx:.1f}", "--start-y", f"{cy:.1f}",
+                                   "--end-x", f"{ex:.1f}", "--end-y", f"{ey:.1f}",
+                                   "--udid", udid])
+                if rc != 0:
+                    return False, f"swipe '{step_anchor}' {direction} failed: {err.strip()[:80]}"
+            else:  # long_press → axe touch -x -y --down --up --delay <seconds>
+                delay = float(step.get("duration", 1.0))
+                rc, _, err = _run(["axe", "touch", "-x", f"{cx:.1f}", "-y", f"{cy:.1f}",
+                                   "--down", "--up", "--delay", f"{delay}", "--udid", udid])
+                if rc != 0:
+                    return False, f"long_press '{step_anchor}' failed: {err.strip()[:80]}"
         else:
             return False, f"unsupported step action '{action}'"
 

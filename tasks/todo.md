@@ -24,9 +24,11 @@
       - #3 waiver buildId-scoped: build.py `allowVisualDrift == buildId` 면제 +
         resume.md 가 buildId 로 set-flag + line 169 중복 제거. stale-waiver 만료
         테스트 추가(14종). 영구 세탁 제거, testflight 동일빌드 유지.
-- [ ] **D flow DSL (#4, 가장 큼·실기기)**: intent_spec step action 에 text_input/swipe/
-      long_press + flow_runner AXe 드라이버 + P1 hard mode(qualityMax). relaunch 는
-      기존 `value_persisted_after_relaunch` 확장(추가 아님).
+- [x] **D flow DSL (#4)**: ✅ flow_runner step 분기에 text_input/swipe/long_press +
+      좌표 변환 헬퍼(_anchor_frame/_frame_center/_swipe_endpoint, 단위 테스트) +
+      architect action 제약 완화 + functional P1 hard mode(qualityMax→DEGRADED).
+      AXe 시그니처는 axe-cli.com 1차 문서 기반, 실행은 시뮬레이터 미검증(명시).
+      flow_dsl 10종 + P1 1종. 479 OK 회귀 0. (relaunch 는 기존 postcondition 그대로.)
 
 ## 보류 (평결: 자율성/breaker 충돌 또는 비용)
 - #1 HIGH critique → architect 자동 재실행 (비결정 신호 → breaker trip)

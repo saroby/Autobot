@@ -170,7 +170,12 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
    - 데이터/네비 상태: `count_increased`, `count_decreased`, `value_persisted_after_relaunch`, `navigated_to`, `artifact_generated`, `setting_stored`.
    - **공간/비주얼** (레이아웃·충실도 요구 전용): `occupies_screen_fraction` (`params:{min:0..1, axis:"both"|"width"|"height"}` — 렌더된 UI 가 화면을 얼마나 채우는지를 Phase 5 가 스크린샷에서 결정적으로 측정), `matches_visual_reference` (`params:{reference}`).
    예: `count_increased` 는 화면에 카운트 라벨 anchor 가 존재할 때만; `occupies_screen_fraction` 는 사용자가 "화면을 꽉 채우는 / full-screen / edge-to-edge / 그대로(픽셀 충실)" 류를 요구할 때 쓴다. anchor 가 렌더됐다는 것만으로는 postcondition 이 될 수 없다 (anchor-only acceptance 는 invalid).
-4. **acceptance.kind**: UI 탭/내비게이션·스크린샷으로 검증되면 `"flow"`, 모델/로직 단위로 검증되면 `"logic"`. cycle 1 에서 step `action` 은 항상 `"tap"` (공간 postcondition 은 step 이 비어 있어도 된다 — 렌더 자체가 측정 대상).
+4. **acceptance.kind**: UI 탭/내비게이션·스크린샷으로 검증되면 `"flow"`, 모델/로직 단위로 검증되면 `"logic"`. step `action` 은 다음 중 하나 — 모두 해당 step 의 `anchor` 기준으로 실행된다:
+   - `"tap"` (기본): 버튼/셀/탭 누르기.
+   - `"text_input"`: `step.text` 의 문자열을 입력 (anchor 필드에 focus 후 타이핑). 폼·검색·로그인 같은 입력 플로우에 쓴다.
+   - `"swipe"`: `step.direction` (`up`/`down`/`left`/`right`, 선택 `step.distance` px) 으로 스와이프 (anchor frame 중심에서 시작). 스크롤·캐러셀·당겨서 새로고침에 쓴다.
+   - `"long_press"`: anchor 를 길게 누르기 (선택 `step.duration` 초). 컨텍스트 메뉴·드래그 시작에 쓴다.
+   공간 postcondition 은 step 이 비어 있어도 된다 — 렌더 자체가 측정 대상. (실제 구동은 Phase 5 의 AXe 가 시뮬레이터에서 수행한다.)
 5. **레이아웃/충실도 요구는 절대 P2 로 강등 금지 (GATE-ENFORCED)**: 사용자의 한 줄 아이디어에 화면 점유/풀스크린/픽셀충실 절(예: "탭없이 화면을 꽉 채우는", "fills the screen", "edge-to-edge", "그대로")이 있으면, 그 요구를 담은 **P0 feature 1 개 이상** 을 반드시 `occupies_screen_fraction` (또는 `matches_visual_reference`) acceptance 와 함께 만든다. Gate 1→2 의 `idea_layout_requirements_captured` 가 이를 강제한다 — 누락 시 fail. 동시에 **architecture.md / Design Direction 의 레이아웃이 그 요구를 부정하면 안 된다**: 예컨대 "화면을 꽉 채운다" 와 "275×116 을 floor(width/baseWidth) 정수배로 스케일 + 남는 영역 레터박스" 를 동시에 적으면 폰에서 floor=1 → 13% 만 차지하는 모순이 된다. 풀스크린 요구에는 폭/높이에 맞춰 채우는(fit-to-screen, 분수 스케일 또는 sub-window 스택으로 세로 채움) 전략을 명시하라. (위 1–3 을 만족하는 grounded postcondition 을 *진짜로* 만들 수 없는 부가 기능만 `"P2"` 로 낮춘다 — P2 는 빈 acceptance 허용.)
 6. **최소 보장**: P0 기능은 최소 1 개의 `"flow"` acceptance 를 가진다 — 빌드의 핵심 약속은 런타임에서 실제로 클릭/렌더되어 검증돼야 한다.
 7. **`seedPolicy=="seeded"` 면 postcondition 은 상대값만 (절대값 금지)**: 시드된 앱은 첫 실행에 이미 N 개의 데이터가 있으므로, `count_increased`/`count_decreased` 처럼 **변화량**을 검증하는 postcondition 을 쓴다. "정확히 1 개가 보인다" / "리스트가 비어있다" 같은 절대-개수 단언은 시드 베이스라인과 충돌해 거짓 실패를 낸다. `"empty"` 앱에서만 빈-리스트 가정이 안전하다.
