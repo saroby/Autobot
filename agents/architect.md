@@ -44,6 +44,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 
 규칙 요약 (상세는 `references/architecture-template.md` 와 `axiom-distilled/design.md`):
 - **Design Direction**: 도메인 default 색상 (system blue / health green) 금지. 사용자 아이디어 텍스트의 무드/테마 힌트가 1순위. Primary 색상 HSB Brightness 30–70% (Liquid Glass 호환). `axiom-distilled/design.md` 자가 체크리스트 6 항목을 끝에 그대로 붙인다.
+- **Signature Layout (필수 — 시각 동질성 방지)**: `## Design Direction` 안에 `### Signature Layout` 하위 섹션을 반드시 넣는다. 4종 Layout Personality 는 *출발 힌트*로만 쓰고, 이 앱만의 **hero element · 정보 위계 · density · 화면 간 차별화**를 구체적으로 명시한다 (추상어 "modern/clean" 금지). 모든 화면을 동일 `List`/`LazyVStack` 카드로 채우지 않는다 — 최소 primary 와 2순위 화면은 시각적으로 구별되는 레이아웃을 가진다. 표 형식은 `references/architecture-template.md` 의 *Signature Layout* 참조. Gate 1→2 `design_direction_complete` 가 이 heading 을 강제하고, Phase 2.5 critique(디자인 축)가 "templated/제네릭/화면 간 동일"을 점검한다.
 - **Privacy API Categories**: SwiftData 사용 시 `NSPrivacyAccessedAPICategoryFileTimestamp (C617.1)` 는 **항상** 포함 — 빠뜨리면 App Store 리젝.
 - **Permissions**: 한국어 설명 의무.
 - **Dependencies**: Apple 기본 프레임워크 우선. 외부 SPM 은 정말 필요할 때만.
@@ -78,12 +79,20 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
   "featureModules": ["Home", "Detail", "Settings"],
   "requiredRepositories": ["ItemRepository"],
   "requiresBackend": false,
+  "seedPolicy": "seeded",
   "iosCapabilities": {
     "deploymentTarget": "26.0",
     "modernFeatures": ["LiquidGlass", "FoundationModels"]
   }
 }
 ```
+
+`seedPolicy` 규칙 (필수 — 빈 껍데기 첫인상 방지):
+- 값은 `"seeded"` 또는 `"empty"` 중 하나. **앱 성격으로 결정한다.**
+- `"seeded"`: 첫 화면이 *남이 만든 콘텐츠/집계*를 보여주는 앱 — 콘텐츠 소비형, 대시보드, 소셜 피드, 갤러리, 탐색/발견형, 카탈로그. 빈 채로 열리면 "고장났거나 미완성"으로 읽힌다. → 빌드된 앱이 첫 실행 시 데이터로 채워져야 한다 (data-engineer 의 `seedIfNeeded` 가 시드, quality-engineer 가 wiring).
+- `"empty"`: 첫 화면이 *사용자가 직접 만드는 것*을 담는 앱 — todo, 저널, 노트, 습관 트래커, 개인 기록. 빈 시작이 본질이고 EmptyState 가 정답. 시드하면 오히려 사용자 데이터를 오염시킨다.
+- 애매하면 `"empty"` (보수적 — 잘못된 시드가 잘못된 빈 화면보다 위험).
+- `"seeded"` 로 정했다면, 시드는 반드시 **`app-intent.json.primaryScreenTitle` 이 렌더하는 모델**을 채워야 한다 (주변 모델만 채우면 홈 화면은 여전히 비어 vision_judge 가 깨진다). Gate 5→6 의 `first_launch_seeded` 가 `seedPolicy=="seeded"` 일 때 진입점의 `seedIfNeeded()` 호출을 강제한다.
 
 `designSystemModule` 규칙 (필수):
 - 값 = `appName + "DS"` (예: `appName: "Instagram"` → `"InstagramDS"`).
@@ -162,6 +171,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 4. **acceptance.kind**: UI 탭/내비게이션·스크린샷으로 검증되면 `"flow"`, 모델/로직 단위로 검증되면 `"logic"`. cycle 1 에서 step `action` 은 항상 `"tap"` (공간 postcondition 은 step 이 비어 있어도 된다 — 렌더 자체가 측정 대상).
 5. **레이아웃/충실도 요구는 절대 P2 로 강등 금지 (GATE-ENFORCED)**: 사용자의 한 줄 아이디어에 화면 점유/풀스크린/픽셀충실 절(예: "탭없이 화면을 꽉 채우는", "fills the screen", "edge-to-edge", "그대로")이 있으면, 그 요구를 담은 **P0 feature 1 개 이상** 을 반드시 `occupies_screen_fraction` (또는 `matches_visual_reference`) acceptance 와 함께 만든다. Gate 1→2 의 `idea_layout_requirements_captured` 가 이를 강제한다 — 누락 시 fail. 동시에 **architecture.md / Design Direction 의 레이아웃이 그 요구를 부정하면 안 된다**: 예컨대 "화면을 꽉 채운다" 와 "275×116 을 floor(width/baseWidth) 정수배로 스케일 + 남는 영역 레터박스" 를 동시에 적으면 폰에서 floor=1 → 13% 만 차지하는 모순이 된다. 풀스크린 요구에는 폭/높이에 맞춰 채우는(fit-to-screen, 분수 스케일 또는 sub-window 스택으로 세로 채움) 전략을 명시하라. (위 1–3 을 만족하는 grounded postcondition 을 *진짜로* 만들 수 없는 부가 기능만 `"P2"` 로 낮춘다 — P2 는 빈 acceptance 허용.)
 6. **최소 보장**: P0 기능은 최소 1 개의 `"flow"` acceptance 를 가진다 — 빌드의 핵심 약속은 런타임에서 실제로 클릭/렌더되어 검증돼야 한다.
+7. **`seedPolicy=="seeded"` 면 postcondition 은 상대값만 (절대값 금지)**: 시드된 앱은 첫 실행에 이미 N 개의 데이터가 있으므로, `count_increased`/`count_decreased` 처럼 **변화량**을 검증하는 postcondition 을 쓴다. "정확히 1 개가 보인다" / "리스트가 비어있다" 같은 절대-개수 단언은 시드 베이스라인과 충돌해 거짓 실패를 낸다. `"empty"` 앱에서만 빈-리스트 가정이 안전하다.
 
 스키마 SSOT 는 위 JSON 블록 + `scripts/intent_spec.py` 의 `FeatureSpec`/`Acceptance`/`Postcondition` 데이터클래스다. 검증기: `validate_feature_spec` (구조), `assess_feature_spec_quality` (postcondition 품질).
 

@@ -3,6 +3,18 @@
 App 엔트리포인트에서 Stub을 실제 Repository로 교체하는 패턴.
 아키텍처 복잡도에 따라 3가지 패턴을 제공한다.
 
+## First-Launch Seeding (`seedPolicy=="seeded"` 일 때만)
+
+`.autobot/architecture.json` 의 `seedPolicy` 가 `"seeded"` 면, 아래 세 패턴 어디서든
+**`ModelContainer` 를 만든 직후** `SampleData.seedIfNeeded(container.mainContext)` 를
+호출한다 (data-engineer 가 작성한 멱등 factory — 빌드된 앱이 첫 실행 시 빈 화면이
+아니라 채워진 primary 화면으로 열리게 한다). SwiftUI `App` 프로토콜은 `@MainActor`
+이므로 App `init()` 에서 `@MainActor` seed 함수를 직접 호출할 수 있다.
+
+- `seedPolicy` 가 `"empty"` 이거나 없으면 호출하지 않는다 (빈 시작이 정답인 todo/저널류).
+- Gate 5→6 의 `first_launch_seeded` 가 `seedPolicy=="seeded"` 일 때 진입점의
+  `seedIfNeeded()` 호출 존재를 강제한다 — seeded 인데 누락이면 게이트 FAIL.
+
 ## Pattern 1: Simple (로컬 전용, 서비스 1~2개)
 
 가장 흔한 패턴. SwiftData만 사용하고 백엔드가 없는 앱.
@@ -42,6 +54,8 @@ struct MyApp: App {
         } catch {
             fatalError("ModelContainer init failed: \(error)")
         }
+        // seedPolicy=="seeded" 일 때만 — 첫 실행 시 primary 화면을 채운다 (멱등)
+        SampleData.seedIfNeeded(container.mainContext)
     }
 
     var body: some Scene {
@@ -55,6 +69,10 @@ struct MyApp: App {
     }
 }
 ```
+
+> **다른 패턴도 동일**: Pattern 2/3 의 `init()` 에서도 `container = try ModelContainer(...)`
+> 직후 (services/apiClient 배선 전후 무관) 같은 한 줄을 넣는다. `seedPolicy=="empty"`
+> 면 이 줄을 넣지 않는다.
 
 ### 왜 ModelContainer를 직접 생성하는가?
 
@@ -191,6 +209,10 @@ grep -qi "ModelContainer" <AppName>/App/<AppName>App.swift
 
 # 4. ServiceStubs.swift가 여전히 존재하는지 (삭제하면 Preview 에러)
 test -f <AppName>/App/ServiceStubs.swift
+
+# 5. seedPolicy=="seeded" 면 seed 호출이 진입점에 있는지 (Gate 5→6 first_launch_seeded)
+[ "$(jq -r '.seedPolicy // empty' .autobot/architecture.json)" != "seeded" ] \
+  || grep -q "seedIfNeeded" <AppName>/App/*.swift
 ```
 
 ## 흔한 Wiring 실수

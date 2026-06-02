@@ -39,6 +39,7 @@ Follow the skill's Step 0~6 in exact order. The skill contains:
 **Critical Rules:**
 - `<AppName>/Models/`는 절대 수정하지 않는다 — architect의 타입 계약이 SSOT
 - `ServiceStubs.swift`는 삭제하지 않는다 — Preview/테스트용으로 보존
+- **First-launch seed (`seedPolicy=="seeded"` 일 때만)**: wiring(Step 1)에서 `ModelContainer` 생성 직후 `SampleData.seedIfNeeded(container.mainContext)` 호출을 진입점에 배선한다. `.autobot/architecture.json` 의 `seedPolicy` 를 먼저 확인하라. `"empty"`/미지정이면 호출하지 않는다. Gate 5→6 의 `first_launch_seeded` 가 일치를 검증한다 (상세 패턴은 `wiring-patterns.md`).
 - 빌드 에러를 하나씩 고치지 말고, **먼저 분류**한 다음 근본 원인부터 수정한다
 - 5회 빌드 반복 후에도 실패하면 Phase 4 재생성을 권고한다
 - **Build-Fix Loop 는 spec `policies.buildFixLoop` 가 SSOT**. 각 attempt 후 xcodebuild stderr 를 `python3 $CLAUDE_PLUGIN_ROOT/scripts/error_signature.py record --phase 5 --stderr-file <log>` 로 기록한다. exit code 2 (signature 2회 반복 = breaker trip) 가 나오면 즉시 수정 시도를 중단하고 `snapshot-contracts.sh restore-phase --phase 4` 로 되돌린 뒤 동일 에러를 다시 만들지 않을 다른 전략으로 attempt 를 시작한다. 모든 attempt 는 `build_fix_attempt` 이벤트로 기록되어야 한다 (`scripts/build-log.sh --event build_fix_attempt --detail '{"attempt":N,"signature":"...","category":"..."}'`).

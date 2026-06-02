@@ -1,3 +1,138 @@
+# 시각 동질성 깨기 — Signature Layout + critique 축 + 모델 격상 (개선축 #1)
+
+목적: 생성 앱이 "또 그 앱처럼 생김"(AI 슬롭) 에서 벗어나게. 근본 진단: Layout
+Personality 가 **4종 폐쇄 분류**(`architecture-template.md:96`)고 ui-builder 가 그에
+묶인 **고정 코드 스니펫**(`ui-builder.md:79-138`)을 적용 → 여행/레시피/뉴스 앱이 모두
+content-forward 면 동일 LazyVStack 카드 피드. + 보이는 에이전트 전부 `model: sonnet`.
+
+## 설계 결정 (advisor 프레임 — #2 와 다른 종류의 과제)
+- **미적 품질은 결정적 측정 불가.** #2 플레이북(새 결정적 게이트) 그대로 끼우면 가짜
+  검증. 동질성은 **intent 단계**(architect Design Direction / Phase 2.5 critique)에서
+  잡는다 — Phase 5 충실도(visual_judge)에서 잡으면 Goodhart(제네릭을 충실히 구현=통과).
+- **트랩 A (safe-area 보존)**: 4종 스니펫은 *레이아웃 모양*(동질성→바꿈)과 *안전
+  스캐폴딩*(`.safeAreaInset`, bottom ignoresSafeArea 금지→불변)을 섞어 담음. 통째로
+  헐면 `no_tabbar_safearea_smells` 가 막던 버그 재오픈. 둘을 분리: 모양 다양화 + 불변식 보존.
+- 사용자 선택: **몰드 확장 + critique 축 + 모델 격상**(①+③ 짝, advisor 권장).
+
+## 정직한 검증 스토리 (미적은 게이트 못 만듦 — 숨기지 않음)
+- (a) architect 가 Signature Layout 을 emit 하나 → `design_direction_complete` 게이트 강제
+- (b) critique 에 레이아웃 동질성 축이 들어갔나 → grep
+- (c) **안전 불변식 생존** → `no_tabbar_safearea_smells` fixture 여전히 통과 (회귀 0)
+- "더 예뻐졌다" = A/B·사람 판단. 게이트가 증명한다고 흉내내지 않는다.
+
+## Plan — 결과
+- [x] 1. `architecture-template.md` — 4종=출발 힌트로 강등 + `### Signature Layout`
+        1급 표(hero·위계·density·화면간 차별화 + 예시 + 금지: 전화면 동일 List)
+- [x] 2. `agents/architect.md` — Design Direction 규칙에 Signature Layout emit 강제
+- [x] 3. `agents/ui-builder.md` — 4패턴=출발 골격(Signature 우선)으로 프레임 +
+        safe-area 4규칙을 "레이아웃 불변식"으로 명시 강조(트랩 A) + `model: opus`
+- [x] 4. `autobot-plan-preview/SKILL.md` — critique 디자인 축에 레이아웃 동질성(HIGH)
+- [x] 5. `gate_checks/setup.py` — `check_design_direction_complete` 에 signature heading
+- [x] 6. `test_signature_layout_gate.py` 2종 + CHANGELOG. (트랩 A: 4패턴 스니펫·게이트
+        코드 `no_tabbar_safearea_smells`(app.py) 미변경 — 안전 스캐폴딩 보존+강화.)
+
+## Verify — 결과
+- [x] 전체 슈트 **454 OK** (452→454, 신규 2, 회귀 0)
+- [x] render --check up-to-date / verify_spec_docs 전부 PASS (phase-gates drift 0)
+- [x] (a) signature 누락(다른 섹션 완전) → Gate fail / 완전 → pass — 테스트로 특정 검증
+- [x] (c) safe-area 불변식: 게이트 코드(`gate_checks/app.py`) 미변경 + ui-builder 가
+      불변식으로 *강조* → 약화 아닌 강화. diff 로 변경 범위 확인.
+- [x] 정직한 한계 명시: 미적 개선은 A/B·사람 판단(게이트가 증명 못 함).
+
+## Results
+- **변경 6파일**(코어): architecture-template.md, architect.md, ui-builder.md(+opus),
+  plan-preview/SKILL.md, gate_checks/setup.py (+테스트·CHANGELOG).
+- **동작**: architect 가 Signature Layout 을 1급으로 emit(Gate 1→2 가 heading *존재*
+  강제) → ui-builder(opus) 가 4종 골격을 그 위에서 변형(safe-area 불변). Phase 2.5
+  critique 동질성 축은 `manual` 이라 **자율 `/mvp` 에선 skip**, `/plan` 검토 시 advisory.
+- **정직한 한계 (advisor 지적 반영)**: 자율 빌드 기계 강제 = heading 존재 grep 하나뿐
+  (제네릭 한 줄로 통과 가능 = Goodhart). 실제 고유성은 architect Signature 품질 +
+  opus 구현에 달렸고 A/B·사람 판단 — 게이트가 증명 못 함. CHANGELOG 에 명시.
+- **⚠️ 무관 변경 발견**: `references/axiom-distilled/data-concurrency.md`(+41/-6,
+  SFSpeechRecognizer @Sendable 함정)는 이 세션 외 변경 — 건드리지 않음. 사용자 확인 필요.
+
+---
+
+# First-launch seeding — 생성 앱의 "첫인상" 전문성 (개선축 #2)
+
+목적: 플러그인이 만드는 앱이 TestFlight 첫 실행 시 빈 껍데기로 뜨지 않게 한다. 단,
+빈 시작이 본질인 앱(todo/저널)은 그대로 둔다. 근본 진단: data-engineer 의
+`SampleData.swift` 는 **Preview/test 전용**(data-engineer.md:33), ui-builder
+`ServiceStubs` 도 Preview mock(ui-builder.md:70) — **런타임 first-launch seed 경로가
+어느 에이전트 프롬프트에도 없다.** 반면 app-review SKILL.md:233 은 "Autobot
+scaffolds include seed data" 라고 *가정* → 의도-구현 drift (unenforced 가정의 부패).
+
+## 설계 결정 (advisor 2회 검토 반영)
+
+1. **seedPolicy 는 architect 가 결정 → architecture.json** (게이트가 읽을 곳; scaffold
+   /Gate 4→5 가 이미 이 파일 필드를 읽음, architect.md:93). `"seeded" | "empty"`.
+2. **factory 패턴 (BLOCK)**: seed 는 매 호출 새 @Model 인스턴스 생성·insert. static
+   let 인스턴스 insert 금지 (SwiftData 모델은 한 context 만 소유 → 크래시). `@Relationship`
+   그래프까지 채워야 화면이 산다.
+3. **versioned seed-once 플래그 (BLOCK)**: `autobot.seeded.v1` (UserDefaults). emptiness
+   기반 금지 — 사용자 삭제분 부활 + feature-spec `value_persisted_after_relaunch` 와 충돌.
+4. **게이트를 Slice 1 에 포함 (BLOCK·검증스토리)**: 프롬프트만 고치면 다음 빌드가 실제
+   seed 하는지 증명 불가 = app-review:233 처럼 또 하나의 unenforced 가정. Gate 5→6 정적
+   체크 `first_launch_seeded` (seeded 인데 진입점에 seed 호출 없으면 FAIL). 기존
+   `app_uses_real_repositories` procedural 패턴 재사용.
+5. **primary 화면 접지 (BLOCK)**: seed 는 `app-intent.primaryScreenTitle` 모델을 포함
+   (주변 모델만 채우면 홈이 비어 vision_judge 통과 못 함). seeded 앱 feature-spec
+   postcondition 은 절대값(정확히 N개) 금지 → 상대값(count_increased).
+6. **empty 정책 안전 (확인됨)**: `visual_contract.py:281` — fill requirement(풀스크린
+   요구) 없으면 occupancy 는 informational, 게이트 fail 안 함. todo/저널은 그런 요구가
+   없어 기존 screen-fill/occupies 가 부당하게 막지 않는다. 새 정적 체크도 seeded 조건부.
+
+## Plan (Slice 1 — 코어 + 정적 게이트) — 결과
+
+- [x] 1. `agents/architect.md` — (d) 스키마 `seedPolicy` + 판단 규칙(seeded/empty,
+        애매하면 empty) + primary 접지 + feature-spec rule 7(상대값 못박기)
+- [x] 2. `agents/data-engineer.md` — step 6 확장 + *Runtime First-Launch Seeding*
+        섹션(`seedIfNeeded(_:)` factory·seed-once·@Relationship·품질·코드예시)
+- [x] 3. `wiring-patterns.md` — 도입부 시딩 규칙 + Pattern 1 init 호출 + 검증 #5
+- [x] 4. `agents/quality-engineer.md` — Critical Rules 에 seed wiring 강제
+- [x] 5. `scripts/gate_checks/build.py` — `check_first_launch_seeded`(예외안전·App/*.swift grep)
+- [x] 6. `scripts/gate_runner.py` — import + GATE_CHECKS 매핑
+- [x] 7. `spec/pipeline.json` — Gate 5→6 `first_launch_seeded` procedural check
+- [x] 8. `autobot-app-review/SKILL.md` — seedPolicy 분기 안내로 drift 해소
+- [x] 9. CHANGELOG [Unreleased] Added. (CONVENTIONS 는 Info.plist 전용 → seedPolicy
+        SSOT 는 architect.md (d), 중복 안 함. README 는 auto-render, drift 0.)
+
+## Verify — 결과
+- [x] 전체 슈트 **452 OK** (443→452, 신규 9, 회귀 0) — `python3 -m unittest discover -s tests`
+- [x] `render_pipeline_docs.py --check` = up to date / `verify_spec_docs.py` 전부 PASS
+      (특히 "Check implementations in gate_runner.py: PASS" = spec↔registry 일치)
+- [x] 게이트 4분기 직접 검증: seeded+호출=PASS / seeded+무=FAIL / empty=SKIP /
+      legacy=SKIP. + garbled JSON·다른 App 파일 seam 도 테스트로 커버.
+- [x] **집계 롤업 안전 (advisor 핵심)**: `gate_runner.py:340-348` 코드 확인 — benign
+      skip(skipped only, no degraded)은 `group_passed=True` → 게이트 green 유지,
+      배지 영향 0(backend_required N/A skip 과 동일 패턴). legacy 빌드 + 모든 empty
+      앱 VERIFIED 유지(광범위 회귀 없음). `test_skip_is_benign_not_degraded` 로 잠금.
+- [x] **e2e 직교 확인**: `e2e_verify.py:183-184` 는 logic/flow 두 축만 실행 →
+      `first_launch_seeded` 미평가. GreenApp DEGRADED 는 시뮬레이터 부재(환경)이지
+      이 변경과 무관. 게이트를 GreenApp/RedApp fixture 에 직접 돌려 skip→pass 확인.
+- [x] **advisor 아티팩트 수정**: data-engineer seed 예시의 `try? context.save()` →
+      `do/catch + assertionFailure` (프로젝트 자체 `try?` 금지 규칙과의 자가모순 제거,
+      seed 실패=빈화면이라 loud fail 이 더 정확).
+
+## Results
+- **변경 8파일**: architect/data-engineer/quality-engineer.md, wiring-patterns.md,
+  app-review/SKILL.md, gate_checks/build.py, gate_runner.py, pipeline.json (+테스트+CHANGELOG).
+- **동작**: architect 가 앱 성격으로 seedPolicy 결정 → seeded 면 data-engineer 가 멱등
+  factory 작성 → quality-engineer 가 ModelContainer init 직후 호출 → Gate 5→6 이
+  의도-구현 일치를 강제. empty 앱은 전 경로 무영향(기존 게이트도 안 막음, 확인됨).
+- **검증 스토리**: 게이트가 없으면 "프롬프트가 시드를 *말하지만* 빌드가 *하는지*"를
+  증명 못 함 → app-review:233 의 부패한 가정 재현. 정적 grep 게이트가 그 갭을 닫음.
+
+## Slice 2 (후속, 별도) — 행위 검증
+- screen-fill 캡처(commit 9f6cfcf) 재사용해 "primary 화면이 실제로 채워졌나"를
+  스크린샷으로 확인. 정적 체크 위에 행위 검증을 얹는다.
+- **rule 7 게이트화**: "seeded 면 postcondition 상대값" 은 현재 architect 프롬프트
+  지시일 뿐 미강제 — 어기면 seed 베이스라인 vs 절대-개수 acceptance 충돌이
+  런타임 functional_flows 에서야 드러난다. Gate 1→2 의 `feature_spec_quality` 에
+  "seedPolicy==seeded → 절대-개수 postcondition 거부" 정적 체크 추가 검토.
+
+---
+
 # CI 빨강 수정 — 단위 슈트의 Xcode/시뮬레이터 hard-coupling 제거 (외부 모델 검수 #1·#2·#3)
 
 목적: 외부 모델이 짚은 약점 검증 후 수정. #1+#2 는 근본 원인 1개 — `conftest.IsolatedProjectCase.setUp` 이 `advance-phase 0` 를 돌리고 Gate 0 `environment_ready`(`gate_checks/setup.py`)가 `xcrun`/`xcode-select` 를 live probe 로 hard-fail → 무-Xcode Ubuntu CI 가 0.7.2 이후 ~5릴리스 빨강(맥에선 초록이라 안 보임). #3 버전/README drift.

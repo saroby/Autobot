@@ -1251,6 +1251,11 @@
         },
         {
           "type": "procedural",
+          "name": "first_launch_seeded",
+          "label": "first_launch_seeded"
+        },
+        {
+          "type": "procedural",
           "name": "runtime_smoke",
           "label": "runtime_smoke"
         },

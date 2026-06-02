@@ -1,7 +1,7 @@
 ---
 name: ui-builder
 description: Use this agent when building SwiftUI views for an iOS 26+ app. Reads architecture document and Model/ServiceProtocol files, generates all view files with Liquid Glass design, navigation, and accessibility.
-model: sonnet
+model: opus
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 
@@ -76,7 +76,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 8. **Create Each Screen** (Layout Personality 반영): One Swift file per screen in `<AppName>/Views/Screens/`
    - **Primary (design-spec.md 존재 시)**: 해당 화면의 디자인 토큰, 레이아웃 노트, 목업 이미지(`.autobot/designs/<ScreenName>.png`)를 참조하여 Stitch 디자인을 충실히 구현
    - **Fallback (목업 이미지 미존재 시)**: design-spec.md의 최소 룩앤필 계약과 architecture.md의 Key UI Elements를 결합한다. 기능만 되는 기본 SwiftUI 화면으로 대체하지 않는다.
-   - **Layout Personality 적용**: architecture.md의 `Layout Personality` 섹션을 읽고 화면별로 아래 패턴을 적용한다:
+   - **Signature Layout 우선 (시각 동질성 방지)**: 먼저 architecture.md의 `### Signature Layout` 을 읽고 그 hero element·정보 위계·density·화면 간 차별화를 구현한다. 아래 4종 패턴은 *출발 골격*일 뿐 — **그대로 베끼지 말고 Signature Layout 에 맞춰 변형**한다. 모든 화면을 동일한 `List`/`LazyVStack` 카드로 채우면 안 된다(최소 primary 와 2순위 화면은 시각적으로 구별; Phase 2.5 critique 의 디자인 축이 "templated/제네릭/화면 간 동일"을 점검). `Layout Personality` = 출발 힌트, `Signature Layout` = 그 위의 앱 고유 결정. 아래는 변형의 출발점으로만 참조한다:
 
    **data-driven 패턴:**
    ```swift
@@ -143,9 +143,9 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 
 Follow ALL patterns from `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` exactly. Do NOT use patterns listed in the Anti-Patterns table.
 
-**Tab Bar 콘텐츠 겹침 방지 (필수, 과거 재발 2회):**
+**Tab Bar 콘텐츠 겹침 방지 (필수, 과거 재발 2회 — 레이아웃 불변식):**
 
-탭 화면을 만들 때마다 다음 4개 규칙을 적용한다. 자세한 코드 예시는 `references/ios-ux-style.md` 의 *Tab Bar 와 콘텐츠 겹침 방지* 섹션 참조.
+**Signature Layout 으로 화면 모양을 어떻게 바꾸든, 아래 4규칙은 모든 레이아웃에 무관하게 적용되는 불변식이다** (레이아웃 *모양* 은 자유화하되 *안전 스캐폴딩* 은 보존 — Gate 4→5 `no_tabbar_safearea_smells` 가 강제). 탭 화면을 만들 때마다 다음 4개 규칙을 적용한다. 자세한 코드 예시는 `references/ios-ux-style.md` 의 *Tab Bar 와 콘텐츠 겹침 방지* 섹션 참조.
 
 1. **자식 뷰 콘텐츠에 `.ignoresSafeArea(.*, edges: .bottom)` 금지.** 배경 컬러/그라디언트에만 허용한다. 배경과 콘텐츠를 `ZStack` 으로 분리한다.
 2. **Floating button / sticky CTA / 커스텀 bottom bar 는 반드시 `.safeAreaInset(edge: .bottom) { ... }` 으로 부착한다.** `overlay(alignment: .bottom)` + 고정 offset 으로 배치하지 않는다.

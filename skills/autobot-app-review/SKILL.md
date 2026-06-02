@@ -230,7 +230,7 @@ Load `$SKILL_PATH/SKILL.md` via the Skill tool. The skill itself asks for 6 inpu
 | Locales | `ko` (and `en-US` if `app-marketing-context.md` flags international) |
 | Device | `iPhone 17 Pro Max` (6.9" — captures at the largest required ASC size, downscaled by Phase D-2) |
 | Appearance | `light` (single appearance; second submission can vary) |
-| Seed data | Detect via `grep -lE 'previewData\|DemoData\|PreviewProvider'` in `.autobot/architecture.md`'s referenced files. If unknown: default to "fresh install seeds it automatically" — Autobot scaffolds include seed data |
+| Seed data | Read `seedPolicy` from `.autobot/architecture.json`. `"seeded"` → a fresh install auto-populates the primary screen via data-engineer's `seedIfNeeded` (capture directly). `"empty"` (todo/journal) → a fresh install is intentionally blank; drive the primary flow to create a few entries before capturing so screenshots aren't empty. Missing field (legacy build) → capture as-is. |
 
 **Critical**: when invoking the skill via the Skill tool, prefix the user message with:
 > Context: this is an automated Autobot run. Pre-derived answers live in `.autobot/screenshot-plan.md` and `app-marketing-context.md`. Do not ask follow-up questions — read the files and proceed. Use defaults for any unspecified value.

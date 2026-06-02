@@ -30,7 +30,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 3. **Read Model Files**: Read ALL `.swift` files in `<AppName>/Models/` to learn exact type names, properties, and initializers
 4. **Create Repositories**: `<AppName>/Services/` directory with data access patterns using the exact Model types
 5. **Create Network Layer**: If API needed, `<AppName>/Services/Networking/` directory
-6. **Create Sample Data**: Preview/test data in `<AppName>/Utilities/SampleData.swift` using exact Model initializers
+6. **Create Sample Data + Runtime Seed**: `<AppName>/Utilities/SampleData.swift`. Preview/test data using exact Model initializers, **그리고** `.autobot/architecture.json` 의 `seedPolicy` 가 `"seeded"` 면 런타임 first-launch seed factory `seedIfNeeded(_:)` 도 같은 파일에 작성한다 (아래 *Runtime First-Launch Seeding* 섹션 — 빈 껍데기 첫인상 방지). `seedPolicy` 가 `"empty"` 이거나 없으면 seed factory 를 만들지 않는다 (빈 시작이 정답인 앱).
 7. **Backend Integration (if backend required)**: Read architecture.md `## iOS Configuration` section, then:
    - NetworkService에서 `Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL")` 사용
    - 모든 API 호출에 `Authorization: Bearer <token>` 헤더 주입
@@ -41,6 +41,59 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 - Do NOT create, modify, or overwrite any files in `<AppName>/Models/`. The architect already generated them.
 - If the Models are missing a convenience method, add it as an extension in `<AppName>/Services/Extensions/` — never touch the original Model files.
 - Use the exact initializer signatures from Model files when creating sample data.
+
+**Runtime First-Launch Seeding (`seedPolicy=="seeded"` 일 때만):**
+
+`.autobot/architecture.json` 의 `seedPolicy` 가 `"seeded"` 면, 빌드된 앱이 TestFlight 첫 실행 시 빈 화면이 아니라 채워진 primary 화면으로 열리도록 런타임 seed factory 를 `SampleData.swift` 에 작성한다. quality-engineer 가 Phase 5 wiring 에서 `ModelContainer` 생성 직후 `SampleData.seedIfNeeded(container.mainContext)` 를 호출한다 (너는 함수만 작성, 호출/배선은 quality-engineer).
+
+규칙 (Gate 5→6 `first_launch_seeded` 가 강제):
+
+1. **함수 이름은 정확히 `seedIfNeeded(_:)`** — 게이트가 진입점에서 이 호출을 grep 한다. 시그니처: `@MainActor static func seedIfNeeded(_ context: ModelContext)`.
+2. **factory 패턴 (필수)**: seed 안에서 **매번 새 `@Model` 인스턴스를 생성해 `context.insert(...)`** 한다. Preview 용 `static let sampleItems` 같은 *미리 만든 인스턴스를 insert 하지 마라* — SwiftData 모델은 한 `ModelContext` 만 소유할 수 있어 production context 에 다시 넣으면 크래시한다. Preview 데이터(static let)와 런타임 seed(factory)는 별개다.
+3. **seed-once 플래그 (필수)**: `UserDefaults.standard.bool(forKey: "autobot.seeded.v1")` 로 가드한다. 이미 true 면 즉시 return, seed 후 true 로 설정. "store 가 비었으면 seed" 방식 금지 — 사용자가 데이터를 다 지운 뒤 재실행하면 부활하고, `value_persisted_after_relaunch` 검증과 충돌한다.
+4. **primary 모델 우선 (필수)**: `app-intent.json.primaryScreenTitle` 이 렌더하는 화면의 모델을 반드시 채운다. 주변 모델만 채우면 홈이 비어 vision_judge 가 깨진다.
+5. **`@Relationship` 그래프까지 채움**: 관계가 있으면 부모–자식을 함께 만들어 연결한다 (예: 글에 댓글, 앨범에 사진). 그래야 detail 화면도 산다.
+6. **데이터 품질**: 도메인에 현실적인 카피/값으로 화면을 채울 만큼 (보통 8–12 개). `"Sample"`, `"Item 1"`, `lorem ipsum` 같은 placeholder 금지 — 첫인상이 곧 전문성이다.
+7. 마지막에 `do { try context.save() } catch { assertionFailure(...) }` — `try?`/`try!` 금지(Phase 5 가 신규 `try?` 0건을 grep). seed 실패는 빈 화면이므로 loud fail 이 옳고, save 성공 후에만 seed-once 플래그를 세운다.
+
+```swift
+import SwiftData
+import Foundation
+
+@MainActor
+enum SampleData {
+    // Preview 전용 — #Preview 에서만 사용 (런타임 seed 와 별개)
+    static let previewItems: [Item] = [ /* ... */ ]
+
+    /// 런타임 first-launch seed. seedPolicy=="seeded" 앱에서 quality-engineer 가
+    /// ModelContainer 생성 직후 1회 호출한다. seed-once 플래그로 멱등.
+    static func seedIfNeeded(_ context: ModelContext) {
+        let key = "autobot.seeded.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+
+        // factory: 매 호출 새 인스턴스 생성 (static let 재사용 금지)
+        let trips = [
+            Trip(title: "Kyoto in Autumn", summary: "Temples, maples, and quiet streets."),
+            Trip(title: "Lisbon Food Walk", summary: "Pastéis, tascas, and tram 28."),
+            // … 화면을 채울 만큼 (8–12), 도메인 현실적 카피
+        ]
+        for trip in trips {
+            context.insert(trip)
+            // @Relationship 도 함께 채운다
+            trip.stops = [Stop(name: "Day 1", note: "…"), Stop(name: "Day 2", note: "…")]
+        }
+
+        // try? 금지(axiom data-concurrency pre-read) — seed 실패는 곧 빈 화면이라
+        // loud fail 이 옳다. save 성공 후에만 플래그를 세워 실패 시 다음 실행에 재시도.
+        do {
+            try context.save()
+            UserDefaults.standard.set(true, forKey: key)
+        } catch {
+            assertionFailure("seed failed: \(error)")
+        }
+    }
+}
+```
 
 **Repository Pattern — Service 프로토콜 구현:**
 

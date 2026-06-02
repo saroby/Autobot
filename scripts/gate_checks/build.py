@@ -262,3 +262,43 @@ def check_app_uses_real_repositories(proj: Path, app: str, state: dict) -> list[
 
 def check_service_stubs_preserved(proj: Path, app: str, state: dict) -> list[dict]:
     return [_file_exists(proj / app / "App" / "ServiceStubs.swift", "stubs_for_preview")]
+
+
+def check_first_launch_seeded(proj: Path, app: str, state: dict) -> list[dict]:
+    """Enforce the architect's seed policy on the built app.
+
+    The architect classifies each app in ``.autobot/architecture.json`` as either
+    ``seedPolicy: "seeded"`` (content/dashboard/social — a blank first launch reads
+    as broken) or ``"empty"`` (todo/journal — a blank start is the whole point).
+
+    When the policy is ``"seeded"``, the app entry point wired by quality-engineer
+    (autobot-integration-build) MUST call the data-engineer's runtime seed factory
+    so a fresh install lands on a populated primary screen. The contract function
+    name is ``seedIfNeeded`` (data-engineer.md + wiring-patterns.md SSOT).
+
+    ``"empty"`` and legacy builds with no seedPolicy field are skipped — a blank
+    install is correct there and ``visual_contract`` only hard-fails fill when the
+    idea actually asks for it, so empty apps are never penalised.
+    """
+    try:
+        arch = load_json(proj / ".autobot" / "architecture.json") or {}
+        policy = arch.get("seedPolicy")
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        policy = None
+
+    if policy != "seeded":
+        return [_ok(
+            "first_launch_seeded", True,
+            f"seedPolicy={policy!r} — runtime seeding not required",
+            skipped=True,
+        )]
+
+    app_dir = proj / app / "App"
+    swift = sorted(app_dir.glob("*.swift")) if app_dir.is_dir() else []
+    combined = "\n".join(f.read_text(encoding="utf-8", errors="replace") for f in swift)
+    found = bool(re.search(r"seedIfNeeded", combined))
+    return [_ok(
+        "first_launch_seeded", found,
+        f"seedPolicy=seeded → seedIfNeeded() {'found' if found else 'MISSING'} "
+        f"in {app}/App/*.swift",
+    )]

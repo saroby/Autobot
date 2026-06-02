@@ -95,7 +95,9 @@ TabView
 
 ### Layout Personality
 
-앱의 핵심 콘텐츠 유형에 따라 화면별 레이아웃 패턴을 결정한다.
+앱의 핵심 콘텐츠 유형에 대한 **출발 힌트**(starting hint)다. 아래 4종은 *기본 골격*일
+뿐 — 그대로 베끼면 모든 앱이 닮는다(AI 슬롭). 반드시 다음의 `### Signature Layout` 으로
+이 앱만의 고유한 구성을 명시하고, ui-builder 는 그것을 우선한다.
 
 | Type | Pattern | 특징 | 적합한 앱 |
 |------|---------|------|----------|
@@ -110,6 +112,23 @@ Layout Personality: [data-driven / content-forward / utility / social]
 
 > 앱의 주요 화면이 여러 유형을 혼합할 수 있다 (예: 홈=dashboard, 상세=content-forward).
 > 이 경우 화면별로 다른 패턴을 지정한다.
+
+### Signature Layout
+
+이 앱을 *같은 Layout Personality 의 다른 앱과 구별되게* 만드는 고유 구성. 4종 골격을
+**이 아이디어에 맞춰 변형**하는 지점이다 — "또 그 앱처럼 생김"을 막는 1급 출력.
+아래 4가지를 구체적으로 적는다 (추상어 금지 — "modern, clean" 같은 말은 무효):
+
+| 항목 | 설명 | 예 (여행 일정 앱, content-forward 기반) |
+|------|------|------------------------------------------|
+| **Hero element** | 각 핵심 화면에서 가장 크게/먼저 보이는 시각 요소 | Today: 다가오는 여행의 풀블리드 커버 사진 + 카운트다운 오버레이 |
+| **정보 위계** | 무엇을 강조하고 무엇을 부차로 | 날짜·장소가 1순위, 예약 디테일은 탭 시 펼침 |
+| **Density** | compact / comfortable / spacious + 근거 | spacious — 여행은 설렘이 핵심, 정보 밀도보다 여백·이미지 |
+| **화면 간 차별화** | 모든 화면이 동일 컨테이너면 안 됨 — 화면별 고유 구성 | Today=히어로 카드 / Itinerary=수직 타임라인 / Map=풀스크린 지도+하단 시트 |
+
+> **금지**: 모든 화면을 같은 `List`/`LazyVStack` 카드로 채우는 것. 최소한 primary 화면과
+> 2순위 화면은 시각적으로 구별되는 레이아웃을 가져야 한다.
+> Phase 2.5 critique(디자인 축)가 "templated/제네릭/화면 간 동일"을 점검한다.
 
 ## Data Models
 

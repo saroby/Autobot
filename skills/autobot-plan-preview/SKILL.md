@@ -63,7 +63,8 @@ PNG 화면들과 design-spec.md 의 토큰을 보고 다음을 찾는다:
 - empty / loading / error state 누락
 - 색 토큰의 접근성 (Primary on background 가 WCAG AA 미달)
 - 일관성 결여 (같은 컴포넌트 화면별로 다른 모양)
-- 디자인이 generic — system blue + system gray 그대로 → 앱 정체성 0
+- 디자인이 generic — system blue + system gray 그대로 → 앱 정체성 0 (색 정체성)
+- **레이아웃 동질성 / templated (HIGH 우선)** — 모든 화면이 같은 컨테이너(동일 `List`/카드 피드)로 보여 "다른 앱과 구별 안 됨"인지, 4종 Layout Personality 골격을 변형 없이 베꼈는지. architecture.md 의 `### Signature Layout`(hero element·정보 위계·density·화면 간 차별화)이 실제 화면 PNG 에 구현됐는지 대조한다 — primary 화면과 2순위 화면이 시각적으로 구별되지 않으면(둘 다 같은 몰드) HIGH 로 보고하고 어느 화면들이 동일한지 + 어떻게 차별화할지 명시. (위 "generic"이 *색* 정체성이라면 이 항목은 *레이아웃/구성* 정체성. 둘은 별개 축.)
 
 각 항목은 다음 구조로:
 

@@ -146,6 +146,10 @@ def check_design_direction_complete(proj: Path, app: str, state: dict) -> list[d
         ("color_palette_heading", r"Color Palette"),
         ("typography_heading", r"Typography(?: Style)?"),
         ("component_patterns_heading", r"Component Patterns"),
+        # Signature Layout: the app-specific layout contract that prevents visual
+        # homogeneity (every app looking like one of 4 molds). The architect must
+        # emit it; ui-builder implements it over the 4-type starting hints.
+        ("signature_layout_heading", r"Signature Layout"),
     ]
     return [
         _ok(label, _markdown_heading_present(content, pattern), pattern)

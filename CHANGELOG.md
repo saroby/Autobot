@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### Added — 시각 동질성 깨기: Signature Layout + critique 동질성 축 + ui-builder opus
+근본 진단: Layout Personality 가 **4종 폐쇄 분류**(`architecture-template.md`)고 ui-builder 가 그에 묶인 **고정 코드 스니펫**(`ui-builder.md`)을 적용 → 여행/레시피/뉴스 앱이 모두 content-forward 면 동일 `LazyVStack` 카드 피드. + 보이는 에이전트(ux-designer/design-system/ui-builder/data-engineer) 전부 `model: sonnet`. "전문가적 = 고유함"의 반대(AI 슬롭).
+
+설계 원칙(미적 품질은 #2 같은 결정적 게이트로 측정 불가 → 동질성은 코드 *전* intent 단계에서 잡는다; Phase 5 충실도에서 잡으면 Goodhart — 제네릭을 충실히 구현 = 통과):
+- **Signature Layout 1급 출력** (`architecture-template.md`, `agents/architect.md`): architect 가 `## Design Direction` 안에 `### Signature Layout`(hero element·정보 위계·density·화면 간 차별화)을 emit. 4종 Layout Personality 는 *출발 힌트*로 강등. 추상어("modern/clean") 금지, 모든 화면 동일 `List`/`LazyVStack` 금지.
+- **ui-builder 가 Signature 우선** (`agents/ui-builder.md`): 4패턴 스니펫은 변형의 출발점으로만. **트랩 회피**: safe-area 4규칙(과거 재발 2회)을 "레이아웃 *모양* 은 자유화하되 *안전 스캐폴딩* 은 불변"으로 명시 강조 — `no_tabbar_safearea_smells` 가 막던 버그 재오픈 방지. **모델 `sonnet`→`opus`**(앱 시각을 가장 많이 결정하는 최대 볼륨 에이전트; Signature 확장과 *짝일 때만* 의미).
+- **Phase 2.5 critique 동질성 축** (`autobot-plan-preview/SKILL.md`): 디자인 축에 "레이아웃 동질성/templated(HIGH)" 추가 — Signature Layout 이 실제 PNG 에 구현됐는지, primary 와 2순위 화면이 시각적으로 구별되는지 점검. (기존 "generic=색 정체성"과 별개인 *레이아웃/구성* 정체성 축.) **단 Phase 2.5 는 `manual: true` — 자율 `/mvp` 에선 skip 되고 `/autobot:plan` 으로 명시 검토할 때만 돈다. Gate 2.5→3 은 preview HTML *존재*만 검사하므로 이 축은 사람이 보는 advisory(codegen 차단 안 함) — `/plan` 검토 품질을 높이는 것이지 자율 빌드를 막지 않는다.**
+- **Gate 1→2 강제** (`gate_checks/setup.py`): `check_design_direction_complete` 가 `### Signature Layout` heading 을 grep — 다른 섹션이 다 있어도 Signature 누락이면 FAIL(프롬프트 지시가 unenforced 로 썩는 것 방지).
+- **정직한 검증 한계 (Goodhart 인정)**: 자율 `/mvp` 빌드의 동질성 *기계 강제*는 위 heading **존재** grep 하나뿐이고, 그조차 `### Signature Layout` + 제네릭 한 줄로 통과 가능하다 (heading 존재 ≠ signature *품질*). 실제 고유성은 architect 가 좋은 Signature 를 쓰고 opus ui-builder 가 충실히 구현하는 데 달렸으며 — 이는 A/B·사람 판단이지 게이트가 증명하지 못한다. 게이트/테스트가 증명하는 건 (a) Signature heading emit 강제 (b) critique 축이 `/plan` 에 존재 (c) safe-area 불변식 생존뿐.
+- `tests/test_signature_layout_gate.py` 2종(signature 누락 시 FAIL / 완전 시 PASS). 전체 슈트 **454 OK**.
+
+### Added — 첫인상 시딩: `seedPolicy` 로 빌드된 앱이 빈 껍데기로 열리지 않게
+근본 진단: data-engineer 의 `SampleData.swift` 는 **Preview/test 전용**이고 ui-builder 의 `ServiceStubs` 도 Preview mock — **런타임 first-launch seed 경로가 어느 에이전트 프롬프트에도 없었다.** 그래서 콘텐츠/대시보드형 앱조차 TestFlight 첫 실행 시 빈 화면(잘해야 EmptyState)으로 열렸다(미완성으로 읽힘). 반면 `autobot-app-review/SKILL.md` 는 "Autobot scaffolds include seed data" 라고 *가정* → 의도와 구현의 drift(unenforced 가정의 부패).
+
+- **architect 가 `seedPolicy` 결정** (`agents/architect.md`, architecture.json 스키마): `"seeded"`(콘텐츠/대시보드/소셜/갤러리 — 빈 첫 화면이 고장으로 읽힘) vs `"empty"`(todo/저널/노트 — 빈 시작이 본질, EmptyState 가 정답). 애매하면 `"empty"`. 시드는 `app-intent.primaryScreenTitle` 모델을 반드시 채우고, seeded 앱 feature-spec postcondition 은 절대-개수 단언 금지(상대값 `count_increased` 만 — 시드 베이스라인과 충돌 방지).
+- **data-engineer 런타임 seed factory** (`agents/data-engineer.md`): `seedPolicy=="seeded"` 일 때 `SampleData.seedIfNeeded(_:)` 작성. **factory 패턴**(매 호출 새 `@Model` 인스턴스 — Preview 의 `static let` 인스턴스를 production `ModelContext` 에 insert 하면 SwiftData 크래시) + **versioned seed-once 플래그**(`autobot.seeded.v1` — emptiness 기반 금지: 사용자 삭제분 부활 + `value_persisted_after_relaunch` 와 충돌) + `@Relationship` 그래프 + 도메인 현실적 데이터(`"Sample"`/placeholder 금지).
+- **quality-engineer wiring** (`agents/quality-engineer.md`, `wiring-patterns.md`): `ModelContainer` 생성 직후 `SampleData.seedIfNeeded(container.mainContext)` 호출(SwiftUI `App` 은 `@MainActor` 라 직접 호출 가능). `"empty"`/미지정이면 호출 안 함.
+- **Gate 5→6 `first_launch_seeded`** (`scripts/gate_checks/build.py` + `gate_runner.py` + `spec/pipeline.json`): `seedPolicy=="seeded"` 인데 진입점에 `seedIfNeeded()` 호출이 없으면 FAIL. `"empty"`/legacy 는 skip. 프롬프트만 고치면 다음 빌드가 실제로 시드하는지 *증명할 수 없어* app-review:233 처럼 unenforced 가정이 되는 것을 코드로 막는다. (`empty` 앱은 `visual_contract.py:281` 이 fill 요구 없을 때 occupancy 를 informational 로만 보므로 기존 screen-fill 게이트도 부당히 막지 않음 — 확인됨.)
+- **app-review seed 안내 정합** (`autobot-app-review/SKILL.md`): `seedPolicy` 를 읽어 seeded=직접 캡처 / empty=캡처 전 primary flow 로 항목 생성 / legacy=as-is.
+- `tests/test_first_launch_seeded.py` 8종(seeded 호출 有/無, empty, legacy, 파일 부재, garbled JSON, 다른 App 파일의 seam, registry 등록). 전체 슈트 **451 OK**(443→451, 회귀 0).
+
 ### Changed
 - **CI GitHub Actions Node 20 → Node 24** — `actions/checkout@v4`→`@v6`, `actions/setup-python@v5`→`@v6`, `actions/upload-artifact@v4`→`@v5`(node24 범프, 기능 비파괴). 3개 워크플로(ci/e2e-verify/smoke-e2e) 전부. 2026-06-16 GitHub 의 Node 20 강제 종료 전 선제 대응. (직전 0.10.0 CI 런의 deprecation 경고 해소.)
 
