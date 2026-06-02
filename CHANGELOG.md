@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added — design-system 컴포넌트 깊이 + DS↔ui-builder 소비 계약 배선 (dead-code 차단)
+design-system(opus) 컴포넌트를 깊게 만들되 **소비 계약을 함께 배선**한다. 발견: ui-builder 는 DS *토큰*만 import 하고 *컴포넌트*는 자체 `Views/Components/` 에 재구현했다 — 깊은 컴포넌트를 만들어도 아무도 import 안 하면 invisible dead-code(빌드 시간만↑). 그래서 design-system 만 강화는 theater. 게이트 무손상(`.md` 2 파일).
+
+- **Pre-read 에 Signature Layout + Component Patterns 추가** (`design-system.md`): 컴포넌트가 이 앱 고유 스타일을 구현하도록 — A2 의 Signature Layout 강화를 design-system 이 실제로 읽게 연결(load-bearing — 없으면 깊은 컴포넌트도 순수 cross-app 동질성).
+- **Components 고정 4 개 → app-agnostic primitive 5 개** (+`ListRow`): 상태 변형(pressed/disabled) + Component Patterns 스타일 반영으로 *within-app 깊이*. 5 개 외 확장 금지·"반드시 컴파일" 명시 — opus 가 컴파일 표면을 늘려 build hard-fail→circuit breaker 를 트립하는 걸 방지(bound).
+- **Boundary rule 양쪽 1 줄** (`design-system.md` + `ui-builder.md`): DS = app-agnostic primitive(ui-builder 가 *반드시* import) / ui-builder `Views/Components/` = 화면 고유 composition. 5 개 타입 *이름·시그니처 고정*(generic 금지는 *스타일*에만 — 이름을 앱별로 바꾸면 import desync 로 빌드 깨짐).
+- **정직한 트레이드(상승)**: 이전엔 컴포넌트 미참조라 누락 = benign dead-code(빌드 OK). 이제 ui-builder 가 정확한 이름으로 import 하므로 produce/consume *desync = 컴파일 에러 = Phase 5 hard-fail → circuit breaker*. net 은 옳다(visible > invisible, dead-code 제거)지만 `/mvp` 의 build-break 표면을 *올린다* — 그래서 이름 고정·"반드시 컴파일"·5 개 bound 로 desync 벡터를 좁혔다.
+- **A3 의 정직한 기여**: cross-app 다양성 레버가 아니다(그건 A2 가 composition 으로 소유) — within-app styling 깊이 + 상태 변형뿐. multi-agent 이름 계약이라 *실제 빌드가 5 개를 desync 없이 produce+consume 할 때까지 미검증*(테스트는 프롬프트를 안 덮음).
+
 ### Added — 시각 동질성 상류 차단: design-system opus + architect Signature Layout 품질 강화
 생성 앱 AI slop(모든 앱이 닮아 보이는 *시각 동질성*)을 **게이트가 아니라 intent 단계 생성 품질**에서 줄인다. 미적 품질은 이진 게이트로 측정 불가(Goodhart) — 게이트는 동질성을 *감지*만 할 뿐 다양성을 *생성*하지 못한다. 그래서 다양성은 상류에서 주입한다. 게이트/circuit breaker 무손상(프롬프트 `.md` 3파일만 변경 → 자율 `/mvp` 경로·hard-fail 철칙 정합).
 
