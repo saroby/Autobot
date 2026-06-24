@@ -16,9 +16,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-SPEC_PATH = SCRIPT_DIR.parent / "spec" / "pipeline.json"
-
-from spec_loader import resolve_app_template  # noqa: E402
+from spec_loader import load_spec as _load_spec, resolve_app_template  # noqa: E402
 
 def load_json(path: Path) -> Any:
     with path.open(encoding="utf-8") as f:
@@ -26,10 +24,7 @@ def load_json(path: Path) -> Any:
 
 
 def load_spec() -> dict[str, Any]:
-    try:
-        return load_json(SPEC_PATH)
-    except (FileNotFoundError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"FATAL: cannot load pipeline spec: {exc}") from exc
+    return _load_spec()
 
 
 def _ok(

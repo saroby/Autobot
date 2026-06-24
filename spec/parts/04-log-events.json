@@ -1,0 +1,487 @@
+{
+  "logEvents": {
+    "start": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "agent",
+        "detail"
+      ]
+    },
+    "complete": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "fallback": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "skip": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "fail": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": []
+    },
+    "gate_pass": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": []
+    },
+    "gate_fail": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": []
+    },
+    "agent_dispatch": {
+      "required": [
+        "phase",
+        "agent"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "agent_complete": {
+      "required": [
+        "phase",
+        "agent"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "agent_violation": {
+      "required": [
+        "phase",
+        "agent",
+        "detail"
+      ],
+      "optional": []
+    },
+    "sandbox_violation": {
+      "required": [
+        "phase",
+        "agent",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "summary",
+          "violations"
+        ],
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "violations": {
+            "type": "array"
+          },
+          "touched": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "sandbox_clean": {
+      "required": [
+        "phase",
+        "agent"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "build_attempt": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "attempt",
+          "errors",
+          "succeeded"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer"
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "succeeded": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "build_fix": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "category"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array"
+          }
+        }
+      }
+    },
+    "snapshot_save": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "snapshot_restore": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "contracts_frozen": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": []
+    },
+    "visual_judge_verdict": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": []
+    },
+    "lock_acquired": {
+      "required": [],
+      "optional": [
+        "detail"
+      ]
+    },
+    "env_check": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "detail"
+      ]
+    },
+    "circuit_open": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "scope",
+          "failures",
+          "threshold",
+          "trippedOnPhase"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string"
+          },
+          "failures": {
+            "type": "integer"
+          },
+          "threshold": {
+            "type": "integer"
+          },
+          "trippedOnPhase": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "flag_changed": {
+      "required": [],
+      "optional": [
+        "detail"
+      ],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "key",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "learning_applied": {
+      "required": [
+        "phase",
+        "agent"
+      ],
+      "optional": [
+        "detail"
+      ],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "sources"
+        ],
+        "properties": {
+          "sources": {
+            "type": "array"
+          }
+        }
+      }
+    },
+    "codex_review": {
+      "deprecated": true,
+      "supersededBy": "peer_review",
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "verdict",
+          "attempt"
+        ],
+        "properties": {
+          "verdict": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer"
+          },
+          "hardViolationsCount": {
+            "type": "integer"
+          },
+          "softWarningsCount": {
+            "type": "integer"
+          },
+          "skipReason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "peer_review": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "host",
+          "peer",
+          "verdict"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "peer": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "blockingFindingsCount": {
+            "type": "integer"
+          },
+          "skipReason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "axiom_audit_skipped": {
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "detail"
+      ],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "axiom_audit_completed": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "mode",
+          "criticalCount"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "criticalCount": {
+            "type": "integer"
+          },
+          "warningCount": {
+            "type": "integer"
+          },
+          "auditors": {
+            "type": "array"
+          },
+          "findingsPath": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "circuit_breaker_triggered": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "repeatCount": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "build_fix_attempt": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "attempt",
+          "signature",
+          "category"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "diffBytes": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "build_fix_loop_exhausted": {
+      "required": [
+        "phase",
+        "detail"
+      ],
+      "optional": [],
+      "detailSchema": {
+        "type": "object",
+        "required": [
+          "attempts",
+          "lastSignature"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer"
+          },
+          "lastSignature": {
+            "type": "string"
+          },
+          "lastCategory": {
+            "type": "string"
+          },
+          "abortStrategy": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

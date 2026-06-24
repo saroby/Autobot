@@ -1,0 +1,88 @@
+{
+  "fileOwnership": {
+    "agents": {
+      "architect": {
+        "writes": [
+          "{appName}/Models/",
+          ".autobot/architecture.md",
+          ".autobot/architecture.json",
+          ".autobot/app-intent.json",
+          ".autobot/feature-spec.json"
+        ]
+      },
+      "ux-designer": {
+        "writes": [
+          ".autobot/designs/",
+          ".autobot/design-spec.md"
+        ]
+      },
+      "ui-builder": {
+        "writes": [
+          "{appName}/Views/",
+          "{appName}/ViewModels/",
+          "{appName}/App/",
+          "{appName}/Assets.xcassets/"
+        ]
+      },
+      "data-engineer": {
+        "writes": [
+          "{appName}/Services/",
+          "{appName}/Utilities/"
+        ]
+      },
+      "backend-engineer": {
+        "writes": [
+          "backend/"
+        ]
+      },
+      "quality-engineer": {
+        "broadAccess": true,
+        "writes": [
+          "{appName}/",
+          "backend/",
+          "project.yml"
+        ]
+      },
+      "deployer": {
+        "writes": [
+          "build/",
+          ".autobot/deploy-status.json"
+        ]
+      },
+      "design-system": {
+        "writes": [
+          "Packages/"
+        ]
+      }
+    },
+    "forbiddenAlways": [
+      "{appName}/Models/"
+    ],
+    "forbiddenAlwaysExempt": [
+      "architect"
+    ],
+    "forbiddenInfra": [
+      ".autobot/build-state.json",
+      ".autobot/architecture.md",
+      ".autobot/feature-spec.json",
+      ".autobot/contracts/",
+      ".autobot/build-log.jsonl",
+      ".autobot/build.lock",
+      ".autobot/learnings.json",
+      ".autobot/active-learnings.md",
+      ".autobot/phase-learnings/"
+    ],
+    "forbiddenInfraExempt": [
+      "architect"
+    ],
+    "forbiddenPerAgent": {
+      "ui-builder": [
+        "{appName}/Services/",
+        "Packages/"
+      ],
+      "design-system": [
+        "{appName}/"
+      ]
+    }
+  }
+}

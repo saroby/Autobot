@@ -1,0 +1,93 @@
+{
+  "policies": {
+    "resume": {
+      "allowExplicitRestartFromTerminal": true
+    },
+    "dependency": {
+      "resumeAllowedPreviousStatuses": [
+        "completed",
+        "fallback"
+      ]
+    },
+    "circuitBreaker": {
+      "maxConsecutivePhaseFailures": 3,
+      "scope": "global",
+      "onTrip": "skipToRetrospective",
+      "errorSignatureRepeat": {
+        "enabled": true,
+        "maxRepeats": 2,
+        "scope": "phase",
+        "normalize": {
+          "stripPaths": true,
+          "stripLineNumbers": true,
+          "stripTimestamps": true,
+          "stripHexAddresses": true,
+          "preserveErrorCode": true,
+          "preserveErrorCategory": true
+        }
+      }
+    },
+    "buildFixLoop": {
+      "enabled": true,
+      "appliesTo": [
+        "5"
+      ],
+      "maxAttempts": 4,
+      "checkpoint": {
+        "saveBeforeFirstAttempt": true,
+        "saveAfterEachAttempt": true,
+        "rollbackOnSignatureRepeat": true
+      },
+      "errorCategories": [
+        "swift_syntax_or_type",
+        "missing_file_or_target",
+        "duplicate_symbol",
+        "project_setting",
+        "signing_or_entitlement",
+        "spm_or_package",
+        "linker",
+        "macro_expansion",
+        "unknown"
+      ],
+      "diffCapBytes": 20480,
+      "abortOnSignatureRepeat": true,
+      "abortStrategy": "snapshot_restore_then_handoff"
+    },
+    "qualityRefineLoop": {
+      "enabled": true,
+      "appliesTo": [
+        "5"
+      ],
+      "maxAttempts": 2,
+      "comment": "Phase 5 render -> judge-against-the-raw-idea -> fix -> re-render loop (autobot-integration-build Step 9b/9e). A deterministic screen-fill (occupancy) miss or an explicit user-clause violation routes into the buildFixLoop as a layout defect, bounded by maxAttempts; on exhaustion the build advances and the deterministic visual_contract gate hard-fails honestly (badge UNVERIFIED) rather than laundering a low-quality build to DEGRADED. The non-deterministic vision verdict stays DEGRADED-only; only the deterministic occupancy floor blocks."
+    },
+    "peerArchitectureReview": {
+      "enabled": true,
+      "maxAttempts": 2,
+      "excludeFromCircuitBreaker": true,
+      "skipReasons": [
+        "peer_cli_unavailable",
+        "peer_invocation_failed",
+        "peer_timeout",
+        "review_explicitly_disabled",
+        "codex_cli_unavailable"
+      ]
+    },
+    "codexArchitectureReview": {
+      "deprecated": true,
+      "supersededBy": "peerArchitectureReview",
+      "enabled": true,
+      "maxAttempts": 2,
+      "excludeFromCircuitBreaker": true,
+      "skipReasons": [
+        "codex_cli_unavailable",
+        "review_explicitly_disabled"
+      ]
+    },
+    "allowedFlags": [
+      "backend_required",
+      "allowVisualDrift",
+      "qualityMax"
+    ]
+  }
+}

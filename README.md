@@ -5,7 +5,7 @@
 5개의 전문 에이전트가 병렬로 협업하여, 아키텍처 설계부터 TestFlight 업로드까지 자동으로 수행합니다.
 성공 기준은 기능 완성뿐 아니라 아이디어에 맞는 룩앤필 계약 구현까지 포함합니다.
 
-> 파이프라인 실행 규격의 단일 기준(SSOT)은 `spec/pipeline.json`입니다. `skills/autobot-orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
+> 파이프라인 규격의 편집 단위는 `spec/parts/*.json`이고, 실행 호환 번들은 `spec/pipeline.json`입니다. `skills/autobot-orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
 > 상태 전이, Gate 실행/기록, Phase lifecycle 로그의 유일한 엔진은 `scripts/pipeline.sh` + `runtime.py`입니다.
 
 ## 빠른 시작
@@ -103,7 +103,7 @@ Gate 실패 시 자동 재시도(최대 2회), 반복 실패 시 Phase 7(회고)
 
 ### 안정성 설계
 
-- `spec/pipeline.json`이 Phase, Gate, retry, log event, file ownership의 단일 기준입니다. README와 orchestrator 문서의 표도 이 스펙에서 렌더링해 drift를 검출합니다.
+- `spec/parts/*.json`이 Phase, Gate, retry, log event, file ownership의 작은 편집 단위입니다. `spec/pipeline.json`은 실행 호환 번들이며, drift는 검증에서 실패합니다.
 - `advance-phase`는 Gate 실행 결과와 Phase 상태 변경을 하나의 atomic mutation으로 기록합니다. transition이 거부되면 gate evidence와 build-log 모두 남기지 않습니다.
 - `learning_applied` 이벤트는 build-log와 Phase별 consumed 목록을 함께 갱신합니다. 회고 기반 자기 개선이 말뿐인 메모가 아니라 검증 가능한 상태로 남습니다.
 
@@ -252,17 +252,20 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │       └── references/learning-schema.md
 ├── hooks/hooks.json                    # SessionStart 훅
 ├── spec/
-│   └── pipeline.json                   # 실행 가능한 Phase/Transition/Retry/Gate 규격
+│   ├── parts/                          # Phase/Gate/log/ownership 등 split source
+│   └── pipeline.json                   # 실행 호환용 bundled 규격
 └── scripts/
     ├── pipeline.sh                     # 모든 mutating 명령의 단일 진입점 (advance-phase/run-gate/set-flag/append-log 등)
     ├── runtime.py                      # CLI entrypoint + 외부 import 호환 facade (66L)
-    ├── spec_loader.py                  # pipeline.json 로드 + 구조 검증
+    ├── spec_loader.py                  # pipeline bundle 로드 + split source drift 검증
+    ├── spec_bundle.py                  # spec/parts ↔ spec/pipeline.json 조립/검증
     ├── state_store.py                  # build-state.json I/O + 스키마 검증된 mutation
     ├── event_log.py                    # build-log.jsonl 이벤트 검증 + append
     ├── transitions.py                  # 상태 전이 + retry + circuit breaker
     ├── gate_persistence.py             # gate 실행 결과의 state 기록 + 자동 복구 helpers
     ├── cli.py                          # argparse + 모든 command handler
-    ├── gate_runner.py                  # gate 체크 평가 (declarative descriptor + procedural hooks)
+    ├── gate_runner.py                  # gate descriptor 평가 + CLI
+    ├── gate_checks/registry.py         # spec procedural name → check 함수 registry
     ├── sandbox_runner.py               # spec.fileOwnership 기반 파일 소유권 enforcement
     ├── snapshot_runner.py              # spec.fileOwnership 기반 phase별 snapshot save/restore
     ├── detect-plugins.sh               # 플러그인/도구 감지
@@ -330,6 +333,7 @@ Autobot은 위험도 기준으로 동작합니다:
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py'   # stdlib only, no pytest
 python3 scripts/verify_spec_docs.py                     # spec ↔ docs 드리프트 검증
+python3 scripts/spec_bundle.py check                    # spec/parts ↔ bundle 검증
 ```
 
 선택 의존성 (`pyproject.toml` 의 `[visual]` extra): `Pillow` — visual contract gate 활성화. 없으면 해당 게이트는 skip 됩니다.

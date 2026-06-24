@@ -1,0 +1,28 @@
+{
+  "transitions": {
+    "default": {
+      "pending": [
+        "in_progress"
+      ],
+      "in_progress": [
+        "completed",
+        "fallback",
+        "failed"
+      ],
+      "completed": [],
+      "fallback": [],
+      "failed": [
+        "in_progress"
+      ],
+      "skipped": []
+    },
+    "overrides": {
+      "0": {
+        "pending": [
+          "in_progress",
+          "completed"
+        ]
+      }
+    }
+  }
+}

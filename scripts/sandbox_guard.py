@@ -52,23 +52,17 @@ import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PLUGIN_DIR = SCRIPT_DIR.parent
-SPEC_PATH = PLUGIN_DIR / "spec" / "pipeline.json"
 GUARD_MARKER = ".autobot/.guard-active"
 
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from spec_loader import load_spec  # noqa: E402
 from state_store import state_file_for, try_load_state  # noqa: E402
 # Reuse the post-hoc enforcer's decision function so the two layers can never
 # diverge. evaluate_violations applies the full precedence:
 #   forbiddenAlways → forbiddenInfra → forbiddenPerAgent → broadAccess → writes
 from sandbox_runner import evaluate_violations  # noqa: E402
-
-
-def _load_spec() -> dict:
-    with SPEC_PATH.open(encoding="utf-8") as f:
-        return json.load(f)
 
 
 def _active_agent(project_root: Path, explicit: str | None) -> str:
@@ -127,7 +121,7 @@ def check(project_root: Path, target: Path, agent: str | None = None) -> tuple[b
     (Models/ + .autobot control files) is enforced for every agent including
     broadAccess, and the two layers cannot drift.
     """
-    spec = _load_spec()
+    spec = load_spec()
     agents = (spec.get("fileOwnership") or {}).get("agents") or {}
 
     active = _active_agent(project_root, agent)

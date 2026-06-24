@@ -204,7 +204,8 @@ class TestServiceStubsQualityMax(unittest.TestCase):
 class TestQualityMaxFlagAllowed(unittest.TestCase):
     def test_qualitymax_in_allowed_flags(self):
         import json
-        spec = json.load(open(Path(__file__).resolve().parent.parent / "spec" / "pipeline.json"))
+        with (Path(__file__).resolve().parent.parent / "spec" / "pipeline.json").open(encoding="utf-8") as handle:
+            spec = json.load(handle)
         self.assertIn("qualityMax", spec["policies"]["allowedFlags"])
 
 

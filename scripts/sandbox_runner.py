@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Agent file-ownership sandbox: snapshot → diff → enforce against spec.
 
-Ownership rules live in spec/pipeline.json under fileOwnership. Violations
+Ownership rules live in the validated pipeline spec under fileOwnership. Violations
 are recorded into the build state (phases.<phase>.sandbox.violations) and
 emitted as 'sandbox_violation' / 'sandbox_clean' events through the runtime,
 so Gate 4→5's sandbox_clean check can read them.
@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-SPEC_PATH = SCRIPT_DIR.parent / "spec" / "pipeline.json"
 
 # Import the focused runtime modules directly. We deliberately bypass
 # runtime.py (which is a re-export facade) so loading this script does not

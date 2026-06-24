@@ -108,7 +108,7 @@ esac
 
 ## Step 1.5: 기능 검증 사전 차단 (anti-laundering)
 
-archive/upload 시작 **전에** gate 5→6 을 신선하게 재실행하고 그 verdict 를 확인한다. 이는 `phases.5.metadata.build_succeeded` 같은 과거 플래그를 신뢰하지 않고, 빌드가 실제로 기능 검증(logic tests + functional flows)을 통과했는지 매 배포마다 다시 요구한다. verdict 가 `degraded`(시뮬레이터/axe/xcodebuild 부재로 flow 미검증)이면 **업로드를 거부**한다 — 미검증 빌드를 게이트 너머로 세탁(laundering)하지 않는다.
+archive/upload 직전에는 과거 metadata 를 믿지 말고 Gate 5→6 을 신선하게 재실행한다. 정책 세부사항은 `spec/pipeline.json`과 `gate_checks.registry`가 소유한다; 이 명령 문서는 PASS 아니면 배포 중단만 수행한다.
 
 ```bash
 # 5→6 게이트를 신선하게 재실행 (evidence 를 state.gates["5->6"] 에 갱신 기록)

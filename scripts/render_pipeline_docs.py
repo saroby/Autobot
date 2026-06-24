@@ -1,21 +1,16 @@
 #!/usr/bin/env python3
-"""Render markdown blocks derived from spec/pipeline.json."""
+"""Render markdown blocks derived from the validated pipeline spec."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
-SPEC_PATH = PLUGIN_DIR / "spec" / "pipeline.json"
 
-
-def load_spec() -> dict:
-    with SPEC_PATH.open(encoding="utf-8") as handle:
-        return json.load(handle)
+from spec_loader import load_spec  # noqa: E402
 
 
 def sorted_phases(spec: dict) -> list[tuple[str, dict]]:

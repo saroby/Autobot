@@ -1,8 +1,8 @@
-"""Gate-runner: tiny core + a registry of per-domain check functions.
+"""Gate-runner: descriptor engine + CLI.
 
 The check implementations live in scripts/gate_checks/*.py — this module
-only wires them into the GATE_CHECKS registry and drives the descriptor
-engine + CLI. All public symbols are re-exported so existing callers
+drives the descriptor engine + CLI. The procedural registry lives in
+gate_checks.registry. Public check symbols are re-exported so existing callers
 (``from gate_runner import run_gate``, tests importing individual
 ``check_*`` functions, etc.) keep working unchanged.
 """
@@ -18,11 +18,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-SPEC_PATH = SCRIPT_DIR.parent / "spec" / "pipeline.json"
-
 from spec_loader import resolve_app_template  # noqa: E402
 
-# ── re-export helpers + check functions ──
+# ── re-export helpers + procedural checks for backward-compatible imports ──
 from gate_checks._helpers import (  # noqa: E402,F401
     load_json,
     load_spec,
@@ -36,145 +34,7 @@ from gate_checks._helpers import (  # noqa: E402,F401
     _markdown_heading_present,
     _agent_writes_dirs
 )
-from gate_checks.setup import (  # noqa: E402,F401
-    check_environment_ready,
-    check_project_name_resolved,
-    check_build_state_initialized,
-    check_environment_recorded,
-    check_architecture_document_exists,
-    check_design_direction_complete,
-    check_models_exist,
-    check_service_protocols_exist,
-    check_contracts_snapshot_saved,
-    check_backend_required_consistent
-)
-from gate_checks.capability import (  # noqa: E402,F401
-    check_app_intent_declared,
-    check_feature_spec_declared,
-    check_feature_spec_quality,
-    check_idea_layout_requirements_captured,
-    check_intent_anchors_in_ui,
-    check_primary_cta_visibility,
-    check_ios_capability_safe
-)
-from gate_checks.review import (  # noqa: E402,F401
-    check_architecture_peer_review_acceptable,
-    check_codex_review_acceptable,
-    check_axiom_critical_audit_acceptable,
-    check_peer_review_acceptable
-)
-from gate_checks.design import (  # noqa: E402,F401
-    check_design_assets_exist_or_fallback,
-    check_app_icon_source_present,
-    check_design_spec_sections_complete,
-    check_design_spec_json_valid,
-    check_design_system_package_exists,
-    check_design_system_tokens_exist
-)
-from gate_checks.scaffold import (  # noqa: E402,F401
-    check_xcodeproj_exists,
-    check_privacy_manifest_exists,
-    check_app_icon_applied,
-    check_entitlements_exists,
-    check_scaffold_build_succeeded,
-    check_gitignore_exists
-)
-from gate_checks.app import (  # noqa: E402,F401
-    check_views_exist,
-    check_services_exist,
-    check_no_tabbar_safearea_smells,
-    check_models_checksum_matches,
-    check_backend_artifacts_exist_if_required,
-    check_composition_seam_intact,
-    check_sandbox_clean
-)
-from gate_checks.build import (  # noqa: E402,F401
-    check_build_succeeded,
-    check_visual_contract,
-    check_visual_judge,
-    check_runtime_smoke,
-    check_metadata_readiness,
-    check_app_uses_real_repositories,
-    check_service_stubs_preserved,
-    check_first_launch_seeded,
-    check_backend_deploy_readiness
-)
-from gate_checks.deploy import (  # noqa: E402,F401
-    check_deployment_attempt_recorded
-)
-from gate_checks.functional import (  # noqa: E402,F401
-    check_logic_tests_pass,
-    check_functional_flows_pass,
-    check_functional_verification_passed
-)
-
-
-# ── Registry: spec name → procedural check function ──
-GATE_CHECKS: dict[str, Any] = {
-    # Gate 0→1
-    "environment_ready": check_environment_ready,
-    "project_name_resolved": check_project_name_resolved,
-    "build_state_initialized": check_build_state_initialized,
-    "environment_recorded": check_environment_recorded,
-    # Gate 1→2
-    "architecture_document_exists": check_architecture_document_exists,
-    "design_direction_complete": check_design_direction_complete,
-    "models_exist": check_models_exist,
-    "service_protocols_exist": check_service_protocols_exist,
-    "contracts_snapshot_saved": check_contracts_snapshot_saved,
-    "backend_required_consistent": check_backend_required_consistent,
-    "codex_review_acceptable": check_codex_review_acceptable,
-    "architecture_peer_review_acceptable": check_architecture_peer_review_acceptable,
-    "ios_capability_safe": check_ios_capability_safe,
-    "app_intent_declared": check_app_intent_declared,
-    "feature_spec_declared": check_feature_spec_declared,
-    "feature_spec_quality": check_feature_spec_quality,
-    "idea_layout_requirements_captured": check_idea_layout_requirements_captured,
-    "intent_anchors_in_ui": check_intent_anchors_in_ui,
-    # Gate 2→3
-    "design_spec_sections_complete": check_design_spec_sections_complete,
-    "design_assets_exist_or_fallback": check_design_assets_exist_or_fallback,
-    "design_spec_json_valid": check_design_spec_json_valid,
-    "app_icon_source_present": check_app_icon_source_present,
-    # Gate 3→4
-    "xcodeproj_exists": check_xcodeproj_exists,
-    "privacy_manifest_exists": check_privacy_manifest_exists,
-    "entitlements_exists": check_entitlements_exists,
-    "gitignore_exists": check_gitignore_exists,
-    "scaffold_build_succeeded": check_scaffold_build_succeeded,
-    "app_icon_applied": check_app_icon_applied,
-    # Gate 4→5
-    "views_exist": check_views_exist,
-    "services_exist": check_services_exist,
-    "models_checksum_matches": check_models_checksum_matches,
-    "backend_artifacts_exist_if_required": check_backend_artifacts_exist_if_required,
-    "composition_seam_intact": check_composition_seam_intact,
-    "primary_cta_visibility": check_primary_cta_visibility,
-    # Gate 5→6
-    "build_succeeded": check_build_succeeded,
-    "peer_review_acceptable": check_peer_review_acceptable,
-    "axiom_critical_audit_acceptable": check_axiom_critical_audit_acceptable,
-    "app_uses_real_repositories": check_app_uses_real_repositories,
-    "runtime_smoke": check_runtime_smoke,
-    "visual_contract": check_visual_contract,
-    "visual_judge": check_visual_judge,
-    "metadata_readiness": check_metadata_readiness,
-    "service_stubs_preserved": check_service_stubs_preserved,
-    "first_launch_seeded": check_first_launch_seeded,
-    "backend_deploy_readiness": check_backend_deploy_readiness,
-    "logic_tests_pass": check_logic_tests_pass,
-    "functional_flows_pass": check_functional_flows_pass,
-    # Gate 6→7
-    "deployment_attempt_recorded": check_deployment_attempt_recorded,
-    "functional_verification_passed": check_functional_verification_passed,
-    # Gate 4→5 (added with fileOwnership SSOT)
-    "sandbox_clean": check_sandbox_clean,
-    "no_tabbar_safearea_smells": check_no_tabbar_safearea_smells,
-    # Gate 3→4 (design-system package)
-    "design_system_package_exists": check_design_system_package_exists,
-    "design_system_tokens_exist": check_design_system_tokens_exist,
-}
-
+from gate_checks.registry import *  # noqa: E402,F401,F403
 
 
 def _get_state_path(state: dict, dotted: str) -> tuple[bool, Any]:

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "statuses": [
+    "pending",
+    "in_progress",
+    "completed",
+    "fallback",
+    "failed",
+    "skipped"
+  ],
+  "terminalStatuses": [
+    "completed",
+    "fallback",
+    "skipped"
+  ]
+}

@@ -252,7 +252,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-app-review/scripts/upload-screenshots.s
 
 ### Phase F-0 — 기능 검증 사전 차단 (anti-laundering)
 
-deployer 디스패치 **전에** gate 5→6 을 신선하게 재실행하고 verdict 를 확인한다. `degraded`(시뮬레이터/axe/xcodebuild 부재로 functional flow 미검증)면 archive/upload 와 review 제출을 **모두 중단**한다 — 미검증 빌드 세탁 방지. 과거 `build_succeeded` 플래그를 신뢰하지 않고 매 제출마다 신선한 PASS 를 다시 요구한다.
+deployer 디스패치 전에 Gate 5→6 을 신선하게 재실행한다. 정책 세부사항은 `spec/pipeline.json`과 `gate_checks.registry`가 소유한다; 이 명령 문서는 PASS 아니면 review 제출을 중단한다.
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" run-gate --gate "5->6" || true

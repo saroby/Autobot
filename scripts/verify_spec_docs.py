@@ -3,9 +3,10 @@
 
 Detects drift between the executable spec and documentation:
   1. Every gate in pipeline.json has a section in phase-gates.md
-  2. Every check name has an implementation in gate_runner.py
+  2. Every procedural check name has an implementation in gate_checks.registry
   3. Hardcoded maxRetry values in markdown match pipeline.json
   4. Phase count matches across files
+  5. spec/parts matches the executable pipeline bundle
 
 Usage:
     python3 verify_spec_docs.py [--project-dir .]
@@ -13,7 +14,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 import sys
@@ -21,8 +21,11 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_DIR = SCRIPT_DIR.parent
-SPEC_PATH = PLUGIN_DIR / "spec" / "pipeline.json"
 RENDER_SCRIPT = SCRIPT_DIR / "render_pipeline_docs.py"
+
+from gate_checks.registry import GATE_CHECKS  # noqa: E402
+from spec_loader import load_spec  # noqa: E402
+from spec_bundle import diff_bundle  # noqa: E402
 
 DOCS_TO_CHECK = [
     PLUGIN_DIR / "skills" / "autobot-orchestrator" / "SKILL.md",
@@ -67,11 +70,6 @@ def _names_in_check(check):
     # declarative leaves (file_exists, dir_has_swift, ...) require no Python impl
 
 
-def load_spec() -> dict:
-    with SPEC_PATH.open(encoding="utf-8") as f:
-        return json.load(f)
-
-
 def check_gate_sections(spec: dict) -> list[str]:
     """Every gate in pipeline.json should have a section in phase-gates.md."""
     gates_md = PLUGIN_DIR / "skills" / "autobot-orchestrator" / "references" / "phase-gates.md"
@@ -91,16 +89,13 @@ def check_gate_sections(spec: dict) -> list[str]:
 
 def check_implementations(spec: dict) -> list[str]:
     """Every procedural check referenced in pipeline.json should have a Python impl."""
-    runner = SCRIPT_DIR / "gate_runner.py"
-    if not runner.is_file():
-        return [f"MISSING: {runner}"]
-
-    content = runner.read_text(encoding="utf-8")
     errors = []
     for gate_id, gate_spec in spec.get("gates", {}).items():
         for name in _iter_procedural_check_names(gate_spec):
-            if f'"{name}"' not in content:
-                errors.append(f"Gate {gate_id}: procedural check '{name}' has no impl in gate_runner.py")
+            if name not in GATE_CHECKS:
+                errors.append(
+                    f"Gate {gate_id}: procedural check '{name}' has no impl in gate_checks.registry"
+                )
     return errors
 
 
@@ -179,6 +174,11 @@ def check_rendered_blocks_current() -> list[str]:
 
     detail = result.stdout.strip() or result.stderr.strip() or "rendered docs are stale"
     return [f"Rendered pipeline doc blocks are outdated: {detail}"]
+
+
+def check_spec_parts_current() -> list[str]:
+    """The split spec parts must assemble to the checked-in bundle."""
+    return diff_bundle()
 
 
 _FACADE_SOURCE_MODULES = (
@@ -290,7 +290,7 @@ def main() -> int:
     # 2. Check implementations
     errs = check_implementations(spec)
     all_errors.extend(errs)
-    print(f"  Check implementations in gate_runner.py: {'PASS' if not errs else f'{len(errs)} issues'}")
+    print(f"  Check implementations in gate_checks.registry: {'PASS' if not errs else f'{len(errs)} issues'}")
 
     # 3. Retry drift
     errs = check_retry_drift(spec)
@@ -302,17 +302,22 @@ def main() -> int:
     all_warnings.extend(errs)
     print(f"  Phase count consistency: {'PASS' if not errs else f'{len(errs)} issues'}")
 
-    # 5. Rendered markdown blocks
+    # 5. Split spec bundle
+    errs = check_spec_parts_current()
+    all_errors.extend(errs)
+    print(f"  Split spec bundle current: {'PASS' if not errs else f'{len(errs)} issues'}")
+
+    # 6. Rendered markdown blocks
     errs = check_rendered_blocks_current()
     all_errors.extend(errs)
     print(f"  Rendered doc blocks current: {'PASS' if not errs else f'{len(errs)} issues'}")
 
-    # 6. runtime.py facade re-exports
+    # 7. runtime.py facade re-exports
     errs = check_facade_exports()
     all_errors.extend(errs)
     print(f"  runtime.py facade re-exports: {'PASS' if not errs else f'{len(errs)} issues'}")
 
-    # 7. Non-rendered prose contract drift
+    # 8. Non-rendered prose contract drift
     errs = check_prose_contract_drift(spec)
     all_errors.extend(errs)
     print(f"  Prose contract drift: {'PASS' if not errs else f'{len(errs)} issues'}")

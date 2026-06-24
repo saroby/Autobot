@@ -12,13 +12,24 @@ from conftest import import_runtime_modules
 
 import_runtime_modules()
 
-from gate_runner import GATE_CHECKS  # noqa: E402
+import gate_runner  # noqa: E402
+from gate_checks.registry import GATE_CHECKS  # noqa: E402
 
 SPEC = Path(__file__).resolve().parent.parent / "spec" / "pipeline.json"
 
 
 def _names(gate: dict) -> list[str]:
     return [c.get("name") for c in gate.get("checks", []) if c.get("type") == "procedural"]
+
+
+def _procedural_names(checks: list[dict]) -> list[str]:
+    names: list[str] = []
+    for check in checks:
+        if check.get("type") == "procedural":
+            names.append(check["name"])
+        elif check.get("type") == "all":
+            names.extend(_procedural_names(check.get("checks", [])))
+    return names
 
 
 class TestFeatureSpecSpecWiring(unittest.TestCase):
@@ -38,6 +49,17 @@ class TestFeatureSpecSpecWiring(unittest.TestCase):
     def test_new_checks_have_impls(self):
         for name in ("feature_spec_declared", "feature_spec_quality", "intent_anchors_in_ui"):
             self.assertIn(name, GATE_CHECKS, f"{name} missing from GATE_CHECKS registry")
+
+    def test_all_spec_procedural_checks_have_impls(self):
+        missing = []
+        for gate_id, gate in self.gates.items():
+            for name in _procedural_names(gate.get("checks", [])):
+                if name not in GATE_CHECKS:
+                    missing.append(f"{gate_id}:{name}")
+        self.assertEqual(missing, [])
+
+    def test_gate_runner_reexports_registry_object(self):
+        self.assertIs(gate_runner.GATE_CHECKS, GATE_CHECKS)
 
     def test_descriptor_shape(self):
         for c in self.gates["1->2"]["checks"]:

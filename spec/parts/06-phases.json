@@ -1,0 +1,213 @@
+{
+  "phases": {
+    "0": {
+      "name": "Pre-flight & Setup",
+      "maxRetry": 1,
+      "dependencies": [],
+      "gate": "0->1",
+      "allowFallback": false,
+      "docs": {
+        "displayName": "Pre-flight & 환경 준비",
+        "readmeAgent": "(self)",
+        "skillAgent": "(self)",
+        "outputs": [
+          "`build-state.json`",
+          "환경 검증"
+        ],
+        "parallel": false,
+        "gateLabel": "→ 환경/이름 검증"
+      }
+    },
+    "1": {
+      "name": "Architecture + Contracts",
+      "maxRetry": 2,
+      "dependencies": [
+        "0"
+      ],
+      "gate": "1->2",
+      "allowFallback": false,
+      "agents": [
+        "architect"
+      ],
+      "docs": {
+        "displayName": "아키텍처 + 계약",
+        "readmeAgent": "architect",
+        "skillAgent": "architect",
+        "outputs": [
+          "`architecture.md`",
+          "`Models/*.swift`",
+          "`ServiceProtocols.swift`"
+        ],
+        "parallel": false,
+        "gateLabel": "→ 산출물 존재/구조 검증"
+      }
+    },
+    "2": {
+      "name": "UX Design",
+      "maxRetry": 1,
+      "dependencies": [
+        "1"
+      ],
+      "gate": "2->3",
+      "allowFallback": true,
+      "agents": [
+        "ux-designer"
+      ],
+      "docs": {
+        "displayName": "UX Design (필수)",
+        "readmeAgent": "ux-designer (Stitch)",
+        "skillAgent": "ux-designer",
+        "outputs": [
+          "`.autobot/designs/*.png`",
+          "`.autobot/design-spec.md`",
+          "`.autobot/app-icon-1024.png`"
+        ],
+        "parallel": false,
+        "gateLabel": "→ Stitch 성공 필수(미설치 시 fallback) + app-icon-1024.png 존재"
+      }
+    },
+    "2.5": {
+      "name": "Plan Preview",
+      "maxRetry": 1,
+      "dependencies": [
+        "2"
+      ],
+      "gate": "2.5->3",
+      "allowFallback": false,
+      "manual": true,
+      "docs": {
+        "displayName": "기획·디자인 HTML 미리보기 (수동, /autobot:plan)",
+        "readmeAgent": "(self) + autobot-plan-preview",
+        "skillAgent": "(self) + autobot-plan-preview",
+        "outputs": [
+          "`.autobot/designs/preview/index.html`",
+          "기획·디자인 critique"
+        ],
+        "parallel": false,
+        "gateLabel": "→ preview HTML 존재 (critique 는 스킬 contract)"
+      }
+    },
+    "3": {
+      "name": "Project Scaffold",
+      "maxRetry": 1,
+      "dependencies": [
+        "2"
+      ],
+      "gate": "3->4",
+      "allowFallback": false,
+      "agents": [
+        "design-system"
+      ],
+      "docs": {
+        "displayName": "Xcode 프로젝트 + Design System",
+        "readmeAgent": "(self) + design-system",
+        "skillAgent": "(self) + design-system",
+        "outputs": [
+          "`.xcodeproj`",
+          "`Packages/<Name>DS/`",
+          "`PrivacyInfo.xcprivacy`",
+          "`.entitlements`"
+        ],
+        "parallel": false,
+        "gateLabel": "→ .xcodeproj + Package 존재 + tokens 채워짐"
+      }
+    },
+    "4": {
+      "name": "Parallel Coding",
+      "maxRetry": 2,
+      "dependencies": [
+        "3"
+      ],
+      "gate": "4->5",
+      "allowFallback": false,
+      "agents": [
+        "ui-builder",
+        "data-engineer",
+        "backend-engineer"
+      ],
+      "docs": {
+        "displayName": "병렬 코드 생성",
+        "readmeAgent": "ui-builder + data-engineer (+ backend-engineer)",
+        "skillAgent": "ui-builder + data-engineer + (backend-engineer)",
+        "outputs": [
+          "`Views/`",
+          "`ViewModels/`",
+          "`Services/`",
+          "`App/`",
+          "`backend/`"
+        ],
+        "parallel": true,
+        "gateLabel": "→ 파일 존재 + Models/ 무결성 + sandbox 위반 0건"
+      }
+    },
+    "5": {
+      "name": "Integration & Build",
+      "maxRetry": 2,
+      "dependencies": [
+        "4"
+      ],
+      "gate": "5->6",
+      "allowFallback": false,
+      "agents": [
+        "quality-engineer"
+      ],
+      "docs": {
+        "displayName": "통합 + 빌드 검증",
+        "readmeAgent": "quality-engineer",
+        "skillAgent": "quality-engineer (`autobot-integration-build` 스킬)",
+        "outputs": [
+          "빌드 성공",
+          "테스트",
+          "Integration Wiring"
+        ],
+        "parallel": false,
+        "gateLabel": "→ xcodebuild 성공"
+      }
+    },
+    "6": {
+      "name": "TestFlight Deploy",
+      "maxRetry": 1,
+      "dependencies": [
+        "5"
+      ],
+      "gate": "6->7",
+      "allowFallback": false,
+      "agents": [
+        "deployer"
+      ],
+      "docs": {
+        "displayName": "TestFlight 배포 (수동, /autobot:testflight)",
+        "readmeAgent": "deployer (manual)",
+        "skillAgent": "deployer",
+        "outputs": [
+          "앱 등록 (자동, 멱등)",
+          "아카이브",
+          "업로드",
+          "테스터 초대"
+        ],
+        "parallel": false,
+        "gateLabel": "→ 배포 결과 기록 (soft)"
+      },
+      "manual": true
+    },
+    "7": {
+      "name": "Retrospective",
+      "maxRetry": 0,
+      "dependencies": [],
+      "gate": null,
+      "allowFallback": false,
+      "alwaysRun": true,
+      "docs": {
+        "displayName": "회고",
+        "readmeAgent": "(self)",
+        "skillAgent": "(self)",
+        "outputs": [
+          "`build-report.md`",
+          "`learnings.json` 갱신"
+        ],
+        "parallel": false,
+        "gateLabel": "—"
+      }
+    }
+  }
+}

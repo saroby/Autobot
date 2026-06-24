@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Pipeline spec loading + structural validation.
 
-The spec at spec/pipeline.json is the single source of truth
-for phases, gates, transitions, retry policies, and event/ownership schemas.
-Every other runtime module reads through load_spec() so that schema upgrades
-land in one place.
+The split source lives in spec/parts/*.json, while spec/pipeline.json remains
+the executable compatibility bundle for tools that read one file. Every runtime
+module reads through load_spec(), which validates that the two views match.
 """
 
 from __future__ import annotations
@@ -16,8 +15,10 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 SPEC_PATH = SCRIPT_DIR.parent / "spec" / "pipeline.json"
 
+from spec_bundle import PARTS_DIR, diff_bundle  # noqa: E402
+
 __all__ = [
-    "SPEC_PATH", "load_spec", "validate_spec",
+    "SPEC_PATH", "PARTS_DIR", "load_spec", "validate_spec",
     "schema_keys", "phase_ids", "resolve_app_template",
 ]
 
@@ -44,6 +45,13 @@ def load_spec() -> dict[str, Any]:
     if not isinstance(data, dict):
         raise SystemExit("FATAL: pipeline spec root must be an object")
     validate_spec(data)
+    drift = diff_bundle(SPEC_PATH, PARTS_DIR)
+    if drift:
+        details = "; ".join(drift)
+        raise SystemExit(
+            "FATAL: spec/parts drift from spec/pipeline.json — "
+            f"{details}. Run: python3 scripts/spec_bundle.py write-bundle"
+        )
     return data
 
 

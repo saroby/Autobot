@@ -1,0 +1,19 @@
+{
+  "stateSchema": {
+    "required": [
+      "buildId",
+      "appName",
+      "displayName",
+      "phases"
+    ],
+    "recommended": [
+      "projectPath",
+      "environment",
+      "contracts",
+      "backend_required"
+    ],
+    "phaseRequired": [
+      "status"
+    ]
+  }
+}
