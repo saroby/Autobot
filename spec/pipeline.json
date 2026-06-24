@@ -1221,7 +1221,7 @@
       "toPhase": "6",
       "soft": false,
       "summary": "The app builds successfully, receives opposite-runtime peer review, passes Axiom critical audit (when installed), and runtime wiring uses real repositories.",
-      "docsSummary": "빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)",
+      "docsSummary": "빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 프리뷰 계약(기본은 hard-block 아님)을 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)",
       "checks": [
         {
           "type": "state_field_eq",

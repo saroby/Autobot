@@ -95,7 +95,7 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 - **Gate 2.5→3**: designs/preview/index.html 가 생성됐는지 검증 (critique 섹션 강제는 autobot-plan-preview 스킬 contract)
 - **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 + Design System 패키지 스켈레톤(토큰 스텁 포함) 존재를 검증 · AppIcon.appiconset 에 적용된 PNG 존재 필수
 - **Gate 4→5**: Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건
-- **Gate 5→6**: 빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 보존 여부를 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)
+- **Gate 5→6**: 빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 프리뷰 계약(기본은 hard-block 아님)을 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)
 - **Gate 6→7**: 배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행 (soft gate)
 <!-- AUTOBOT_GATE_SUMMARY:END -->
 

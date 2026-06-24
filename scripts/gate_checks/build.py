@@ -266,7 +266,25 @@ def check_app_uses_real_repositories(proj: Path, app: str, state: dict) -> list[
 
 
 def check_service_stubs_preserved(proj: Path, app: str, state: dict) -> list[dict]:
-    return [_file_exists(proj / app / "App" / "ServiceStubs.swift", "stubs_for_preview")]
+    """Preview-only contract.
+
+    ServiceStubs.swift keeps SwiftUI previews alive, but production safety is
+    enforced separately by check_app_uses_real_repositories. Missing preview
+    stubs should not hard-fail Phase 5 or trip the build-fix circuit breaker.
+    """
+    path = proj / app / "App" / "ServiceStubs.swift"
+    if path.is_file():
+        return [_ok("stubs_for_preview", True, "ServiceStubs.swift preserved (preview contract)")]
+    qmax = bool(state.get("qualityMax"))
+    return [_ok(
+        "stubs_for_preview",
+        True,
+        "ServiceStubs.swift absent — SwiftUI previews may break; app production wiring "
+        "is checked separately"
+        + (" — quality-max: DEGRADED" if qmax else ""),
+        skipped=True,
+        degraded=qmax,
+    )]
 
 
 def check_backend_deploy_readiness(proj: Path, app: str, state: dict) -> list[dict]:

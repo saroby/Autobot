@@ -22,7 +22,11 @@ from gate_checks.review import (  # noqa: E402
     check_peer_review_acceptable,
 )
 from gate_checks.design import check_design_assets_exist_or_fallback  # noqa: E402
-from gate_checks.build import check_backend_deploy_readiness  # noqa: E402
+from gate_checks.build import (  # noqa: E402
+    check_backend_deploy_readiness,
+    check_service_stubs_preserved,
+)
+from gate_runner import run_gate  # noqa: E402
 
 APP = "App"
 PROJ = Path("/tmp")  # axiom/peer skip paths don't touch disk
@@ -151,6 +155,50 @@ class TestBackendDeployReadinessQualityMax(unittest.TestCase):
         r = check_backend_deploy_readiness(self.proj, APP, {"backend_required": True, "qualityMax": True})[0]
         self.assertTrue(r["passed"])
         self.assertFalse(r.get("degraded", False))  # deploy-ready
+
+
+class TestServiceStubsQualityMax(unittest.TestCase):
+    """Preview stubs are useful, but missing them should not block MVP completion."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.proj = Path(self._tmp.name)
+        (self.proj / APP / "App").mkdir(parents=True)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_missing_default_is_benign_skip(self):
+        r = check_service_stubs_preserved(self.proj, APP, {})[0]
+        self.assertTrue(r["passed"])
+        self.assertTrue(r.get("skipped"))
+        self.assertFalse(r.get("degraded", False))
+
+    def test_missing_quality_max_is_degraded(self):
+        r = check_service_stubs_preserved(self.proj, APP, {"qualityMax": True})[0]
+        self.assertTrue(r["passed"])
+        self.assertTrue(r.get("skipped"))
+        self.assertTrue(r.get("degraded"))
+
+    def test_present_passes_cleanly(self):
+        (self.proj / APP / "App" / "ServiceStubs.swift").write_text("struct ServiceStubs {}\n")
+        r = check_service_stubs_preserved(self.proj, APP, {"qualityMax": True})[0]
+        self.assertTrue(r["passed"])
+        self.assertFalse(r.get("skipped", False))
+        self.assertFalse(r.get("degraded", False))
+
+    def test_gate_rollup_marks_missing_quality_max_degraded(self):
+        spec = {"gates": {"x": {"checks": [
+            {"type": "procedural", "name": "service_stubs_preserved", "label": "service_stubs_preserved"}
+        ]}}}
+
+        default_result = run_gate("x", self.proj, APP, {}, spec)
+        self.assertTrue(default_result["passed"])
+        self.assertFalse(default_result["degraded"])
+
+        qmax_result = run_gate("x", self.proj, APP, {"qualityMax": True}, spec)
+        self.assertTrue(qmax_result["passed"])
+        self.assertTrue(qmax_result["degraded"])
 
 
 class TestQualityMaxFlagAllowed(unittest.TestCase):
