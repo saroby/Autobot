@@ -95,7 +95,7 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 - **Gate 2.5→3**: designs/preview/index.html 가 생성됐는지 검증 (critique 섹션 강제는 autobot-plan-preview 스킬 contract)
 - **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 + Design System 패키지 스켈레톤(토큰 스텁 포함) 존재를 검증 · AppIcon.appiconset 에 적용된 PNG 존재 필수
 - **Gate 4→5**: Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건
-- **Gate 5→6**: 빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 프리뷰 계약(기본은 hard-block 아님)을 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)
+- **Gate 5→6**: 빌드 성공과 실제 Repository wiring은 핵심 경로로 검증하고, 반대 런타임 peer review와 Axiom critical audit은 품질 sidecar로 기록한다. sidecar 문제는 Phase 5를 실패시키지 않고 DEGRADED로 남겨 출하 경로에서 차단한다. ServiceStubs.swift는 프리뷰 계약이라 기본 hard-block이 아니다.
 - **Gate 6→7**: 배포 시도 결과가 기록됐는지 확인하되, 실패해도 회고는 계속 진행 (soft gate)
 <!-- AUTOBOT_GATE_SUMMARY:END -->
 
@@ -111,7 +111,7 @@ Gate 실패 시 자동 재시도(최대 2회), 반복 실패 시 Phase 7(회고)
 
 [Axiom 플러그인](https://github.com/CharlesWiltgen/Axiom)이 설치되어 있으면 Autobot이 두 지점에서 자동으로 호출합니다 (미설치 환경에서는 silent skip — 단독 동작 보장):
 
-- **Phase 5 / Gate 5→6 — Critical Audit**: 빌드 통과 직후 `axiom:concurrency-auditor` · `axiom:swiftdata-auditor` · `axiom:memory-auditor` · `axiom:swiftui-architecture-auditor` 4개를 병렬 dispatch. 빌드는 통과하지만 런타임에서 깨지는 4개 클래스 (Swift 6 data race, SwiftData 스키마 손실, 누수, SwiftUI 구조 위반) 를 잡아 Step 3 Build-Fix Loop 의 다음 배치로 흘려 보냅니다. critical 0건이어야 Gate 5→6 통과.
+- **Phase 5 / Gate 5→6 — Critical Audit**: 빌드 통과 직후 `axiom:concurrency-auditor` · `axiom:swiftdata-auditor` · `axiom:memory-auditor` · `axiom:swiftui-architecture-auditor` 4개를 병렬 dispatch. 빌드는 통과하지만 런타임에서 깨지는 4개 클래스 (Swift 6 data race, SwiftData 스키마 손실, 누수, SwiftUI 구조 위반) 를 품질 리포트로 남깁니다. critical 항목은 DEGRADED로 기록되어 로컬 MVP 완료는 막지 않고 TestFlight/App Review 출하 경로를 차단합니다.
 - **Phase 7 — Health-Check**: `axiom:health-check` 1회 dispatch. 결과를 `build-report.md` 의 `## Axiom Health-Check` 섹션 + `learnings.json` 의 `patterns.axiom_findings` 에 누적해 다음 빌드의 Phase-0 learning bootstrap 이 흡수합니다. 회고는 절대 막지 않습니다.
 
 호출 규칙·프롬프트·결과 기록 위치 SSOT 는 `skills/autobot-axiom-bridge/SKILL.md`. 감지는 `scripts/detect-axiom.sh` (exit 0 = 설치됨, 1 = 미설치).
@@ -122,7 +122,7 @@ Autobot 실행 위치가 Codex면 Claude, Claude면 Codex를 리뷰어로 사용
 
 - 감지: `scripts/detect-peer-ai.sh`
 - 실행 규칙: `skills/autobot-peer-review-bridge/SKILL.md`
-- Gate 5→6: `phases.5.metadata.peerReview.verdict ∈ {PASS, skipped}` 이어야 통과
+- Gate 5→6: `phases.5.metadata.peerReview` 문제는 hard fail이 아니라 DEGRADED 품질 evidence로 남긴다. 로컬 MVP는 계속 완료되고, 출하 경로는 non-passed Gate 5→6을 거부한다.
 
 ### 병렬 에이전트 격리
 

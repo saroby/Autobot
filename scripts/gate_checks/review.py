@@ -97,13 +97,12 @@ check_codex_review_acceptable = check_architecture_peer_review_acceptable
 
 
 def check_axiom_critical_audit_acceptable(proj: Path, app: str, state: dict) -> list[dict]:
-    """4-way branch over environment.axiom x phases.5.metadata.axiom_critical_audit.
+    """Quality sidecar: read the Phase-5 Axiom critical audit if it ran.
 
-    - axiom NOT installed + metadata absent -> PASS (skipped).
-    - axiom installed     + metadata absent -> FAIL (bridge call missing).
-    - axiom installed     + ran=true + criticalCount==0 + findingsPath exists -> PASS.
-    - axiom installed     + ran=true + criticalCount>0                        -> FAIL (return to fix loop).
-    - axiom installed     + ran=false                                         -> FAIL (broken bridge).
+    The local MVP path must finish when the app builds. Axiom improves
+    confidence, but absent/broken/failing Axiom evidence is reported as
+    DEGRADED instead of hard-failing Phase 5. Upload paths still reject a
+    degraded Gate 5->6 verdict.
     """
     env = state.get("environment", {})
     axiom_installed = env.get("axiom") is True
@@ -114,10 +113,18 @@ def check_axiom_critical_audit_acceptable(proj: Path, app: str, state: dict) -> 
              .get("axiom_critical_audit")
     )
 
+    qmax = bool(state.get("qualityMax"))
+
+    def _degraded(check: str, message: str) -> list[dict]:
+        return [_ok(
+            check,
+            False,
+            message + " — quality sidecar DEGRADED (MVP build continues; shipping blocked)",
+            skipped=True,
+            degraded=True,
+        )]
+
     if not axiom_installed:
-        # quality-max: a missing audit is no longer "good enough" — record DEGRADED
-        # (NOT hard fail: that would trip the circuit breaker and halt the build).
-        qmax = bool(state.get("qualityMax"))
         qnote = " — quality-max: install axiom for the critical audit" if qmax else ""
         if audit is None:
             return [_ok("axiom_audit_skipped_env", True,
@@ -128,21 +135,26 @@ def check_axiom_critical_audit_acceptable(proj: Path, app: str, state: dict) -> 
                     skipped=True, degraded=qmax)]
 
     if audit is None:
-        return [_ok("axiom_audit_missing", False,
-                    "environment.axiom=true but phases.5.metadata.axiom_critical_audit absent — "
-                    "run autobot-axiom-bridge Mode 1 before Gate 5->6")]
+        return _degraded(
+            "axiom_audit_missing",
+            "environment.axiom=true but phases.5.metadata.axiom_critical_audit absent",
+        )
 
     ran = audit.get("ran")
     if ran is not True:
-        return [_ok("axiom_audit_not_run", False,
-                    "axiom_critical_audit.ran is not true; bridge invocation failed or was skipped")]
+        return _degraded(
+            "axiom_audit_not_run",
+            "axiom_critical_audit.ran is not true; bridge invocation failed or was skipped",
+        )
 
     findings_path_str = audit.get("findings_path") or audit.get("findingsPath")
     if findings_path_str:
         findings_path = proj / findings_path_str
         if not findings_path.exists():
-            return [_ok("axiom_findings_missing", False,
-                        f"axiom_critical_audit.findings_path={findings_path_str} does not exist on disk")]
+            return _degraded(
+                "axiom_findings_missing",
+                f"axiom_critical_audit.findings_path={findings_path_str} does not exist on disk",
+            )
 
     critical = audit.get("critical_count")
     if critical is None:
@@ -150,12 +162,16 @@ def check_axiom_critical_audit_acceptable(proj: Path, app: str, state: dict) -> 
     try:
         critical_int = int(critical)
     except (TypeError, ValueError):
-        return [_ok("axiom_critical_count_invalid", False,
-                    f"axiom_critical_audit.critical_count is not an integer: {critical!r}")]
+        return _degraded(
+            "axiom_critical_count_invalid",
+            f"axiom_critical_audit.critical_count is not an integer: {critical!r}",
+        )
 
     if critical_int > 0:
-        return [_ok("axiom_critical_present", False,
-                    f"axiom critical findings count={critical_int}; return to build-fix loop")]
+        return _degraded(
+            "axiom_critical_present",
+            f"axiom critical findings count={critical_int}; return to build-fix loop",
+        )
 
     return [_ok("axiom_critical_clean", True,
                 f"axiom critical findings count=0 (auditors={audit.get('auditors', [])})")]
@@ -170,18 +186,17 @@ _PEER_REVIEW_ALLOWED_SKIP_WHEN_AVAILABLE = {
 
 
 def check_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict]:
-    """Require Phase 5 to attempt the opposite-runtime peer review.
+    """Quality sidecar: read Phase-5 opposite-runtime peer review if it ran.
 
     Accepted verdicts:
       - PASS: peer reviewed and found no blocking issue (findingsPath must exist on disk).
       - skipped: peer tool unavailable or invocation failed; build remains standalone.
         skipReason is REQUIRED. When environment.peerReviewAvailable=true, skipReason
         must be in the allowed runtime-failure allowlist.
-    Rejected:
-      - missing: quality-engineer did not run the bridge.
-      - FAIL: peer found blocking issues that must return to the build-fix loop.
-      - skipped without skipReason: implicit skip — not auditable.
-      - skipped with non-allowlist reason while peerReviewAvailable=true: contradiction.
+
+    Invalid/missing/failing evidence is DEGRADED, not a hard fail. That keeps
+    /autobot:mvp focused on producing a local app while upload paths still
+    reject non-passed Gate 5->6 evidence.
     """
     review = (
         state.get("phases", {})
@@ -189,9 +204,30 @@ def check_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict
              .get("metadata", {})
              .get("peerReview")
     )
+    qmax = bool(state.get("qualityMax"))
+
+    def _degraded(check: str, message: str) -> list[dict]:
+        return [_ok(
+            check,
+            False,
+            message + " — quality sidecar DEGRADED (MVP build continues; shipping blocked)",
+            skipped=True,
+            degraded=True,
+        )]
+
     if review is None:
-        return [_ok("peer_review_missing", False,
-                    "peer review not recorded; run autobot-peer-review-bridge before Gate 5->6")]
+        env_available = state.get("environment", {}).get("peerReviewAvailable") is True
+        if env_available or qmax:
+            return _degraded(
+                "peer_review_missing",
+                "peer review not recorded; run autobot-peer-review-bridge before Gate 5->6",
+            )
+        return [_ok(
+            "peer_review_not_available",
+            True,
+            "peer review not recorded and peer runtime not available; quality sidecar skipped",
+            skipped=True,
+        )]
 
     verdict = str(review.get("verdict", ""))
     host = str(review.get("host", "unknown"))
@@ -202,26 +238,31 @@ def check_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict
         if findings_path_str:
             findings_path = proj / findings_path_str
             if not findings_path.exists():
-                return [_ok("peer_review_findings_missing", False,
-                            f"peerReview.findingsPath={findings_path_str} does not exist on disk — "
-                            "PASS verdict without artifact is not auditable")]
+                return _degraded(
+                    "peer_review_findings_missing",
+                    f"peerReview.findingsPath={findings_path_str} does not exist on disk — "
+                    "PASS verdict without artifact is not auditable",
+                )
         return [_ok("peer_review_pass", True, f"{host}->{peer} verdict=PASS")]
 
     if verdict == "skipped":
         reason = review.get("skipReason")
         if not reason:
-            return [_ok("peer_review_skipped_without_reason", False,
-                        f"{host}->{peer} verdict=skipped but skipReason missing — "
-                        "explicit skipReason required for audit")]
+            return _degraded(
+                "peer_review_skipped_without_reason",
+                f"{host}->{peer} verdict=skipped but skipReason missing — "
+                "explicit skipReason required for audit",
+            )
         env_available = state.get("environment", {}).get("peerReviewAvailable") is True
         if env_available and reason not in _PEER_REVIEW_ALLOWED_SKIP_WHEN_AVAILABLE:
-            return [_ok("peer_review_skip_contradicts_env", False,
-                        f"environment.peerReviewAvailable=true but skipReason={reason!r} "
-                        f"is not a runtime failure. Allowed when available: "
-                        f"{sorted(_PEER_REVIEW_ALLOWED_SKIP_WHEN_AVAILABLE)}")]
+            return _degraded(
+                "peer_review_skip_contradicts_env",
+                f"environment.peerReviewAvailable=true but skipReason={reason!r} "
+                f"is not a runtime failure. Allowed when available: "
+                f"{sorted(_PEER_REVIEW_ALLOWED_SKIP_WHEN_AVAILABLE)}",
+            )
         # quality-max: a skipped peer review (tool unavailable or runtime failure)
         # is recorded DEGRADED so the build is not shippable until a real review ran.
-        qmax = bool(state.get("qualityMax"))
         return [_ok("peer_review_skipped", True,
                     f"{host}->{peer} skipped: {reason}"
                     + (" — quality-max: peer review did not actually run" if qmax else ""),
@@ -230,5 +271,7 @@ def check_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict
     blocking = review.get("blockingFindingsCount")
     if blocking is None:
         blocking = len(review.get("blockingFindings", []) or [])
-    return [_ok("peer_review_failed", False,
-                f"{host}->{peer} verdict={verdict or 'unknown'} ({blocking} blocking findings)")]
+    return _degraded(
+        "peer_review_failed",
+        f"{host}->{peer} verdict={verdict or 'unknown'} ({blocking} blocking findings)",
+    )

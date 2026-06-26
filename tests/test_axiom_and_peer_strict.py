@@ -1,12 +1,11 @@
-"""Regression coverage for the Axiom bridge gate, peer-review strictness,
+"""Regression coverage for the Axiom bridge gate, peer-review sidecar behavior,
 peer architecture review (Phase 1, bi-directional), and Phase 7 self-check.
 
 These tests close the 11 findings from the review pass:
   - axiom_audit_skipped logEvent registered (so soft-skip does not hard-fail)
-  - Gate 5->6 axiom_critical_audit_acceptable 4-way branch
-  - peer_review_acceptable requires skipReason
-  - peer_review_acceptable rejects skip when env says peer is available
-  - peer_review_acceptable verifies findingsPath on disk for PASS
+  - Gate 5->6 axiom_critical_audit_acceptable reports sidecar issues as DEGRADED
+  - peer_review_acceptable reports unauditable/contradictory evidence as DEGRADED
+  - peer_review_acceptable verifies findingsPath on disk for PASS without hard-failing MVP
   - architecture_peer_review_acceptable bi-directional (Codex-host -> Claude)
   - Phase 7 verify-phase7-axiom self-check 4-way
 """
@@ -103,10 +102,11 @@ class TestAxiomCriticalGate(IsolatedProjectCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("axiom_audit_skipped_env", result.stdout)
 
-    def test_axiom_installed_no_metadata_fails(self):
+    def test_axiom_installed_no_metadata_degrades(self):
         self._prepare_phase5(axiom_installed=True, audit=None)
         result = self._run_gate()
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("axiom_audit_missing", result.stdout + result.stderr)
 
     def test_axiom_installed_critical_zero_passes(self):
@@ -126,7 +126,7 @@ class TestAxiomCriticalGate(IsolatedProjectCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("axiom_critical_clean", result.stdout)
 
-    def test_axiom_installed_critical_positive_fails(self):
+    def test_axiom_installed_critical_positive_degrades(self):
         findings = self.project_dir / ".autobot" / "axiom-critical.json"
         findings.write_text('{"critical":[{"file":"X.swift"}],"warning":[]}')
         self._prepare_phase5(
@@ -139,10 +139,11 @@ class TestAxiomCriticalGate(IsolatedProjectCase):
             },
         )
         result = self._run_gate()
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("axiom_critical_present", result.stdout + result.stderr)
 
-    def test_axiom_installed_findings_path_missing_fails(self):
+    def test_axiom_installed_findings_path_missing_degrades(self):
         self._prepare_phase5(
             axiom_installed=True,
             audit={
@@ -151,16 +152,18 @@ class TestAxiomCriticalGate(IsolatedProjectCase):
             },
         )
         result = self._run_gate()
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("axiom_findings_missing", result.stdout + result.stderr)
 
-    def test_axiom_installed_not_ran_fails(self):
+    def test_axiom_installed_not_ran_degrades(self):
         self._prepare_phase5(
             axiom_installed=True,
             audit={"ran": False},
         )
         result = self._run_gate()
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("axiom_audit_not_run", result.stdout + result.stderr)
 
 
@@ -200,20 +203,22 @@ class TestPeerReviewStrict(IsolatedProjectCase):
             project_dir=self.project_dir,
         )
 
-    def test_skipped_without_reason_rejected(self):
+    def test_skipped_without_reason_degrades(self):
         self._prepare(peer_review={"host": "codex", "peer": "claude", "verdict": "skipped"})
         result = self._run_gate()
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("peer_review_skipped_without_reason", result.stdout + result.stderr)
 
-    def test_skip_contradicts_env_available(self):
+    def test_skip_contradicts_env_available_degrades(self):
         self._prepare(
             peer_review={"host": "codex", "peer": "claude",
                          "verdict": "skipped", "skipReason": "peer_cli_unavailable"},
             peer_available=True,
         )
         result = self._run_gate()
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("peer_review_skip_contradicts_env", result.stdout + result.stderr)
 
     def test_skip_allowlisted_runtime_failure_passes_when_available(self):
@@ -233,14 +238,53 @@ class TestPeerReviewStrict(IsolatedProjectCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("peer_review_pass", result.stdout)
 
-    def test_pass_with_missing_findings_path_rejected(self):
+    def test_pass_with_missing_findings_path_degrades(self):
         self._prepare(peer_review={
             "host": "codex", "peer": "claude", "verdict": "PASS",
             "findingsPath": ".autobot/peer-review/does-not-exist.json",
         })
         result = self._run_gate()
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("peer_review_findings_missing", result.stdout + result.stderr)
+
+    def test_missing_peer_review_skips_when_peer_unavailable(self):
+        self._prepare(peer_review={}, peer_available=False)
+        state = self.state()
+        state["environment"]["peerReviewAvailable"] = False
+        state["environment"]["axiom"] = False
+        state["phases"]["5"] = {
+            "status": "in_progress", "startedAt": "t",
+            "retryCount": 0,
+            "metadata": {"build_succeeded": True},
+            "learningsConsumed": ["quality-engineer"],
+        }
+        (self.project_dir / ".autobot" / "build-state.json").write_text(
+            json.dumps(state, indent=2)
+        )
+        result = self._run_gate()
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("peer_review_not_available", result.stdout)
+        self.assertNotIn("[DEGRADED] peer_review_acceptable", result.stdout)
+
+    def test_missing_peer_review_degrades_when_peer_available(self):
+        self._prepare(peer_review={}, peer_available=True)
+        state = self.state()
+        state["environment"]["peerReviewAvailable"] = True
+        state["environment"]["axiom"] = False
+        state["phases"]["5"] = {
+            "status": "in_progress", "startedAt": "t",
+            "retryCount": 0,
+            "metadata": {"build_succeeded": True},
+            "learningsConsumed": ["quality-engineer"],
+        }
+        (self.project_dir / ".autobot" / "build-state.json").write_text(
+            json.dumps(state, indent=2)
+        )
+        result = self._run_gate()
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
+        self.assertIn("peer_review_missing", result.stdout)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

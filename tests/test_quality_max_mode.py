@@ -200,6 +200,16 @@ class TestServiceStubsQualityMax(unittest.TestCase):
         self.assertTrue(qmax_result["passed"])
         self.assertTrue(qmax_result["degraded"])
 
+    def test_pipeline_spec_uses_procedural_service_stubs_check(self):
+        import json
+        with (Path(__file__).resolve().parent.parent / "spec" / "pipeline.json").open(encoding="utf-8") as handle:
+            spec = json.load(handle)
+        checks = spec["gates"]["5->6"]["checks"]
+        service_stubs = [c for c in checks if c.get("label") == "service_stubs_preserved"]
+        self.assertEqual(len(service_stubs), 1)
+        self.assertEqual(service_stubs[0].get("type"), "procedural")
+        self.assertEqual(service_stubs[0].get("name"), "service_stubs_preserved")
+
 
 class TestQualityMaxFlagAllowed(unittest.TestCase):
     def test_qualitymax_in_allowed_flags(self):

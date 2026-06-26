@@ -66,7 +66,7 @@ class TestPeerReviewBridge(IsolatedProjectCase):
         self.assertEqual(env["peerAi"], "claude")
         self.assertFalse(env["peerReviewAvailable"])
 
-    def test_gate_5_requires_peer_review_attempt(self):
+    def test_gate_5_skips_missing_peer_review_when_peer_unavailable(self):
         self._prepare_gate_5_artifacts()
 
         result = run_pipeline(
@@ -74,8 +74,9 @@ class TestPeerReviewBridge(IsolatedProjectCase):
             project_dir=self.project_dir,
         )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("peer_review", result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("peer_review_not_available", result.stdout + result.stderr)
+        self.assertNotIn("[DEGRADED] peer_review_acceptable", result.stdout + result.stderr)
 
     def test_gate_5_accepts_skipped_peer_review(self):
         self._prepare_gate_5_artifacts(peer_review={

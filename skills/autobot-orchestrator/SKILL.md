@@ -94,7 +94,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag     --key backend_requir
 
 `validate-state.sh` 는 read-only 진단. 상태 변경은 모두 `pipeline.sh`. Phase 완료는 `advance-phase`만 사용한다.
 
-**진입 플래그** (mvp 호출 인자): 사용자가 `/autobot:mvp --quality=max …` 로 호출했으면 Phase 0 완료 직후 `set-flag --key qualityMax --value true --reason "operator opted into quality-max via /autobot:mvp"` 를 1회 실행한다 (`--allow-visual-drift` → `allowVisualDrift` 와 동일 패턴). 이후 Gate 5→6 의 peer/axiom 체크와 Gate 2→3 의 design fallback 체크가 이 플래그를 읽어 미가용 skip 을 PASS 대신 DEGRADED 로 처리한다. 플래그가 없으면 모든 게이트는 자율 기본 동작을 유지한다.
+**진입 플래그** (mvp 호출 인자): 사용자가 `/autobot:mvp --quality=max …` 로 호출했으면 Phase 0 완료 직후 `set-flag --key qualityMax --value true --reason "operator opted into quality-max via /autobot:mvp"` 를 1회 실행한다 (`--allow-visual-drift` → `allowVisualDrift` 와 동일 패턴). 이후 Gate 5→6 의 peer/axiom sidecar 와 Gate 2→3 의 design fallback 체크가 이 플래그를 읽어 미가용 skip 을 PASS 대신 DEGRADED 로 처리한다. peer/Axiom 이 설치됐는데 누락·실패·비감사 가능 결과를 남기면 qualityMax 여부와 무관하게 DEGRADED 로 기록한다. DEGRADED 는 로컬 MVP 완료를 막지 않고 출하 경로를 차단한다.
 
 ## 학습 적용 (Phase 0 + 각 Phase 시작 시)
 

@@ -354,7 +354,7 @@ Read $CLAUDE_PLUGIN_ROOT/skills/autobot-axiom-bridge/SKILL.md
 
 - Axiom 부재 → soft skip, Gate 5→6 통과에 영향 없음.
 - critical 0건 → Gate 5→6 진행.
-- critical > 0 → `build_succeeded` 플래그를 켜기 전에 Step 3 로 돌아가 fix_hint 를 따라 수정. 5회 한계 도달 시 회고로 우회.
+- critical > 0 → Step 3 로 돌아가 fix_hint 를 따라 수정한다. 한계 도달 시에도 로컬 MVP 완료는 막지 않고 Gate 5→6 에 DEGRADED evidence 로 남긴다.
 
 ## Step 8: Opposite-Runtime Peer Review (필수 시도, soft-skip)
 
@@ -369,7 +369,7 @@ Read $CLAUDE_PLUGIN_ROOT/skills/autobot-peer-review-bridge/SKILL.md
 - `phases.5.metadata.peerReview.verdict == "PASS"` → Gate 5→6 진행.
 - peer 도구 부재/호출 실패 → `verdict="skipped"` 와 `skipReason` 기록 후 진행.
 - `verdict == "FAIL"` → `blockingFindings` 를 Step 3 Build-Fix Loop 의 다음 에러 배치로 처리한다.
-- 누락은 실패다. Gate 5→6 의 `peer_review_acceptable` 체크가 `peerReview` 기록을 강제한다.
+- 누락/실패/비감사 가능 결과는 hard fail 이 아니라 Gate 5→6 의 DEGRADED evidence 로 남긴다. 로컬 MVP 완료는 계속 진행하고, 출하 경로가 non-passed Gate 5→6 을 거부한다.
 
 ## Step 9: Visual Fidelity Judge (멀티모달, soft → DEGRADED-only)
 

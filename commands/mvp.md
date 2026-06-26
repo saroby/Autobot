@@ -78,7 +78,7 @@ orchestrator·spec·gate_checks 가 소유한다.
 - **Phase 2** — ux-designer (Stitch primary, fallback 시 design-spec 만으로 진행) + `autobot-app-icon` 스킬로 1024 PNG 아이콘 생성 (필수, gate-enforced)
 - **Phase 3** — Xcode 프로젝트 scaffold + Composition seam + PrivacyInfo + entitlements + AppIcon.appiconset apply (gate-enforced)
 - **Phase 4** — ui-builder ∥ data-engineer ∥ (backend-engineer) 병렬 디스패치 + sandbox 사전/사후 검증
-- **Phase 5** — quality-engineer 통합 빌드 + axiom critical audit + peer review + runtime smoke + visual contract
+- **Phase 5** — quality-engineer 통합 빌드 + runtime smoke + visual contract. Axiom critical audit / peer review 는 품질 sidecar 로 실행하며, 문제는 MVP 실패가 아니라 DEGRADED evidence 로 남김
 - **Phase 7** — build-report + learnings 누적 (Phase 6 는 `pending` 으로 남김)
 
 각 Phase 전후의 `start-phase` / `advance-phase` 호출, gate 실행, snapshot 저장, error recovery 흐름은 스킬과 spec 만 본다.

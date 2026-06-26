@@ -1220,8 +1220,8 @@
       "fromPhase": "5",
       "toPhase": "6",
       "soft": false,
-      "summary": "The app builds successfully, receives opposite-runtime peer review, passes Axiom critical audit (when installed), and runtime wiring uses real repositories.",
-      "docsSummary": "빌드 성공, 반대 런타임 peer review 기록(skipReason 강제), Axiom critical audit 통과(설치 시 critical=0 + findingsPath 존재), 실제 Repository wiring, ServiceStubs.swift 프리뷰 계약(기본은 hard-block 아님)을 검증 (Phase 6 진입은 /autobot:testflight 가 트리거)",
+      "summary": "The app builds successfully and runtime wiring uses real repositories. Peer review and Axiom run as quality sidecars: issues produce DEGRADED evidence, not a local MVP hard fail.",
+      "docsSummary": "빌드 성공과 실제 Repository wiring은 핵심 경로로 검증하고, 반대 런타임 peer review와 Axiom critical audit은 품질 sidecar로 기록한다. sidecar 문제는 Phase 5를 실패시키지 않고 DEGRADED로 남겨 출하 경로에서 차단한다. ServiceStubs.swift는 프리뷰 계약이라 기본 hard-block이 아니다.",
       "checks": [
         {
           "type": "state_field_eq",
@@ -1246,8 +1246,8 @@
           "label": "app_uses_real_repositories"
         },
         {
-          "type": "file_exists",
-          "path": "{appName}/App/ServiceStubs.swift",
+          "type": "procedural",
+          "name": "service_stubs_preserved",
           "label": "service_stubs_preserved"
         },
         {
