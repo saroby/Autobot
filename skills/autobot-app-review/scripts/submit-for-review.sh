@@ -465,7 +465,8 @@ elif error_lines "$DELIVER_OUTPUT" | grep -Eiq 'export compliance|encryption'; t
   log_info "review questions about encryption — verify --uses-encryption flag matches the binary's ITSAppUsesNonExemptEncryption"
 elif error_lines "$DELIVER_OUTPUT" | grep -Eiq 'age rating|content rating'; then
   REASON="age_rating_missing"
-  log_info "ASC age rating questionnaire must be answered manually in the web UI before re-running"
+  log_info "age rating still unanswered — Phase B should have applied fastlane/metadata/app_store_rating_config.json."
+  log_info "likely cause: the app did not yet exist on ASC when metadata uploaded (rating needs the app record). Recovery: re-run Phase B (metadata upload) now that register+upload have run, then re-run submit. Manual ASC-web answer is the last-resort fallback only."
 fi
 
 log_error "fastlane deliver --submit_for_review failed: $REASON"

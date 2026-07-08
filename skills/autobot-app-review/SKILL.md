@@ -30,6 +30,7 @@ End-to-end orchestrator that takes an Autobot project from "build ready" to "sub
 | Phase | Skill / Script | Output |
 |-------|----------------|--------|
 | **0. Precheck** | inline | env, build-state.json, ASC creds |
+| **0b. Ensure app registered** (idempotent) | `autobot-register-app` | ASC app record exists → age rating + metadata can apply on first run |
 | **A. Marketing context** | inline | `app-marketing-context.md` |
 | **B. Metadata** | `autobot-generate-metadata` + `autobot-upload-metadata` (only if `fastlane/metadata/` is empty/missing) | `fastlane/metadata/<locale>/*.txt` |
 | **C. Screenshot plan** | `aso-skills:screenshot-optimization` (via Skill tool) | `.autobot/screenshot-plan.md` |
@@ -63,7 +64,35 @@ BUNDLE_ID=$(python3 -c "import json; print(json.load(open('.autobot/build-state.
 [ -z "$BUNDLE_ID" ] && { echo "ERROR: bundleId missing — run /autobot:setup."; exit 1; }
 ```
 
-Halt on any failure. Do not proceed to Phase A.
+Halt on any failure. Do not proceed to Phase 0b.
+
+## Phase 0b — Ensure app registered on ASC (idempotent)
+
+Register the app on App Store Connect **before** any metadata/rating upload. The age-rating declaration and the metadata URL fields can only be applied to an existing ASC app record — `fastlane deliver` silently skips age rating if the app can't be fetched. Running register first guarantees the first `/autobot:app-review` reaches review **in a single pass**, with no reliance on the Phase B → Phase F → retry fallback. It also fails fast: a name/bundle collision halts here, before any expensive metadata/screenshot work.
+
+`autobot-register-app` is fully idempotent — `already_exists` is silent success, so this is safe on every re-run (and makes Phase F's own register a no-op).
+
+```bash
+DISPLAY_NAME=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('displayName',''))")
+[ -z "$DISPLAY_NAME" ] && { echo "ERROR: displayName missing — run /autobot:setup."; exit 1; }
+
+AUTOBOT_REGISTER_STATUS_FILE=.autobot/register-status.json \
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-register-app/scripts/register-app.sh" \
+  --bundle-id "$BUNDLE_ID" --display-name "$DISPLAY_NAME"
+```
+
+Branch on `register-status.json`'s `result` + `reason` (same matrix as the `deployer` agent):
+
+| `result` | `reason` | Handling |
+|----------|----------|----------|
+| `created` | "" | New app registered → proceed to Phase A |
+| `already_exists` | "" | Already on this team → proceed (silent) |
+| `failed` | `name_collision` | **Halt.** Another developer uses this display name. Change `--display-name` (company prefix / minor variant) via `/autobot:setup`, then re-run. |
+| `failed` | `bundle_id_taken` | **Halt.** Bundle ID claimed by another Apple team. Change the last segment / prefix via `/autobot:setup`, then re-run. |
+| `failed` | `api_key_insufficient_role` | **Halt.** ASC API key role too low. Promote the key to App Manager+ in ASC → Users and Access → Integrations, then re-run. |
+| `failed` | `fastlane_exit_N` | **Halt.** Transient ASC 5xx possible — retry recommended. |
+
+On any halt, report the diagnostic and stop — do not proceed to Phase A. Registration is cheap; the metadata/screenshot phases are not.
 
 ## Phase A — Marketing context derivation
 
@@ -126,15 +155,18 @@ fi
 
 **If empty:**
 
-0. **Derive the canonical AXI-Homepage product URL** before drafting copy. Slug is `<lowercased displayName, kebab-case>` (e.g. `MyApp` → `myapp`). Canonical URL:
+0. **Derive the canonical AXI-Homepage URLs** before drafting copy. Slug is `<lowercased displayName, kebab-case>` (e.g. `MyApp` → `myapp`). AXI-Homepage is a Next.js site with `[locale]` routing, deployed on Vercel:
 
    ```
-   marketing_url = https://axi.dev/products/<slug>
-   support_url   = https://axi.dev/products/<slug>
-   privacy_url   = (omit; ASC won't require it for the first submission unless the app collects data — Autobot scaffolds do not by default)
+   marketing_url = https://axi-homepage.vercel.app/ko/products/<slug>
+   support_url   = https://axi-homepage.vercel.app/ko/products/<slug>   # same as marketing_url
+   privacy_url   = https://axi-homepage.vercel.app/en/privacy           # fixed shared privacy page
    ```
 
-   These URLs are pre-deployed on AXI-Homepage by Phase H. Phase H runs *after* Phase B/D-2 in the orchestration order, but the URL is predictable (slug-derived) so we can write it into metadata now and Phase H ensures the page exists before Apple review begins.
+   - **marketing_url == support_url** — both point at the app's own product page. Phase H registers the product on AXI-Homepage so `/ko/products/<slug>` exists (route `src/app/[locale]/products/[slug]`).
+   - **privacy_url is fixed** — the shared `/en/privacy` page (route `src/app/[locale]/privacy`), not slug-specific. Always include it: ASC requires a privacy policy URL on submission, and a valid shared page satisfies it whether or not the app collects data.
+
+   Phase H runs *after* Phase B/D-2 in the orchestration order, but the product URL is predictable (slug-derived) so we write it into metadata now, and Phase H ensures the page exists before Apple review begins. The `/en/privacy` page is already deployed (not per-app), so it needs no Phase H work.
 
 1. **ASO-informed drafting (orchestrator-LLM, no Skill invocation).** Apply the principles documented in `aso-skills:metadata-optimization` and `aso-skills:keyword-research` directly — do **not** Skill-invoke them (they trigger Q&A). Key rules to follow inline:
    - Title (30 chars): lead with keyword if brand unknown, lead with brand if known. Format like `<Brand>: <Primary Keyword>`.
@@ -153,7 +185,10 @@ fi
    {
      "locales": {
        "ko": { "name": "...", "subtitle": "...", "description": "...",
-               "keywords": "...", "promotional_text": "...", "release_notes": "..." }
+               "keywords": "...", "promotional_text": "...", "release_notes": "...",
+               "marketing_url": "https://axi-homepage.vercel.app/ko/products/<slug>",
+               "support_url": "https://axi-homepage.vercel.app/ko/products/<slug>",
+               "privacy_url": "https://axi-homepage.vercel.app/en/privacy" }
      },
      "root": { "copyright": "© 2026 <companyName>", "primary_category": "<derived>" }
    }
@@ -167,6 +202,40 @@ fi
    ```
 
    On `result: failed` with `reason: field=X len=N max=M`, shorten the offending field (LLM responsibility, max 2 retries), then re-call.
+
+2b. **Write the age-rating config** — this is what makes the pipeline reach review with **zero manual ASC-web step**. Without it, Phase G halts on `age_rating_missing`. `autobot-upload-metadata` auto-detects `fastlane/metadata/app_store_rating_config.json` and passes it to `fastlane deliver` (which answers the ASC age-rating questionnaire in the same call). Always write it before the upload:
+
+   ```bash
+   ```bash
+   cat > fastlane/metadata/app_store_rating_config.json <<'JSON'
+   {
+     "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+     "contests": "NONE",
+     "gamblingSimulated": "NONE",
+     "gunsOrOtherWeapons": "NONE",
+     "horrorOrFearThemes": "NONE",
+     "matureOrSuggestiveThemes": "NONE",
+     "medicalOrTreatmentInformation": "NONE",
+     "profanityOrCrudeHumor": "NONE",
+     "sexualContentGraphicAndNudity": "NONE",
+     "sexualContentOrNudity": "NONE",
+     "violenceCartoonOrFantasy": "NONE",
+     "violenceRealistic": "NONE",
+     "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+     "advertising": false,
+     "ageAssurance": false,
+     "gambling": false,
+     "healthOrWellnessTopics": false,
+     "lootBox": false,
+     "messagingAndChat": false,
+     "parentalControls": false,
+     "unrestrictedWebAccess": false,
+     "userGeneratedContent": false
+   }
+   JSON
+   ```
+
+   **Every** ASC age-rating field is declared explicitly — 13 content-descriptor enums (`NONE`) + 9 capability booleans (`false`). Do not omit any: ASC treats an omitted field as *unanswered*, which re-triggers `age_rating_missing` and halts submission. This is the clean **4+ / no-objectionable-content** answer set — correct for a default Autobot scaffold. Keys are the modern App Store Connect API keys; fastlane 2.235.0 passes modern `camelCase`-key + string-enum / JSON-boolean values through unchanged (verified against `map_key_from_itc` / `map_value_from_itc`), and auto-maps legacy iTunesConnect keys with a deprecation warning. **Derive-adjust from `architecture.md`** only when the app genuinely has flagged content: set `unrestrictedWebAccess: true` for an in-app browser / arbitrary web content, `messagingAndChat: true` or `userGeneratedContent: true` for user-to-user messaging or UGC feeds, `advertising: true` if the app shows ads, `healthOrWellnessTopics: true` for health/fitness content, and the relevant `violence*` / `gamblingSimulated` / `matureOrSuggestiveThemes` enum to `INFREQUENT_OR_MILD` or `FREQUENT_OR_INTENSE` for apps that surface such content. When unsure, keep the no-content default — an under-declared rating is an App Review rejection, so only raise a field on clear evidence.
 
 3. **Upload immediately** — Phase B always uploads to ASC right after writing files, so Phase G's `--submit_for_review` has all required metadata in place:
 
@@ -346,7 +415,7 @@ if p.exists():
 if [ -n "$APP_STORE_ID" ]; then
   DOWNLOAD_URL="https://apps.apple.com/app/id${APP_STORE_ID}"
 else
-  DOWNLOAD_URL="https://axi.dev/products/${SLUG}"
+  DOWNLOAD_URL="https://axi-homepage.vercel.app/ko/products/${SLUG}"
 fi
 ```
 
@@ -395,7 +464,7 @@ The script:
 {
   "result": "registered" | "already_exists" | "no_op" | "committed_no_push" | "dry_run" | "failed",
   "slug": "myapp",
-  "canonical_url": "https://axi.dev/products/myapp",
+  "canonical_url": "https://axi-homepage.vercel.app/ko/products/myapp",
   "commit_sha": "abc1234...",
   "reason": "<error reason if result=failed>",
   ...
@@ -494,7 +563,7 @@ Failure matrix:
 | `build_processing_timeout` | Build still PROCESSING after 30 min | Re-run later (cheaper) or `bash submit-for-review.sh --bundle-id <id> --skip-wait` if you've verified the build is VALID in ASC web |
 | `build_not_ready` | Submission tried but no VALID build attached | Wait, retry |
 | `missing_metadata_or_screenshots` | Required fields/screenshots missing on ASC | Re-run Phase B + E to push the missing data |
-| `age_rating_missing` | ASC age rating questionnaire unanswered | Manual one-time step in ASC web → re-run |
+| `age_rating_missing` | Age-rating questionnaire unanswered (Phase B's `app_store_rating_config.json` didn't apply — usually because the app record didn't exist on ASC yet when metadata uploaded) | Re-run Phase B (metadata upload) now that Phase F register+upload have run — the rating config applies automatically. Manual ASC-web answer is last-resort only. |
 | `export_compliance_question` | Encryption answer mismatch | Verify `ITSAppUsesNonExemptEncryption` in Info.plist; pass `--uses-encryption` if needed |
 | `already_in_review` | Version already submitted | Treated as success (exit 0) |
 
@@ -544,8 +613,10 @@ On partial failure, report what completed + what failed + the recovery command. 
 ## Files in this skill
 
 - `SKILL.md` — this orchestrator contract
+- `references/autonomy-touchpoints.md` — full inventory of every point the pipeline can halt (CLOSED / IRREDUCIBLE / CONDITIONAL). Read this to answer "does it run to review with zero human help?" — the honest answer is per-app autonomy is total; only account-level bootstrap + Apple's periodic agreement acceptance need a human.
 - `scripts/upload-screenshots.sh` — fastlane deliver wrapper for screenshots-only upload
 - `scripts/submit-for-review.sh` — build-processing poll + `fastlane deliver --submit_for_review` wrapper
+- (age-rating config is written by Phase B into `fastlane/metadata/app_store_rating_config.json` and applied by `autobot-upload-metadata`)
 
 ## Integration with other Autobot commands
 

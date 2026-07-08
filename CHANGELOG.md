@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-07-08
+
 ### Added — design-system 컴포넌트 깊이 + DS↔ui-builder 소비 계약 배선 (dead-code 차단)
 design-system(opus) 컴포넌트를 깊게 만들되 **소비 계약을 함께 배선**한다. 발견: ui-builder 는 DS *토큰*만 import 하고 *컴포넌트*는 자체 `Views/Components/` 에 재구현했다 — 깊은 컴포넌트를 만들어도 아무도 import 안 하면 invisible dead-code(빌드 시간만↑). 그래서 design-system 만 강화는 theater. 게이트 무손상(`.md` 2 파일).
 

@@ -29,7 +29,8 @@ PRODUCT_JSON=""
 HOMEPAGE_REPO=""
 HOMEPAGE_REMOTE="git@github.com:saroby/AXI-Homepage.git"
 HOMEPAGE_BRANCH="main"
-HOMEPAGE_DOMAIN="https://axi.dev"
+HOMEPAGE_DOMAIN="https://axi-homepage.vercel.app"
+HOMEPAGE_LOCALE="ko"   # locale segment for the canonical product URL: /<locale>/products/<slug>
 SCREENSHOT_LIMIT=3   # how many screenshots to copy to public/screenshots/<slug>/
 DRY_RUN=0
 FORCE=0
@@ -51,7 +52,7 @@ Optional:
   --homepage-remote    Override the upstream git URL. Default: git@github.com:saroby/AXI-Homepage.git
   --homepage-branch    Branch to push to. Default: main
   --homepage-domain    Production domain used to build the canonical product URL.
-                       Default: https://axi.dev
+                       Default: https://axi-homepage.vercel.app
   --screenshot-limit   Max screenshots to copy. Default: 3 (hero + 2 features).
   --force              Overwrite an existing product entry with the same slug.
   --no-push            Stage the commit locally but do not push.
@@ -233,7 +234,7 @@ write_status() {
   mv -f "$tmp" "$target"
 }
 
-CANONICAL_URL="${HOMEPAGE_DOMAIN%/}/products/${SLUG}"
+CANONICAL_URL="${HOMEPAGE_DOMAIN%/}/${HOMEPAGE_LOCALE}/products/${SLUG}"
 
 # ----------------------------------------------------------------------------
 # Clone or update the homepage repo

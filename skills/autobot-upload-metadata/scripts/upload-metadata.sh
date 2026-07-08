@@ -145,6 +145,18 @@ if [ "$METADATA_FILE_COUNT" -eq 0 ]; then
   exit 2
 fi
 
+# Age-rating config (optional) — if present, `deliver` answers the ASC age-rating
+# questionnaire in the same call, so the first review submission isn't blocked on
+# the otherwise-manual ASC web step. fastlane needs the app to already exist on
+# ASC to apply it (same precondition as metadata); the app-review pipeline
+# registers the app in Phase 0b before this runs, so it applies in a single pass.
+# Absent file = unchanged legacy behavior.
+RATING_CONFIG=""
+if [ -f "$METADATA_PATH/app_store_rating_config.json" ]; then
+  RATING_CONFIG="$METADATA_PATH/app_store_rating_config.json"
+  log_info "age rating:   $RATING_CONFIG"
+fi
+
 # ASC credentials check
 MISSING=()
 [ -z "${ASC_API_KEY_ID:-}" ]    && MISSING+=("ASC_API_KEY_ID")
@@ -241,9 +253,9 @@ log_info "platform:     $PLATFORM"
 
 if [ "$DRY_RUN" -eq 1 ]; then
   log_info "DRY RUN — would invoke:"
-  python3 - "$BUNDLE_ID" "$METADATA_PATH" "$PLATFORM" "$TEAM_ID" <<'PY'
+  python3 - "$BUNDLE_ID" "$METADATA_PATH" "$PLATFORM" "$TEAM_ID" "$RATING_CONFIG" <<'PY'
 import shlex, sys
-bid, mp, plat, team = sys.argv[1:5]
+bid, mp, plat, team, rc = sys.argv[1:6]
 parts = [
     "fastlane deliver",
     f"  --app_identifier {shlex.quote(bid)}",
@@ -256,6 +268,8 @@ parts = [
     "  --precheck_include_in_app_purchases false",
     "  --api_key_path <tempdir>/fastlane_api_key.json",
 ]
+if rc:
+    parts.append(f"  --app_rating_config_path {shlex.quote(rc)}")
 if team:
     parts.append(f"  --team_id {shlex.quote(team)}")
 print(" \\\n".join(parts))
@@ -283,6 +297,7 @@ DELIVER_OUTPUT="$(
     --skip_app_version_update \
     --force \
     --precheck_include_in_app_purchases false \
+    ${RATING_CONFIG:+--app_rating_config_path "$RATING_CONFIG"} \
     ${TEAM_ID:+--team_id "$TEAM_ID"} \
     --api_key_path "$API_KEY_JSON" \
     </dev/null \

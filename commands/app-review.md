@@ -100,7 +100,7 @@ fi
 
 **`META_COUNT == 0` 일 때만**:
 
-0. **Canonical homepage URL 도출 (slug-based)** — slug 는 `displayName` 의 kebab-case 변환. `marketing_url` / `support_url` 는 `https://axi.dev/products/<slug>` 로 설정. (실제 페이지는 Phase H 가 push 함으로써 생성됨. URL 은 slug 만으로 결정되므로 metadata 작성 시점에 미리 채워 둠.)
+0. **Canonical homepage URL 도출 (slug-based)** — slug 는 `displayName` 의 kebab-case 변환. `marketing_url` = `support_url` = `https://axi-homepage.vercel.app/ko/products/<slug>` (동일), `privacy_url` = `https://axi-homepage.vercel.app/en/privacy` (고정 공유 페이지, 항상 포함). 제품 페이지는 Phase H 가 push 로 생성(route `[locale]/products/[slug]`); privacy 는 앱별이 아닌 고정 페이지라 Phase H 불필요. URL 은 slug 만으로 결정되므로 metadata 작성 시점에 미리 채워 둠.
 
 1. **ASO 원칙을 inline 으로 적용** (`aso-skills:*` 를 Skill 도구로 로드하지 않는다 — 그 스킬들은 5-question Q&A 로 시작). 적용 규칙:
    - title (30자): brand 인지도 낮으면 키워드 우선, 높으면 brand 우선
@@ -335,7 +335,7 @@ Bundle ID:        com.axi.MyApp
 Display Name:     내 앱
 Metadata:         <META_FIELDS> fields × <LOCALES> locales
 Screenshots:      <COUNT> files × <LOCALES> locales — <SLOTS> slides × 4 sizes (6.9"/6.5"/6.3"/6.1")
-Homepage:         https://axi.dev/products/<SLUG> (registered)   ← new apps only
+Homepage:         https://axi-homepage.vercel.app/ko/products/<SLUG> (registered)   ← new apps only
 Build:            v<VERSION> (<BUILD_NUMBER>) — VALID
 Submission:       Waiting for Review (automatic release on approval)
 
