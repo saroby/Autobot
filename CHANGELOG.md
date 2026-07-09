@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-07-10
+
+### Added — resume 오프파이프라인 드리프트 감지 (`commands/resume.md`)
+plan→resume 로 만든 앱이 미리보기 이미지와 다르게 나온 실사례(GrudgeLedger) 분석 — 원인은 Phase 5 가 `in_progress` 로 막힌 뒤 파이프라인을 거치지 않고(수동 세션에서 직접 Edit) architecture.md/design-spec.md/Views 가 계속 수정된 것. 파이프라인은 이 사실을 전혀 몰랐다.
+
+- **Step 2.5 신규**: bare `/autobot:resume` (파라미터 없음) 실행 시 재개 지점 이전의 completed/fallback phase 들에 대해 기존 `input_hash.py` 의 `should-skip` 계산을 재사용해 owned 파일 checksum 이 마킹 이후 바뀌었는지 점검. 드리프트 발견 시 Step 3 상태 보고에 경고로 표시 — 어느 phase 가 왜 어긋났는지, 다음에 뭘 할 수 있는지 안내.
+- 재실행·덮어쓰기·자동 회복은 하지 않는다 — `--force`/`--regenerate-contracts`/`--allow-visual-drift` opt-in 안전장치는 그대로 유지. 새 스크립트/체크섬 로직 추가 없음(기존 `should-skip` 재사용). GrudgeLedger 실제 상태로 검증: Phase 1·2·3·4 모두 `inputHash mismatch` 로 정확히 탐지됨.
+
 ## [0.11.1] — 2026-07-08
 
 ### Added — design-system 컴포넌트 깊이 + DS↔ui-builder 소비 계약 배선 (dead-code 차단)

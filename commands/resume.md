@@ -170,6 +170,37 @@ done
 
 `--force` 옵션 (`/autobot:resume <N> --force` 또는 운영자 의도가 명확할 때) 은 skip 을 비활성화하고 무조건 재실행한다. `--regenerate-contracts` 도 동일하게 skip 을 끈다 — 끄지 않으면 입력 불변 시 Phase 1 이 skip 되어 계약 재생성 요청이 조용히 무시된다. phase 가 성공으로 마킹되는 시점에 `pipeline.sh advance-phase` 가 새 hash 를 다시 기록하므로, 다음 resume 부터 다시 cache 가 적중한다.
 
+## Step 2.5: 오프파이프라인 드리프트 감지 (항상 실행, 파라미터 불필요)
+
+`RESUME_FROM` **이전의** completed/fallback phase 들 (`0 .. RESUME_FROM-1`)은 이번 resume 에서 재실행되지 않는다. 하지만 그 phase 들의 owned 파일이 완료 마킹 이후 **파이프라인을 거치지 않고**(직접 Read/Edit, 수동 세션 등) 바뀌었다면 — 예를 들어 Phase 4 완료 후 Views 를 손으로 계속 고쳤다면 — 그 사실을 사용자가 모른 채 다음 resume 가 진행된다. 이건 안전(override skip)이 아니라 **가시성** 문제이므로 flag 없이 항상 점검한다:
+
+```bash
+DRIFTED=()
+for PHASE_ID in $(seq 0 $((RESUME_FROM - 1))); do
+  STATUS=$(python3 -c "
+import json
+d = json.load(open('.autobot/build-state.json'))
+print(d.get('phases', {}).get('$PHASE_ID', {}).get('status', ''))
+")
+  if [ "$STATUS" != "completed" ] && [ "$STATUS" != "fallback" ]; then continue; fi
+  RESULT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" input-hash should-skip --phase "$PHASE_ID")
+  if echo "$RESULT" | grep -q "inputHash mismatch"; then
+    DRIFTED+=("$PHASE_ID")
+  fi
+done
+```
+
+`should-skip` 은 이미 존재하는 idempotent-skip 계산을 그대로 재사용한다 — 새 스크립트나 새 체크섬 로직을 추가하지 않는다. `DRIFTED` 가 비어있지 않으면 **재개를 막지 않고** Step 3 보고에 다음 경고를 끼워 넣는다 (phase 별로 한 줄):
+
+```
+⚠️ Phase {N} 은 completed 로 마킹된 뒤 파이프라인 밖에서 파일이 수정된 것으로 보입니다 (input hash mismatch).
+   Phase 2 라면: 검토했던 Stitch 목업/디자인과 지금 파일이 다를 수 있습니다 → `/autobot:resume 2.5 --force` 로 preview 를 새로 만들어 다시 확인하세요.
+   Phase 4 라면: Views/Services 가 ui-builder 산출물과 달라졌습니다. 의도된 수동 수정이면 무시해도 되지만, 이후 `/autobot:resume 4 --force` 를 실행하면 그 수동 수정이 덮어써진다는 점을 알고 있어야 합니다.
+   그 외 Phase: build-log.jsonl 에서 해당 phase 이후 이벤트가 끊겼는지 확인하세요 — 끊겼다면 수동 편집 구간입니다.
+```
+
+이 단계는 **아무것도 재실행하거나 덮어쓰지 않는다** — `--force`/`--regenerate-contracts`/`--allow-visual-drift` 의 opt-in 안전장치는 그대로 유지된다. 목적은 "resume 만 쳐도 무슨 일이 있었는지 알 수 있게" 하는 것뿐이다.
+
 ## Step 3: 컨텍스트 복원
 
 재개 전에 필수 컨텍스트를 로드:
@@ -193,6 +224,7 @@ done
 - **이전 중단**: Phase {N} — {phaseName} ({status})
 - **재개 지점**: Phase {resumeFrom} — {phaseName}
 {실패 사유가 있으면: "- **실패 사유**: {error}"}
+{DRIFTED 가 비어있지 않으면 Step 2.5 의 경고 블록을 phase 별로 여기에 나열}
 
 Phase {resumeFrom}부터 실행합니다.
 ```
