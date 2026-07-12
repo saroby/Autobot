@@ -3,7 +3,11 @@
 # SessionStart hook — keep prompt footprint small and defer detailed reads to build/resume time.
 set -euo pipefail
 
-PROJECT_DIR="${CLAUDE_PLUGIN_ROOT:-.}"
+# PROJECT_DIR must be the USER's project (like every other script — see
+# build-log.sh, pipeline.sh). It briefly pointed at CLAUDE_PLUGIN_ROOT, which
+# made installed-plugin sessions merge/render learnings into
+# ~/.claude/plugins/cache/.../.autobot/ instead of the project.
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 
 # ── Step 1: .env 파일 탐색 ──

@@ -32,7 +32,7 @@ End-to-end orchestrator that takes an Autobot project from "build ready" to "sub
 | **0. Precheck** | inline | env, build-state.json, ASC creds |
 | **0b. Ensure app registered** (idempotent) | `autobot-register-app` | ASC app record exists → age rating + metadata can apply on first run |
 | **A. Marketing context** | inline | `app-marketing-context.md` |
-| **B. Metadata** | `autobot-generate-metadata` + `autobot-upload-metadata` (only if `fastlane/metadata/` is empty/missing) | `fastlane/metadata/<locale>/*.txt` |
+| **B. Metadata** | `autobot-generate-metadata` + `autobot-upload-metadata` (dual skip gate — `.txt` files and `app_store_rating_config.json` checked independently) | `fastlane/metadata/<locale>/*.txt` + `app_store_rating_config.json` |
 | **C. Screenshot plan** | `aso-skills:screenshot-optimization` (via Skill tool) | `.autobot/screenshot-plan.md` |
 | **D-1. Raw capture** | `ParthJadhav/ios-marketing-capture` (via Skill tool, auto-install if absent) | `marketing/<locale>/*.png` |
 | **D-2. Composite at all iPhone sizes** | `app-store-screenshots:app-store-screenshots` (via Skill tool) | `fastlane/screenshots/<locale>/*.png` at 4 iPhone sizes |
@@ -81,16 +81,14 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-register-app/scripts/register-app.sh" \
   --bundle-id "$BUNDLE_ID" --display-name "$DISPLAY_NAME"
 ```
 
-Branch on `register-status.json`'s `result` + `reason` (same matrix as the `deployer` agent):
+Branch on `register-status.json`'s `result` + `reason`. The per-reason guidance text is owned by `agents/deployer.md` Step 1 (same producing script — do not fork the matrix here). Orchestration decisions:
 
-| `result` | `reason` | Handling |
-|----------|----------|----------|
-| `created` | "" | New app registered → proceed to Phase A |
-| `already_exists` | "" | Already on this team → proceed (silent) |
-| `failed` | `name_collision` | **Halt.** Another developer uses this display name. Change `--display-name` (company prefix / minor variant) via `/autobot:setup`, then re-run. |
-| `failed` | `bundle_id_taken` | **Halt.** Bundle ID claimed by another Apple team. Change the last segment / prefix via `/autobot:setup`, then re-run. |
-| `failed` | `api_key_insufficient_role` | **Halt.** ASC API key role too low. Promote the key to App Manager+ in ASC → Users and Access → Integrations, then re-run. |
-| `failed` | `fastlane_exit_N` | **Halt.** Transient ASC 5xx possible — retry recommended. |
+| Signal | Handling |
+|--------|----------|
+| exit 2 (no Apple ID / no `spaceauth` session — no status file written) | **Halt.** Relay the stderr guidance: `fastlane spaceauth -u <apple-id>` (interactive 2FA, ~30-day session). Register uses the Apple ID web session, not the ASC API key. |
+| `created` / `already_exists` | Proceed to Phase A (`already_exists` is silent). |
+| `failed` + `fastlane_exit_N` | Transient ASC error class — **re-run `register-app.sh` once** with the same args (idempotent). Still failing → halt with the fastlane output attached. |
+| `failed` + any other reason (`name_collision`, `bundle_id_taken`, `asc_session_expired`, `asc_permission_denied`) | **Halt** with the per-reason guidance from deployer.md Step 1. No auto-retry — these need a human (`asc_session_expired` requires an interactive `spaceauth` refresh; retrying cannot fix it). |
 
 On any halt, report the diagnostic and stop — do not proceed to Phase A. Registration is cheap; the metadata/screenshot phases are not.
 
@@ -139,9 +137,9 @@ Many of the cross-plugin skills (`aso-skills:metadata-optimization`, `aso-skills
 
 **Auto Mode policy:** if a field can't be derived, fill in a reasonable default and mark it `(auto-derived)`. Do not ask the user.
 
-## Phase B — Metadata (only if missing)
+## Phase B — Metadata (dual skip gate)
 
-Detect:
+Detect — **two independent checks**. The `.txt` count says nothing about the age-rating config: a `/autobot:meta`-produced tree can have text metadata without `app_store_rating_config.json`, and skipping step 2b for it deterministically halts Phase G with `age_rating_missing`.
 
 ```bash
 META_DIR="fastlane/metadata"
@@ -149,11 +147,15 @@ META_COUNT=0
 if [ -d "$META_DIR" ]; then
   META_COUNT=$(find "$META_DIR" -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
 fi
+RATING_CONFIG_PRESENT=0
+[ -f "$META_DIR/app_store_rating_config.json" ] && RATING_CONFIG_PRESENT=1
 ```
 
-**If `META_COUNT > 0`:** skip Phase B. Log `INFO: metadata already exists ($META_COUNT files) — keeping existing content`.
+- **`META_COUNT > 0` and `RATING_CONFIG_PRESENT == 1`:** skip Phase B entirely. Log `INFO: metadata already exists ($META_COUNT files) — keeping existing content`.
+- **`META_COUNT > 0` and `RATING_CONFIG_PRESENT == 0`:** keep the existing `.txt` files — run **step 2b only** (write the rating config), then **step 3** (upload). Both are idempotent.
+- **`META_COUNT == 0`:** full run — all steps below.
 
-**If empty:**
+**Full run steps:**
 
 0. **Derive the canonical AXI-Homepage URLs** before drafting copy. Slug is `<lowercased displayName, kebab-case>` (e.g. `MyApp` → `myapp`). AXI-Homepage is a Next.js site with `[locale]` routing, deployed on Vercel:
 
@@ -205,7 +207,6 @@ fi
 
 2b. **Write the age-rating config** — this is what makes the pipeline reach review with **zero manual ASC-web step**. Without it, Phase G halts on `age_rating_missing`. `autobot-upload-metadata` auto-detects `fastlane/metadata/app_store_rating_config.json` and passes it to `fastlane deliver` (which answers the ASC age-rating questionnaire in the same call). Always write it before the upload:
 
-   ```bash
    ```bash
    cat > fastlane/metadata/app_store_rating_config.json <<'JSON'
    {
@@ -504,7 +505,7 @@ Failure matrix:
 
 ## Phase F — Ensure binary on ASC
 
-If the current `build-state.json` indicates the build has not been uploaded yet (no `.autobot/upload-status.json` with `result: uploaded`), dispatch the **`deployer` agent** — the same agent `/autobot:testflight` uses. The deployer chains `autobot-register-app` → `autobot-archive-build` → `autobot-upload-build` → `autobot-invite-testers` with the proper error contracts (`name_collision`, `bundle_id_taken`, `api_key_insufficient_role` halt before any expensive archive work).
+If the current `build-state.json` indicates the build has not been uploaded yet (no `.autobot/upload-status.json` with `result: uploaded`), dispatch the **`deployer` agent** — the same agent `/autobot:testflight` uses. The deployer chains `autobot-register-app` → `autobot-archive-build` → `autobot-upload-build` → `autobot-invite-testers` with the proper error contracts (`name_collision`, `bundle_id_taken`, `asc_session_expired`, `asc_permission_denied` halt before any expensive archive work).
 
 ```
 Agent(
@@ -518,7 +519,7 @@ Agent(
 )
 ```
 
-The deployer writes `.autobot/register-status.json`, `archive-status.json`, `upload-status.json` (atomic). On any halt (name_collision / bundle_id_taken / api_key_insufficient_role / signing failure / upload 5xx), surface the deployer's diagnostic to the user and stop the orchestrator — do not proceed to Phase G.
+The deployer writes `.autobot/register-status.json`, `archive-status.json`, `upload-status.json` (atomic). On any halt (name_collision / bundle_id_taken / asc_session_expired / asc_permission_denied / signing failure / upload failure after bounded retries), surface the deployer's diagnostic to the user and stop the orchestrator — do not proceed to Phase G.
 
 **Skip Phase F entirely** if `.autobot/upload-status.json` exists with `result: uploaded` and its timestamp is newer than the iOS source tree's most recent mtime. Heuristic check:
 
@@ -560,10 +561,10 @@ Failure matrix:
 
 | `reason` | Meaning | Recovery |
 |----------|---------|----------|
-| `build_processing_timeout` | Build still PROCESSING after 30 min | Re-run later (cheaper) or `bash submit-for-review.sh --bundle-id <id> --skip-wait` if you've verified the build is VALID in ASC web |
+| `build_processing_timeout` | Build still PROCESSING after 30 min | The orchestrator re-invokes the script **once** automatically (another 30-min poll) before reporting. Second timeout → report with the retry hint, or `--skip-wait` if you've verified the build is VALID in ASC web |
 | `build_not_ready` | Submission tried but no VALID build attached | Wait, retry |
 | `missing_metadata_or_screenshots` | Required fields/screenshots missing on ASC | Re-run Phase B + E to push the missing data |
-| `age_rating_missing` | Age-rating questionnaire unanswered (Phase B's `app_store_rating_config.json` didn't apply — usually because the app record didn't exist on ASC yet when metadata uploaded) | Re-run Phase B (metadata upload) now that Phase F register+upload have run — the rating config applies automatically. Manual ASC-web answer is last-resort only. |
+| `age_rating_missing` | Age-rating questionnaire unanswered (Phase B's `app_store_rating_config.json` missing or didn't apply — e.g. the app record didn't exist on ASC yet when metadata uploaded) | Re-run Phase B — its dual skip gate checks `app_store_rating_config.json` independently of the `.txt` count, writes it if missing (step 2b), and re-uploads. Manual ASC-web answer is last-resort only. |
 | `export_compliance_question` | Encryption answer mismatch | Verify `ITSAppUsesNonExemptEncryption` in Info.plist; pass `--uses-encryption` if needed |
 | `already_in_review` | Version already submitted | Treated as success (exit 0) |
 

@@ -160,10 +160,14 @@ Follow ALL patterns from `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` exactl
 ViewModel은 `Models/ServiceProtocols.swift`에 정의된 **서비스 프로토콜**에 의존한다. 구현체(Repository)는 data-engineer가 생성하며, 실행 시 주입된다.
 
 ```swift
-// ViewModel pattern — 프로토콜에 의존, 구현체에 의존하지 않음
+// ViewModel pattern — 프로토콜에 의존, 구현체에 의존하지 않음.
+// 에러는 do/catch 로 노출한다 — `try?` 로 삼키면 로드 실패가 "데이터 없음"으로
+// 위장된다 (quality-engineer 체크리스트: 비-테스트 코드 신규 try?/try! 0건).
 @Observable @MainActor
 final class ScreenNameViewModel {
     var items: [Item] = []
+    var isLoading = false
+    var errorMessage: String?
     private let service: any ItemServiceProtocol
 
     init(service: any ItemServiceProtocol) {
@@ -171,7 +175,15 @@ final class ScreenNameViewModel {
     }
 
     func loadItems() {
-        items = (try? service.fetchAll()) ?? []
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            items = try service.fetchAll()
+            errorMessage = nil
+        } catch {
+            // View 는 errorMessage 를 EmptyStateView 의 에러 variant 로 렌더한다
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

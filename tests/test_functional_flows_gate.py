@@ -15,6 +15,12 @@ import_runtime_modules()
 from gate_checks import functional  # noqa: E402
 
 
+class _P0Feature:
+    """Minimal feature stand-in — a P0 must exist for flows to be judged
+    (zero-P0 specs hard-fail up front; see the dedicated test below)."""
+    priority = "P0"
+
+
 class TestCheckFunctionalFlowsPass(unittest.TestCase):
     def _run(self, *, features, run_result, state=None):
         with tempfile.TemporaryDirectory() as tmp:
@@ -32,7 +38,7 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
 
     def test_passed_flows(self):
         out = self._run(
-            features=[object()],
+            features=[_P0Feature()],
             run_result={"status": "passed", "results": [
                 {"featureId": "f1", "acceptanceId": "a1", "priority": "P0",
                  "passed": True, "message": "navigated"}]},
@@ -44,7 +50,7 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
 
     def test_p0_failure_is_hard_fail(self):
         out = self._run(
-            features=[object()],
+            features=[_P0Feature()],
             run_result={"status": "failed", "results": [
                 {"featureId": "f1", "acceptanceId": "a1", "priority": "P0",
                  "passed": False, "message": "entry anchor never ready"}]},
@@ -56,7 +62,7 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
 
     def test_degraded_skip_when_axe_missing(self):
         out = self._run(
-            features=[object()],
+            features=[_P0Feature()],
             run_result={"status": "skipped", "skipReason": "axe_unavailable",
                         "degraded": True, "results": []},
         )
@@ -65,27 +71,25 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
         self.assertTrue(r["skipped"])
         self.assertTrue(r["degraded"])
 
-    def test_benign_skip_when_no_flow_features(self):
-        # Features exist but none is P0 (the bare object has no .priority) →
-        # nothing must be driven, so a benign skip is legitimate.
-        out = self._run(
-            features=[object()],
-            run_result={"status": "skipped", "skipReason": "no_features",
-                        "degraded": False, "results": []},
-        )
+    def test_zero_p0_features_is_hard_fail(self):
+        # Features exist but none is P0 (the bare object has no .priority) —
+        # nothing would ever be ENFORCED at runtime (P1 failures only warn), so
+        # the old benign skip laundered an unverified build to VERIFIED.
+        # Deterministic P0 count → hard fail (defense-in-depth for Gate 1->2's
+        # zero-P0 rejection). run_flows must not even be consulted.
+        out = self._run(features=[object()], run_result=None)
         r = out[0]
-        self.assertTrue(r["passed"])
-        self.assertTrue(r["skipped"])
+        self.assertFalse(r["passed"])
+        self.assertFalse(r.get("skipped", False))
         self.assertFalse(r.get("degraded", False))
+        self.assertIn("P0", r["message"])
 
     def test_no_flow_but_p0_present_is_hard_fail(self):
         # A P0 feature exists but run_flows benign-skipped (no flow acceptance):
         # the spec slipped past Gate 1->2. Refuse it here too — benign-skipping
         # would launder a logic-only build to VERIFIED with no flow ever run.
-        class _P0:
-            priority = "P0"
         out = self._run(
-            features=[_P0()],
+            features=[_P0Feature()],
             run_result={"status": "skipped", "skipReason": "no_features",
                         "degraded": False, "results": []},
         )
@@ -97,7 +101,7 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
 
     def test_p1_warning_does_not_fail(self):
         out = self._run(
-            features=[object()],
+            features=[_P0Feature()],
             run_result={"status": "passed", "results": [
                 {"featureId": "f1", "acceptanceId": "a1", "priority": "P1",
                  "passed": False, "message": "WARNING (P1): not navigated"}]},
@@ -111,7 +115,7 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
         # under a green badge — DEGRADED (shipping-blocked), but NOT a hard fail
         # (that would trip the circuit breaker). Default mode is unchanged (above).
         out = self._run(
-            features=[object()],
+            features=[_P0Feature()],
             run_result={"status": "passed", "results": [
                 {"featureId": "f1", "acceptanceId": "a1", "priority": "P1",
                  "passed": False, "message": "not navigated"}]},

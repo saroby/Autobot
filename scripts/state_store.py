@@ -164,7 +164,11 @@ def collect_schema_issues(
     if isinstance(phases, dict):
         for phase_id in phase_ids(spec):
             if phase_id not in phases:
-                errors.append(f"Missing phase {phase_id} in phases")
+                # WARN, not ERROR: a phase the spec grew after this state was
+                # written (e.g. "2.5") is legitimate history, and
+                # mutate_state_with_validation backfills it as pending before
+                # every write. Erroring here bricked every pre-existing build.
+                warnings.append(f"Missing phase {phase_id} in phases")
                 continue
 
             phase_state = phases[phase_id]
@@ -205,6 +209,14 @@ def mutate_state_with_validation(
 ) -> dict[str, Any]:
     state = load_state(path)
     next_state = copy.deepcopy(state)
+    # Backfill phases the spec added after this state was written (e.g. phase
+    # "2.5" landed without a schemaVersion bump): a newly-specced, never-run
+    # phase is exactly "pending". Without this, every mutation on an older
+    # build-state was rejected and there was no migration path.
+    phases = next_state.get("phases")
+    if isinstance(phases, dict):
+        for phase_id in phase_ids(spec):
+            phases.setdefault(phase_id, {"status": "pending"})
     mutator(next_state)
     errors, warnings = collect_schema_issues(spec, next_state)
     if errors:

@@ -80,6 +80,19 @@ class TestFeatureSpecQuality(unittest.TestCase):
             self.assertFalse(r[0].get("skipped"))
             self.assertIn("feature-spec.json", r[0]["message"])
 
+    def test_zero_p0_spec_is_hard_fail(self):
+        # An all-P1/P2 spec would let every flow fail while the suite still
+        # "passes" (P1 failures only warn) — the VERIFIED-badge laundering
+        # hole. Gate 1->2 must reject it (deterministic P0 count → hard fail
+        # is safe).
+        with tempfile.TemporaryDirectory() as tmp:
+            _write(Path(tmp), {"features": [_feat(priority="P1")]})
+            r = check_feature_spec_quality(Path(tmp), "Demo", {})
+            self.assertFalse(r[0]["passed"])
+            self.assertFalse(r[0].get("skipped"))
+            self.assertFalse(r[0].get("degraded"))
+            self.assertIn("P0", r[0]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

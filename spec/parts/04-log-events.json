@@ -482,6 +482,27 @@
           }
         }
       }
+    },
+    "feedback_fetched": {
+      "required": [
+        "bundle_id",
+        "review_count"
+      ],
+      "optional": [
+        "app_id",
+        "source",
+        "detail"
+      ]
+    },
+    "external_feedback_recorded": {
+      "required": [
+        "themes_count"
+      ],
+      "optional": [
+        "bundle_id",
+        "promoted_candidates",
+        "detail"
+      ]
     }
   }
 }

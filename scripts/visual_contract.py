@@ -271,6 +271,68 @@ def _raw_idea(project_root: Path) -> str:
     return ""
 
 
+def _dark_mode_required(project_root: Path) -> bool:
+    """Read design-spec.json `darkMode` — the (formerly dead) policy field.
+
+    Absent file/field defaults to True: the validator always writes darkMode
+    true, and checking an existing dark screenshot is harmless. An explicit
+    `"darkMode": false` opts the app out of dark render verification.
+    """
+    spec_json = project_root / ".autobot" / "design-spec.json"
+    if not spec_json.is_file():
+        return True
+    try:
+        data = json.loads(spec_json.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return True
+    if isinstance(data, dict) and data.get("darkMode") is False:
+        return False
+    return True
+
+
+def _evaluate_dark(project_root: Path, light_screenshot: Path) -> dict:
+    """Structural verification of the dark-appearance render.
+
+    The dark screenshot is the sibling `<stem>-dark<suffix>` of the light one
+    (sim_runtime writes screenshot-dark.png). Checks are the same cheap
+    structural ones as the light pass: not-tiny file, non-monochrome variance.
+    Missing capture / Pillow → skipped (environments without `simctl ui`
+    support degrade gracefully). The gate maps a failure to DEGRADED-only.
+    """
+    if not _dark_mode_required(project_root):
+        return _result("skipped", skipReason="dark_mode_not_declared")
+    dark = light_screenshot.with_name(
+        light_screenshot.stem + "-dark" + light_screenshot.suffix
+    )
+    if not dark.is_file():
+        return _result("skipped", skipReason="dark_screenshot_missing",
+                       screenshotPath=str(dark))
+    size = dark.stat().st_size
+    if size < MIN_SCREENSHOT_BYTES:
+        return _result(
+            "failed",
+            reason=f"dark screenshot too small ({size} bytes) — likely all-black or empty",
+            screenshotPath=str(dark),
+        )
+    variance, dominant = _pillow_stats(dark)
+    if variance is not None and variance < MIN_PIXEL_VARIANCE:
+        return _result(
+            "failed",
+            reason=f"low luminance variance ({variance:.1f}) in dark mode — "
+                   f"screen looks monochrome (dark render likely broken)",
+            screenshotPath=str(dark),
+            variance=variance,
+            dominant=list(dominant) if dominant else None,
+        )
+    return _result(
+        "passed",
+        screenshotPath=str(dark),
+        variance=variance,
+        dominant=list(dominant) if dominant else None,
+        notes="metadata-only" if variance is None else "variance check",
+    )
+
+
 def _fill_requirement(project_root: Path) -> dict | None:
     """Return {min, axis, source} when the build is REQUIRED to fill the screen.
 
@@ -382,6 +444,10 @@ def evaluate(project_root: Path, screenshot: Path | None = None) -> dict:
             f"(and/or stack sub-windows) and re-render."
         )
 
+    # Dark-appearance render check (design-spec darkMode consumer). Recorded
+    # on both outcomes; the gate maps a dark failure to DEGRADED-only.
+    dark_result = _evaluate_dark(project_root, screenshot)
+
     if hard_findings:
         return _result(
             "failed",
@@ -393,6 +459,7 @@ def evaluate(project_root: Path, screenshot: Path | None = None) -> dict:
             paletteMatch=palette_match,
             occupancy=occ,
             fillRequirement=fill_eval,
+            darkMode=dark_result,
         )
 
     # Informational note about palette mismatch when present, but never fails.
@@ -413,6 +480,7 @@ def evaluate(project_root: Path, screenshot: Path | None = None) -> dict:
         paletteWarning=palette_warning,
         occupancy=occ,
         fillRequirement=fill_eval,
+        darkMode=dark_result,
         notes="metadata-only" if variance is None else "full-pillow-analysis",
     )
 

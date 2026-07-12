@@ -372,7 +372,7 @@ def validate_feature_spec(project_root: Path) -> tuple[bool, list[str]]:
 def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
     """Quality assessment for Gate 1->2 — returns (ok, problems).
 
-    Two rules:
+    Three rules:
 
     1. Every P0/P1 acceptance postcondition.kind must be one of
        POSTCONDITION_KINDS. An empty kind ("anchor-only" acceptance — it only
@@ -384,12 +384,24 @@ def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
        UI flow ever runs — the "intact logic alone is enough" hole that makes a
        broken-UI app look verified. P1 is exempt because P1 flow failures only
        warn, never block, so requiring a P1 flow would add no enforced coverage.
+    3. At least one P0 feature must exist. Every flow-enforcement rule above is
+       keyed on P0 presence (P1 flow failures only warn), so an all-P1/P2 spec
+       would let every flow fail and STILL earn the VERIFIED badge — the
+       zero-P0 laundering hole. Counting P0 features is deterministic, so this
+       is safe as a gate 1->2 hard fail.
     """
     features = load_feature_spec(project_root)
     if features is None:
         return False, ["feature-spec.json absent or unparseable"]
 
     problems: list[str] = []
+    if not any(feat.priority == "P0" for feat in features):
+        problems.append(
+            "no P0 feature declared — every feature is P1/P2, so no flow is "
+            "ever enforced at Gate 5->6 (P1 failures only warn) and the "
+            "VERIFIED badge would be laundered. Declare at least one P0 "
+            "feature with a kind:'flow' acceptance."
+        )
     for feat in features:
         if feat.priority not in _POLICED_PRIORITIES:
             continue

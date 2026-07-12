@@ -195,13 +195,21 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
 
             item = items_by_id.get(learning_id)
             if item is None:
+                if not rule_text:
+                    # Never MINT items from rule-less records: bare agent-name
+                    # strings (legacy + the gate-visible name cli.py always
+                    # appends) and first-build sources:[] placeholders would
+                    # otherwise promote strings like "architect" or fabricated
+                    # "clean first build" rules into HIGH-IMPACT LEARNINGS and
+                    # leak to the global store. Existing items keep grading.
+                    continue
                 item = {
                     "id": learning_id,
                     "phase": phase_id,
                     "effect_score": 0,
                     "last_outcome": "untried",
                     "applied_runs": [],
-                    "rule_preview": (rec if isinstance(rec, str) else rec.get("rule", ""))[:200],
+                    "rule_preview": rule_text[:200],
                 }
                 data["items"].append(item)
                 items_by_id[learning_id] = item
@@ -231,11 +239,15 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
     # Promote graded learnings to the host-wide store so the next project's
     # bootstrap inherits the latest effect scores. Best-effort; cannot block
     # the retrospective if global write fails (e.g. read-only home).
+    # AUTOBOT_NO_GLOBAL_PUBLISH=1 skips the publish entirely — the test suite
+    # sets it (run_tests.sh / conftest.py) so grading fixtures can never leak
+    # into the developer's real ~/.config/autobot/learnings.json again.
     publish_summary: dict | None = None
-    try:
-        publish_summary = publish_project_to_global(project_root)
-    except Exception:  # noqa: BLE001 — never crash grade on global publish
-        publish_summary = None
+    if os.environ.get("AUTOBOT_NO_GLOBAL_PUBLISH") != "1":
+        try:
+            publish_summary = publish_project_to_global(project_root)
+        except Exception:  # noqa: BLE001 — never crash grade on global publish
+            publish_summary = None
 
     result: dict = {"updated": updated, "summaries": summaries}
     if publish_summary:
@@ -275,32 +287,110 @@ def _merge_items(existing: list[dict], incoming: list[dict]) -> list[dict]:
     return list(by_id.values()) + no_id
 
 
-def _merge_patterns(existing: dict, incoming: dict) -> dict:
-    """Deep-merge two `patterns` dicts. For per-key entries with a numeric
-    `frequency`, sum them; otherwise incoming overwrites."""
+def _merge_entry(old: dict, new: dict) -> dict:
+    """Merge two pattern entries that describe the SAME recurring pattern.
+
+    frequency takes max(old, new) — NOT the sum. The stores round-trip
+    (global → project at bootstrap, project → global at publish), so after a
+    bootstrap seed the project copy already CONTAINS the global count; summing
+    on every hop compounded counts across round trips (the real store hit
+    retry_exhaustion_recovery frequency=882). max() is idempotent across
+    round trips and still grows when a project genuinely increments its local
+    count. All other fields: incoming wins (latest narrative is the truth).
+    """
+    combined = dict(old)
+    for k, v in new.items():
+        if k == "frequency":
+            continue
+        if k == "source_apps" and isinstance(v, list) and isinstance(old.get(k), list):
+            # external_feedback: the global store exists to spot CROSS-app
+            # themes, so app provenance must union, not get clobbered by the
+            # last publisher.
+            combined[k] = old[k] + [app for app in v if app not in old[k]]
+            continue
+        combined[k] = v
+    if "frequency" in old or "frequency" in new:
+        try:
+            combined["frequency"] = max(int(old.get("frequency", 0) or 0),
+                                        int(new.get("frequency", 0) or 0))
+        except (TypeError, ValueError):
+            combined["frequency"] = new.get("frequency", old.get("frequency"))
+    return combined
+
+
+def _merge_list_patterns(existing: list, incoming: list, *, add_only: bool) -> list:
+    """Merge two list-form pattern categories — the canonical learning-schema
+    shape for common_build_errors / effective_architectures / deployment_tips.
+
+    Entries match by normalized `pattern` text (reuses _norm_text, same key the
+    quarantine propagation matches on), falling back to `theme` — the identity
+    key of patterns.external_feedback entries. Matched entries merge via
+    _merge_entry (or stay untouched in add_only mode); unmatched incoming
+    entries append. This replaces the old wholesale `merged[cat] = cat_val`
+    clobber that erased every global prevention rule on each publish.
+    """
+
+    def _entry_key(entry: dict) -> str:
+        return _norm_text(entry.get("pattern", "") or entry.get("theme", ""))
+
+    merged: list = []
+    index: dict[str, int] = {}
+    for entry in existing:
+        if isinstance(entry, dict):
+            key = _entry_key(entry)
+            if key and key not in index:
+                index[key] = len(merged)
+        merged.append(entry)
+    for entry in incoming:
+        key = _entry_key(entry) if isinstance(entry, dict) else ""
+        if key and key in index:
+            if not add_only:
+                merged[index[key]] = _merge_entry(merged[index[key]], entry)
+            continue
+        if entry in merged:  # keyless entries: dedupe by equality
+            continue
+        merged.append(entry)
+        if key:
+            index[key] = len(merged) - 1
+    return merged
+
+
+def _merge_patterns(existing: dict, incoming: dict, *, add_only: bool = False) -> dict:
+    """Deep-merge two `patterns` dicts.
+
+    add_only=False (publish direction, existing=global / incoming=project):
+    matched entries merge with max-frequency + incoming-fields-win; unmatched
+    incoming entries/keys are added; existing-only entries always survive.
+
+    add_only=True (bootstrap direction, existing=project / incoming=global):
+    project entries are kept verbatim — global contributes only entries/keys
+    the project doesn't have yet. Re-merging global counts into the project and
+    then publishing them back was the frequency-compounding bug (finding: dict
+    frequencies grew Fibonacci-style across round trips).
+    """
     merged = dict(existing) if isinstance(existing, dict) else {}
     if not isinstance(incoming, dict):
         return merged
     for cat, cat_val in incoming.items():
-        if isinstance(cat_val, dict) and isinstance(merged.get(cat), dict):
-            sub_merged = dict(merged[cat])
+        cur = merged.get(cat)
+        if isinstance(cat_val, list) and isinstance(cur, list):
+            merged[cat] = _merge_list_patterns(cur, cat_val, add_only=add_only)
+        elif isinstance(cat_val, dict) and isinstance(cur, dict):
+            sub_merged = dict(cur)
             for key, val in cat_val.items():
-                if (isinstance(val, dict) and isinstance(sub_merged.get(key), dict)
+                if key not in sub_merged:
+                    sub_merged[key] = val
+                elif add_only:
+                    continue  # project-first: keep the existing entry untouched
+                elif (isinstance(val, dict) and isinstance(sub_merged[key], dict)
                         and "frequency" in val and "frequency" in sub_merged[key]):
-                    combined = dict(sub_merged[key])
-                    try:
-                        combined["frequency"] = int(sub_merged[key]["frequency"]) + int(val["frequency"])
-                    except (TypeError, ValueError):
-                        combined["frequency"] = val["frequency"]
-                    # Preserve fix_summary etc. from incoming when present
-                    for k, v in val.items():
-                        if k != "frequency":
-                            combined[k] = v
-                    sub_merged[key] = combined
+                    sub_merged[key] = _merge_entry(sub_merged[key], val)
                 else:
                     sub_merged[key] = val
             merged[cat] = sub_merged
-        else:
+        elif cat not in merged:
+            merged[cat] = cat_val
+        elif not add_only:
             merged[cat] = cat_val
     return merged
 
@@ -341,7 +431,11 @@ def merge_global_into_project(project_root: Path) -> dict:
 
     project = _load(project_root)
     merged_items = _merge_items(glob.get("items", []), project.get("items", []))
-    merged_patterns = _merge_patterns(glob.get("patterns", {}), project.get("patterns", {}))
+    # Project-first, add-only: global contributes only entries the project
+    # doesn't have. Never re-sum/overwrite project counts on the inbound hop —
+    # accumulation happens on the publish hop only (and idempotently, via max).
+    merged_patterns = _merge_patterns(project.get("patterns", {}), glob.get("patterns", {}),
+                                      add_only=True)
     project["items"] = merged_items
     project["patterns"] = merged_patterns
     _save(project_root, project)
@@ -349,11 +443,37 @@ def merge_global_into_project(project_root: Path) -> dict:
             "items": len(merged_items)}
 
 
+def _filter_unapproved_external(project: dict) -> dict:
+    """External-feedback entries are untrusted user text until an operator
+    approves them (data-level gate written by external_feedback.py approve).
+    Filtering HERE — the single choke point every global publish goes through
+    (feedback path AND Phase 7 grade) — is what makes the gate real instead of
+    prose. Unapproved entries and their phase=="external" tracking items stay
+    project-local."""
+    entries = project.get("patterns", {}).get("external_feedback")
+    if not isinstance(entries, list):
+        return project
+    approved = [e for e in entries if isinstance(e, dict) and e.get("approved") is True]
+    approved_ids = {
+        stable_id("external", e.get("suggested_prevention_rule") or "")
+        for e in approved
+    }
+    filtered = dict(project)
+    filtered["patterns"] = dict(project.get("patterns", {}))
+    filtered["patterns"]["external_feedback"] = approved
+    filtered["items"] = [
+        item for item in project.get("items", [])
+        if not (isinstance(item, dict) and item.get("phase") == "external"
+                and item.get("id") not in approved_ids)
+    ]
+    return filtered
+
+
 def publish_project_to_global(project_root: Path) -> dict:
     """Phase 7 hand-off: push project learnings up to the global store so the
     next project benefits. Project items overlay global items on id collision
     (latest grade is the truth)."""
-    project = _load(project_root)
+    project = _filter_unapproved_external(_load(project_root))
     glob = load_global()
     merged_items = _merge_items(glob.get("items", []), project.get("items", []))
     merged_patterns = _merge_patterns(glob.get("patterns", {}), project.get("patterns", {}))

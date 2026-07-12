@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from event_log import append_build_log
+from event_log import append_build_log, validate_log_event
 from gate_persistence import execute_and_record_gate
 from gate_runner import format_text as format_gate_text
 from phase_advance import advance_phase
@@ -330,10 +330,20 @@ def append_log(args: argparse.Namespace) -> int:
         except (json.JSONDecodeError, ValueError):
             detail = args.detail
 
+    # Validate the event BEFORE any state mutation. learning_applied mutates
+    # phases.<id>.learningsConsumed (which gates require); if the event/detail
+    # were only validated inside append_build_log AFTER the mutation, a bad
+    # detail would leave gate-satisfying state behind with no audit log row.
+    log_errors = validate_log_event(
+        spec, args.event, {"phase": args.phase, "agent": args.agent, "detail": detail},
+    )
+    if log_errors:
+        raise SystemExit("FATAL: invalid build-log event: " + "; ".join(log_errors))
+
     # learning_applied has a side-effect on state: phases.<id>.learningsConsumed
-    # accumulates the agent name so gates can require it. The state mutation
-    # and the log append run inside the same command for atomicity (a failure
-    # in either fail-loud, leaving no half-written audit trail).
+    # accumulates the agent name so gates can require it. The event is already
+    # validated above, so the mutation and the log append below cannot diverge
+    # on a validation failure.
     if args.event == "learning_applied" and args.phase and args.agent:
         state_path = state_file_from_args(args)
         if state_path.is_file():

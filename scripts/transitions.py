@@ -80,11 +80,21 @@ def validate_transition_request(
 
     allowed = set(transition_map(spec, phase).get(current_status, []))
     resume_policy = spec.get("policies", {}).get("resume", {})
+    # in_progress→in_progress is a stale-crash reclaim (the documented resume
+    # path for a build that died mid-phase). It stays behind the explicit
+    # --allow-terminal-restart flag rather than being allowed unconditionally:
+    # the build lock cannot be trusted to prove no live run holds the phase —
+    # commands/resume.md Step 0 writes a raw-PID lock while build_lock.py
+    # writes JSON, and each side treats the other's format as stale and
+    # clobbers it.
     allow_explicit_restart = (
         allow_terminal_restart
         and resume_policy.get("allowExplicitRestartFromTerminal", False)
         and target_status == "in_progress"
-        and current_status in set(spec.get("terminalStatuses", []))
+        and (
+            current_status in set(spec.get("terminalStatuses", []))
+            or current_status == "in_progress"
+        )
     )
     # An operator who passes --allow-terminal-restart (and the policy permits it)
     # is explicitly overriding autonomous safety to resume a stuck build. That
@@ -127,7 +137,11 @@ def validate_transition_request(
     if target_status == "in_progress" and current_status == "failed":
         retry_count = phases.get(phase, {}).get("retryCount", 0)
         max_retry = spec.get("phases", {}).get(phase, {}).get("maxRetry", 0)
-        if retry_count >= max_retry:
+        # operator_override: `--allow-terminal-restart` must also unblock a
+        # retry-exhausted phase — otherwise the documented forced restart is
+        # dead exactly when it's needed and deleting build-state.json becomes
+        # the only escape. The autonomous path never passes the flag.
+        if retry_count >= max_retry and not operator_override:
             return False, [f"REJECTED: Phase {phase} has exhausted retries ({retry_count}/{max_retry})"]
 
     if target_status == "in_progress" and not operator_override:
@@ -181,6 +195,11 @@ def update_phase_status(
             phase_state.pop("failedAt", None)
             phase_state.pop("skippedAt", None)
             phase_state.pop("error", None)
+            # Success resets the retry counter — spec.policies.circuitBreaker
+            # declares maxConsecutivePhaseFailures; without this pop the
+            # global-scope breaker sums stale counts from phases that already
+            # recovered, so scattered within-budget retries could kill a build.
+            phase_state.pop("retryCount", None)
         elif target_status == "failed":
             phase_state["failedAt"] = timestamp
             if error:

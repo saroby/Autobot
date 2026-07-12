@@ -1,8 +1,29 @@
-# External Signal Loop — 설계 스파이크 (미구현)
+# External Signal Loop — v1 구현됨
 
-> **상태: 설계만. 코드 없음.** 출시된 앱 + (일부) ASC 인증이 있는 환경에서 구현한다.
-> 이 문서는 "왜 이게 최고 leverage 인가"와 "어떻게 만들 것인가"를 명문화해 다음
-> 구현자가 0 부터 다시 설계하지 않게 한다.
+> **상태: 구현됨 (v1, 리뷰 기반).** 진입점 `/autobot:feedback` (`commands/feedback.md`),
+> 워크플로우 `skills/autobot-feedback/SKILL.md`, 결정적 로직
+> `scripts/external_feedback.py`, 단위 검증 `tests/test_external_feedback.py`.
+> crash/retention 등 ASC 인증 메트릭은 v2 로 남아 있다.
+
+## 구현 요약 (v1)
+
+- `/autobot:feedback [bundleId]` — bundleId 미지정 시 `.autobot/architecture.json`
+  (fallback: build-state.json) 에서 해석. 빌드 세션 밖 운영자 트리거.
+- fetch_reviews → analyze_reviews → LLM 테마 추출 → `external_feedback.py record` 가
+  `patterns.external_feedback` `{theme, severity, source_apps, sample_quotes,
+  suggested_prevention_rule, frequency}` + `items[]` (`stable_id("external", rule)`,
+  `phase: "external"`) 기록 → 기존 effect_score/quarantine 재사용.
+- 렌더 소비자: `render-active-learnings.py` 의 `## External Feedback` 섹션
+  (write-only 함정 방지, quotes 는 인용 표기로 격리).
+- 리뷰 텍스트는 신뢰 불가 입력: 제어/포맷 문자 제거·길이 제한, 리뷰 원문을 그대로
+  베낀 prevention rule 은 폐기 (`rule_is_quoted_review`).
+- 이벤트: `feedback_fetched` / `external_feedback_recorded` (spec.logEvents 선등록).
+  entry-level 필드라 build-log.sh 로는 표현 불가 → `external_feedback.py` 가
+  `event_log.validate_log_event` 로 spec 검증 후 직접 append. 대상: build-log.jsonl
+  이 있으면 그 파일, 없으면 `.autobot/feedback-log.jsonl` (이벤트당 정확히 한 파일,
+  audit-only — gate 는 읽지 않음).
+- 글로벌 승격: 후보 제시 → `AskUserQuestion` 운영자 확인 1회 →
+  `learning_impact.py publish-global`. 자동 승격 금지 (lessons #24).
 
 ## 왜 (leverage)
 
@@ -41,9 +62,10 @@ critique)는 **내부 자가-judge** 다. 빌드 산출물을 빌드 자신의 �
 `app-review` 는 Phase G(submit)에서 끝난다. feedback 은 그 *이후* 의 독립 루프다 —
 같은 빌드 세션이 아니라, 운영자가 출시 후 임의 시점에 돌린다.
 
-## learnings 저장소 — 핵심 설계 질문 (미해결)
+## learnings 저장소 — 핵심 설계 질문 (v1 에서 해소: 둘 다)
 
-이게 이 기능의 진짜 난점이다. 단순 구현이 아니라 아키텍처 선택이다.
+v1 결정: 프로젝트-로컬 기록은 자동, 글로벌은 운영자 확인 후 publish. 아래는
+원래의 트레이드오프 분석.
 
 - **프로젝트별** (`.autobot/learnings.json`): 그 앱 *재빌드* 시에만 흡수. Autobot 은
   보통 한 번 빌드하고 끝이라 **재빌드가 드물어 leverage 가 낮다.**
@@ -84,12 +106,16 @@ suggested_prevention_rule}`.
 ## 리스크 / 미해결
 
 - **외부 신호도 Goodhart 가능**: 평점 조작·리뷰 편향·소수 vocal 사용자. 자가-judge 보다
-  외부적이지만 완벽한 ground-truth 는 아니다. `effect_score` 처럼 신호→개선의 실제 효과를
-  추적해 나쁜 학습을 quarantine.
-- **글로벌 learnings 아키텍처**: 현재 프로젝트별 → 글로벌 저장소 신설이 v1 의 가장 큰 작업.
+  외부적이지만 완벽한 ground-truth 는 아니다. v1: items[] 채널로 `effect_score`/quarantine
+  이 그대로 적용된다 — 나쁜 외부 학습도 채점으로 격리된다.
+- **글로벌 learnings 아키텍처**: WS3 가 글로벌 저장소(`~/.config/autobot/learnings.json`)
+  병합을 멱등화해 해소. external_feedback 리스트는 theme 키로 병합, source_apps 는
+  합집합 (cross-app 패턴 감지가 목적이므로).
 - **리뷰→learning 변환 신뢰성**: LLM 분류가 노이즈를 prevention rule 로 승격할 위험 →
-  사람 검토 게이트 1회 필수 (자동 승격 금지).
-- **회수 빈도/비용**: 언제·얼마나 자주 회수? 출시 후 1주/1개월 등 운영자 트리거.
+  v1 에 사람 검토 게이트 1회 구현 (자동 승격 금지). 추가 결정적 방어: 리뷰 인용문을
+  그대로 베낀 rule 은 스크립트가 폐기 (프롬프트 인젝션 경로 차단).
+- **회수 빈도/비용**: 언제·얼마나 자주 회수? 출시 후 1주/1개월 등 운영자 트리거 (v1 유지).
+- **(v2) ASC 인증 메트릭**: crash/retention/전환 — `aso-skills` 도구 + 기존 setup §3.7 키.
 
 ## 관련
 

@@ -155,5 +155,88 @@ class TestEvaluate(unittest.TestCase):
             del os.environ["AUTOBOT_DISABLE_VISUAL_CONTRACT"]
 
 
+def _png_solid(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    """A single-color PNG stored UNCOMPRESSED so it exceeds MIN_SCREENSHOT_BYTES
+    while having ~zero luminance variance (the monochrome regression shape)."""
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    row = b"\x00" + bytes(rgb) * width
+    raw = row * height
+    idat = chunk(b"IDAT", zlib.compress(raw, level=0))  # level 0 keeps size up
+    iend = chunk(b"IEND", b"")
+    return sig + ihdr + idat + iend
+
+
+class TestEvaluateDarkMode(unittest.TestCase):
+    """Dark-appearance render verification — the consumer of the (formerly
+    dead) design-spec `darkMode` policy field."""
+
+    def _light(self, proj: Path) -> Path:
+        shot = proj / "shot.png"
+        shot.write_bytes(_png_noisy(400, 600, (59, 91, 219)))
+        _seed_design_spec(proj, "#3B5BDB")
+        return shot
+
+    def test_missing_dark_screenshot_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            shot = self._light(proj)
+            result = evaluate(proj, screenshot=shot)
+            self.assertEqual(result["status"], "passed", result.get("reason"))
+            self.assertEqual(result["darkMode"]["status"], "skipped")
+            self.assertEqual(result["darkMode"]["skipReason"], "dark_screenshot_missing")
+
+    def test_monochrome_dark_render_fails_dark_check(self):
+        try:
+            import PIL  # noqa: F401
+        except ImportError:
+            self.skipTest("Pillow not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            shot = self._light(proj)
+            # All-black dark render — the broken-dark-mode regression.
+            (proj / "shot-dark.png").write_bytes(_png_solid(200, 300, (0, 0, 0)))
+            result = evaluate(proj, screenshot=shot)
+            self.assertEqual(result["status"], "passed")  # light render is fine
+            self.assertEqual(result["darkMode"]["status"], "failed")
+            self.assertIn("dark", result["darkMode"]["reason"])
+
+    def test_healthy_dark_render_passes(self):
+        try:
+            import PIL  # noqa: F401
+        except ImportError:
+            self.skipTest("Pillow not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            shot = self._light(proj)
+            (proj / "shot-dark.png").write_bytes(_png_noisy(400, 600, (24, 26, 38)))
+            result = evaluate(proj, screenshot=shot)
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["darkMode"]["status"], "passed", result["darkMode"])
+
+    def test_dark_mode_false_opts_out(self):
+        import json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            shot = self._light(proj)
+            spec_path = proj / ".autobot" / "design-spec.json"
+            payload = _json.loads(spec_path.read_text())
+            payload["darkMode"] = False
+            spec_path.write_text(_json.dumps(payload))
+            (proj / "shot-dark.png").write_bytes(_png_solid(200, 300, (0, 0, 0)))
+            result = evaluate(proj, screenshot=shot)
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["darkMode"]["status"], "skipped")
+            self.assertEqual(result["darkMode"]["skipReason"], "dark_mode_not_declared")
+
+
 if __name__ == "__main__":
     unittest.main()

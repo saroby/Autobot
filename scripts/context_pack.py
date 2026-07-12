@@ -31,6 +31,7 @@ REFERENCE_FILES = {
         "references/axiom-distilled/design.md",
         "references/axiom-distilled/data-concurrency.md",
         "references/ios-ux-style.md",
+        "skills/autobot-orchestrator/references/architecture-template.md",
     ],
     "ui-builder": [
         "references/axiom-distilled/swiftui.md",

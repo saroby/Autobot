@@ -139,6 +139,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema
 ```
 1. status가 "failed"인 Phase 찾기 → 해당 Phase부터 재시작
 2. "failed"가 없으면, "in_progress"인 Phase 찾기 → 해당 Phase부터 재시작
+   (크래시 잔류 상태 — Step 4 의 start-phase 에 `--allow-terminal-restart` 를 붙여 reclaim)
 3. 둘 다 없으면, 마지막 "completed" Phase 다음부터 시작
 4. 모든 Phase가 completed이면 → "빌드가 이미 완료되었습니다." 출력 후 종료
 ```
@@ -234,7 +235,13 @@ Phase {resumeFrom}부터 실행합니다.
 **Phase 재시작 기록 (검증 + 상태 저장 + 로그를 한 번에 수행):**
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase <N> --detail "Resume from Phase <N>"
-# 사용자가 completed/fallback/skipped 상태 Phase를 명시적으로 재시작한 경우:
+# --allow-terminal-restart 가 필요한 경우 (아래 셋 모두):
+#   1. 사용자가 completed/fallback/skipped 상태 Phase 를 명시적으로 재시작
+#   2. 크래시로 in_progress 에 남은 Phase 를 reclaim (in_progress → in_progress)
+#   3. retry 소진(failed, retryCount ≥ maxRetry) Phase 의 운영자 강제 재시작
+# 주의: 이 플래그는 해당 start-phase 호출 1회에 한해 circuit breaker 와 retry-소진
+# 검사도 함께 우회한다 (operator override). /autobot:resume 은 인간 호출 전용이라
+# 의도된 동작 — 자동화 경로에서는 절대 붙이지 않는다.
 # bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase --phase <N> --detail "Resume from Phase <N>" --allow-terminal-restart
 ```
 

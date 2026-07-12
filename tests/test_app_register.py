@@ -18,16 +18,25 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent
 SCRIPT = PLUGIN_DIR / "skills" / "autobot-register-app" / "scripts" / "register-app.sh"
 
 
+# Hermetic sandbox: the script sources ./.env (cwd) and
+# ${AUTOBOT_CONFIG_DIR:-~/.autobot}/.env, so stripping env vars alone is NOT
+# enough on a machine where /autobot:setup has run — tests would pick up real
+# credentials and invoke real fastlane. Point both lookups at an empty dir.
+_SANDBOX = tempfile.TemporaryDirectory(prefix="autobot-register-test.")
+
+
 def run(args, env_extra=None, strip_creds=False):
     env = os.environ.copy()
+    env["AUTOBOT_CONFIG_DIR"] = _SANDBOX.name
     if strip_creds:
-        for k in ("ASC_API_KEY_ID", "ASC_API_ISSUER_ID", "ASC_API_KEY_PATH"):
+        for k in ("FASTLANE_USER", "APPLE_ID", "FASTLANE_SESSION"):
             env.pop(k, None)
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         env=env,
+        cwd=_SANDBOX.name,
         capture_output=True,
         text=True,
     )
@@ -49,9 +58,7 @@ class InputValidationTests(unittest.TestCase):
             key.write_text("not-a-real-key")
             status = tmp / "status.json"
             env = {
-                "ASC_API_KEY_ID": "K",
-                "ASC_API_ISSUER_ID": "I",
-                "ASC_API_KEY_PATH": str(key),
+                "FASTLANE_USER": "test@example.com",
                 "AUTOBOT_REGISTER_STATUS_FILE": str(status),
                 "PATH": "/usr/bin:/bin",
             }
@@ -113,9 +120,7 @@ class InputValidationTests(unittest.TestCase):
 
     def test_invalid_sku_with_space(self):
         env = {
-            "ASC_API_KEY_ID": "x",
-            "ASC_API_ISSUER_ID": "y",
-            "ASC_API_KEY_PATH": "/dev/null",
+            "FASTLANE_USER": "test@example.com",
         }
         r = run(
             ["--bundle-id", "com.axi.x", "--display-name", "Ok", "--sku", "has space"],
@@ -126,9 +131,7 @@ class InputValidationTests(unittest.TestCase):
 
     def test_invalid_language_code(self):
         env = {
-            "ASC_API_KEY_ID": "x",
-            "ASC_API_ISSUER_ID": "y",
-            "ASC_API_KEY_PATH": "/dev/null",
+            "FASTLANE_USER": "test@example.com",
         }
         r = run(
             [
@@ -146,9 +149,7 @@ class InputValidationTests(unittest.TestCase):
 
     def test_invalid_app_version(self):
         env = {
-            "ASC_API_KEY_ID": "x",
-            "ASC_API_ISSUER_ID": "y",
-            "ASC_API_KEY_PATH": "/dev/null",
+            "FASTLANE_USER": "test@example.com",
         }
         r = run(
             [
@@ -176,22 +177,25 @@ class InputValidationTests(unittest.TestCase):
 
 
 class CredentialsAndDryRunTests(unittest.TestCase):
-    def test_missing_credentials_exits_2(self):
+    def test_missing_apple_id_exits_2(self):
         r = run(["--bundle-id", "com.axi.x", "--display-name", "Ok"], strip_creds=True)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("missing ASC API credentials", r.stderr)
+        self.assertIn("missing Apple ID", r.stderr)
 
-    def test_unreadable_key_path_exits_2(self):
+    def test_no_session_exits_2(self):
+        # Apple ID resolved but no spaceship cookie / FASTLANE_SESSION.
+        # HOME is sandboxed so a real ~/.fastlane cookie can never leak in.
         env = {
-            "ASC_API_KEY_ID": "x",
-            "ASC_API_ISSUER_ID": "y",
-            "ASC_API_KEY_PATH": "/nonexistent/path.p8",
+            "FASTLANE_USER": "test@example.com",
+            "HOME": _SANDBOX.name,
         }
         r = run(
-            ["--bundle-id", "com.axi.x", "--display-name", "Ok"], env_extra=env
+            ["--bundle-id", "com.axi.x", "--display-name", "Ok"],
+            env_extra=env,
+            strip_creds=True,
         )
         self.assertEqual(r.returncode, 2)
-        self.assertIn("not readable", r.stderr)
+        self.assertIn("no App Store Connect session", r.stderr)
 
     def test_dry_run_does_not_call_fastlane(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -200,9 +204,7 @@ class CredentialsAndDryRunTests(unittest.TestCase):
             key.write_text("not-a-real-key")
             status = tmp / "status.json"
             env = {
-                "ASC_API_KEY_ID": "K",
-                "ASC_API_ISSUER_ID": "I",
-                "ASC_API_KEY_PATH": str(key),
+                "FASTLANE_USER": "test@example.com",
                 "AUTOBOT_REGISTER_STATUS_FILE": str(status),
                 # Ensure fastlane is NOT found — proves we never tried to call it.
                 "PATH": "/usr/bin:/bin",
@@ -221,6 +223,11 @@ class CredentialsAndDryRunTests(unittest.TestCase):
             )
             self.assertEqual(r.returncode, 0, msg=r.stderr)
             self.assertIn("DRY RUN", r.stdout)
+            # Session auth model: produce authenticates via --username, and
+            # --api_key_path must never come back (it was never a valid
+            # produce option — the public ASC API cannot create app records).
+            self.assertIn("--username test@example.com", r.stdout)
+            self.assertNotIn("--api_key_path", r.stdout)
             self.assertTrue(status.is_file())
             data = json.loads(status.read_text())
             self.assertEqual(data["result"], "dry_run")
@@ -237,9 +244,7 @@ class JsonInjectionDefenseTests(unittest.TestCase):
             status = tmp / "status.json"
             hostile_name = 'evil","admin":true,"x'  # would inject a field if naive
             env = {
-                "ASC_API_KEY_ID": "K",
-                "ASC_API_ISSUER_ID": "I",
-                "ASC_API_KEY_PATH": str(key),
+                "FASTLANE_USER": "test@example.com",
                 "AUTOBOT_REGISTER_STATUS_FILE": str(status),
                 "PATH": "/usr/bin:/bin",
             }

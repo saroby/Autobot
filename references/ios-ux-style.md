@@ -18,9 +18,13 @@
 // 배경 표면에 글래스 효과
 .glassEffect()
 
-// 버튼
+// 버튼 — glass / glassProminent (`.liquidGlass` 라는 멤버는 존재하지 않는다)
 Button("Action") { }
-    .buttonStyle(.liquidGlass)
+    .buttonStyle(.glass)
+
+// primary action 강조 버튼
+Button("Save") { }
+    .buttonStyle(.glassProminent)
 
 // 툴바
 .toolbar {

@@ -17,15 +17,18 @@ Agents write to separate directories to prevent conflicts. `[sources]/Models/` i
 
 Phase 4의 에이전트들은 **파일 소유권 규칙**으로 충돌을 방지한다. 각 에이전트는 지정된 디렉토리에만 쓰고, 다른 에이전트의 디렉토리를 건드리지 않는다.
 
+> **소유권 SSOT 는 `spec/parts/05-file-ownership.json`** — sandbox 가 그 선언을 강제하고, context-pack 의 OUTPUT CONTRACT 가 에이전트에게 자동 전달한다. 아래 표는 그 요약이다 (드리프트 시 spec 이 이긴다).
+
 | Agent | Writes To | Reads From | MUST NOT Touch |
 |-------|-----------|------------|----------------|
-| architect | `.autobot/architecture.md`, `[sources]/Models/` | (user input) | — |
+| architect | `[sources]/Models/`, `.autobot/architecture.md`, `.autobot/architecture.json`, `.autobot/app-intent.json`, `.autobot/feature-spec.json` | (user input) | — |
 | ux-designer | `.autobot/designs/`, `.autobot/design-spec.md` | `.autobot/architecture.md` | `[sources]/`, `.autobot/architecture.md` |
-| ui-builder | `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/`, `[sources]/Utilities/Theme.swift` | `[sources]/Models/*.swift`, `.autobot/design-spec.md` (있으면) | `[sources]/Models/`, `[sources]/Services/`, `.autobot/*` (infra) |
-| data-engineer | `[sources]/Services/`, `[sources]/Utilities/` (Theme.swift 제외) | `[sources]/Models/*.swift` | `[sources]/Models/`, `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/`, `[sources]/Utilities/Theme.swift`, `.autobot/*` (infra) |
+| design-system | `Packages/` | `.autobot/architecture.json`, `.autobot/design-spec.md` | `[sources]/` |
+| ui-builder | `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/`, `[sources]/Assets.xcassets/` | `[sources]/Models/*.swift`, `.autobot/design-spec.md` (있으면) | `[sources]/Models/`, `[sources]/Services/`, `Packages/`, `.autobot/*` (infra) |
+| data-engineer | `[sources]/Services/`, `[sources]/Utilities/` | `[sources]/Models/*.swift` | `[sources]/Models/`, `[sources]/Views/`, `[sources]/ViewModels/`, `[sources]/App/`, `.autobot/*` (infra) |
 | backend-engineer | `[project]/backend/` | `[sources]/Models/APIContracts.swift` | `[sources]/`, root `.gitignore`, `.autobot/*` (infra) |
-| quality-engineer | `[project]/*Tests/`, fixes in any file, integration wiring | All source files | `[sources]/Models/`, `.autobot/*` (infra) |
-| deployer | `[project]/build/`, config files | Built app | `.autobot/*` (infra) |
+| quality-engineer | `[sources]/` (broad access), `[project]/backend/`, `project.yml` | All source files | `[sources]/Models/`, `.autobot/*` (infra) |
+| deployer | `[project]/build/`, `.autobot/deploy-status.json` | Built app | `.autobot/*` (infra) |
 
 > **`.autobot/*` (infra)** = `build-state.json`, `architecture.md`, `contracts/`, `build-log.jsonl`, `build.lock`, `learnings.json`, `active-learnings.md`, `phase-learnings/`. 파이프라인 제어 파일은 오케스트레이터만 수정한다.
 
@@ -92,11 +95,10 @@ SECOND: Read [sources]/Models/ServiceProtocols.swift to learn the service interf
 THEN: Read the architecture at [project]/.autobot/architecture.md for screen inventory, navigation, and integration map.
 THEN: Read [project]/.autobot/design-spec.md for visual design references, design tokens, and UI pattern guidance from Stitch mockups. Check [project]/.autobot/designs/ for screen mockup images. This is the PRIMARY design input — if it exists, it takes precedence over architecture.md for visual decisions.
 IF design-spec.md DOES NOT EXIST (fallback mode): Proceed with architecture.md alone for UI decisions.
-Generate all SwiftUI views, view models, and the app entry point.
+Generate all SwiftUI views and view models. Do NOT create an app entry point or a second `@main` — the Phase 3 scaffold already created [sources]/App/[AppName]App.swift and CompositionRoot.swift, and Gate 4→5 `composition_seam_intact` blocks duplicates. Do NOT add `.modelContainer(for:)` — quality-engineer wires the production ModelContainer in CompositionRoot.swift at Phase 5.
 ViewModels MUST depend on Service protocols using existential types (e.g. `any ItemServiceProtocol`), NOT on ModelContext directly.
-Create [sources]/App/ServiceStubs.swift with stub implementations for each protocol (return empty arrays, no-ops).
+Populate the scaffold's [sources]/App/ServiceStubs.swift with Preview-only mock implementations for each protocol. Return realistic sample data — NOT empty arrays/no-ops; ViewModel Previews must render real data.
 Write files to [sources]/Views/, [sources]/ViewModels/, and [sources]/App/.
-In the App entry point, register ALL @Model types in .modelContainer(for:).
 Follow ALL patterns from ios-ux-style.md. Do NOT use patterns listed in the Anti-Patterns table.
 Do NOT create, modify, or overwrite files in [sources]/Models/ or [sources]/Services/ — those are handled by other agents.
 Use the EXACT type names, initializer signatures, and protocol method signatures from [sources]/Models/*.swift.
@@ -111,6 +113,7 @@ SECOND: Read [sources]/Models/ServiceProtocols.swift to learn the service interf
 THEN: Read the architecture at [project]/.autobot/architecture.md for API endpoints and data flow.
 For EACH protocol in ServiceProtocols.swift, create a Repository class that conforms to it.
 Implement repositories and network services that use the existing Model types.
+If [project]/.autobot/architecture.json has seedPolicy == "seeded", also write the runtime first-launch seed factory `seedIfNeeded(_:)` in [sources]/Utilities/SampleData.swift (see agents/data-engineer.md "Runtime First-Launch Seeding" — Gate 5→6 `first_launch_seeded` greps for the call).
 Write files to [sources]/Services/ and [sources]/Utilities/.
 Follow ALL patterns from ios-ux-style.md (concurrency, data persistence sections).
 Do NOT create, modify, or overwrite files in [sources]/Models/, [sources]/Views/, [sources]/ViewModels/, or [sources]/App/.

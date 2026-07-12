@@ -239,8 +239,12 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
     postconditions.
 
     - feature-spec absent          -> benign skip (passed=True, skipped=True)
+    - zero P0 features declared     -> hard fail (deterministic count — an
+      all-P1/P2 spec can fail every flow and still "pass" because P1 failures
+      only warn; refusing it here is the gate-5->6 defense-in-depth for the
+      zero-P0 VERIFIED-badge laundering hole that Gate 1->2's
+      assess_feature_spec_quality closes at the source)
     - axe/sim missing / boot fails -> degraded skip (passed=False, skipped+degraded)
-    - no flow-kind acceptances      -> benign skip
     - a P0 acceptance fails         -> hard fail (passed=False)
     - only P1 acceptances fail      -> suite passes, message carries the warning
     """
@@ -250,6 +254,16 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
             "functional_flows_pass", True,
             ".autobot/feature-spec.json absent — skipping (no declared flows)",
             skipped=True,
+        )]
+
+    if not any(getattr(f, "priority", None) == "P0" for f in features):
+        return [_ok(
+            "functional_flows_pass", False,
+            "feature-spec declares ZERO P0 features — nothing is enforced at "
+            "runtime (P1 flow failures only warn), so passing would launder an "
+            "unverified build to VERIFIED. Declare at least one P0 feature "
+            "with a kind:'flow' acceptance (Gate 1->2 feature_spec_quality "
+            "rejects zero-P0 specs at the source).",
         )]
 
     result = run_flows(proj, app, features)
@@ -264,22 +278,20 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
                 f"functional flows not run: {reason}",
                 skipped=True, degraded=True,
             )]
-        # A non-degraded skip means "nothing to drive". That is only legitimate
-        # when there is no P0 feature: if a P0 feature exists but declared no
-        # kind:'flow' acceptance, the spec slipped past Gate 1->2's
-        # assess_feature_spec_quality, and benign-skipping here would let a
-        # logic-only build earn VERIFIED with the simulator flow never run.
-        # Refuse it as a hard fail (defense-in-depth for the same hole).
-        if reason == "no_features" and any(
-            getattr(f, "priority", None) == "P0" for f in features
-        ):
+        # A non-degraded skip means "nothing to drive". A P0 feature exists
+        # here (zero-P0 specs already hard-failed above), so a spec whose P0s
+        # declared no kind:'flow' acceptance slipped past Gate 1->2's
+        # assess_feature_spec_quality — benign-skipping would let a logic-only
+        # build earn VERIFIED with the simulator flow never run. Refuse it as
+        # a hard fail (defense-in-depth for the same hole).
+        if reason == "no_features":
             return [_ok(
                 "functional_flows_pass", False,
                 "P0 feature(s) declared but none has a kind:'flow' acceptance to "
                 "drive — cannot functionally verify the app (logic-only spec is "
                 "not shippable; add a flow acceptance for each P0 feature)",
             )]
-        # benign skip (no P0 features that need a runtime flow)
+        # Unknown non-degraded skip reason — keep it benign (nothing to drive).
         return [_ok(
             "functional_flows_pass", True,
             f"functional flows skipped: {reason}",

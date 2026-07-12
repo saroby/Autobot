@@ -109,9 +109,23 @@ class TestSynthesize(unittest.TestCase):
 
     def test_falls_back_to_category_palette_when_no_hex(self):
         with tempfile.TemporaryDirectory() as tmp:
-            spec = synthesize(Path(tmp), app_name="Demo", idea="달리기 트래커")
+            # No app name → no hue rotation: the raw category palette.
+            spec = synthesize(Path(tmp), app_name="", idea="달리기 트래커")
             self.assertEqual(spec["colorTokens"]["primary"], CATEGORY_PALETTES["fitness"]["primary"])
             self.assertTrue(spec["_synthesizedFrom"]["fallbackPalette"])
+
+    def test_fallback_palette_hue_rotates_per_app(self):
+        # Two same-category apps must NOT share the identical fallback palette
+        # (template smell). Rotation is deterministic per app name and the
+        # rotated tokens stay valid hex.
+        with tempfile.TemporaryDirectory() as tmp:
+            a1 = synthesize(Path(tmp), app_name="RunTrackr", idea="달리기 트래커")
+            a2 = synthesize(Path(tmp), app_name="RunTrackr", idea="달리기 트래커")
+            b = synthesize(Path(tmp), app_name="JogBuddy", idea="달리기 트래커")
+            self.assertEqual(a1["colorTokens"], a2["colorTokens"])  # deterministic
+            self.assertNotEqual(a1["colorTokens"]["primary"], b["colorTokens"]["primary"])
+            self.assertEqual(validate(a1), [])
+            self.assertEqual(validate(b), [])
 
     def test_typography_picks_rounded_for_fitness(self):
         with tempfile.TemporaryDirectory() as tmp:

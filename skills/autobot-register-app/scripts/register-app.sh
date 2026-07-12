@@ -4,10 +4,20 @@
 # (different developer using the same name) are reported as registration
 # failures, not silent successes.
 #
-# Required env (ASC API Key):
-#   ASC_API_KEY_ID         — Key ID
-#   ASC_API_ISSUER_ID      — Issuer ID
-#   ASC_API_KEY_PATH       — path to AuthKey_*.p8
+# AUTH MODEL (important — different from every other deploy step):
+#   App-record creation goes through Apple's PRIVATE iris API
+#   (Spaceship::ConnectAPI.login) — the public App Store Connect API has no
+#   app-creation endpoint, so ASC API keys CANNOT authenticate this step.
+#   (`--api_key_path` was never a valid `produce` option.) The only
+#   non-interactive auth is a cached spaceship web session:
+#     fastlane spaceauth -u <apple-id>    # interactive 2FA once, ~30 days valid
+#   or FASTLANE_SESSION exported from that command's output.
+#
+# Apple ID precedence:
+#   1) --apple-id flag
+#   2) FASTLANE_USER env var
+#   3) APPLE_ID env var
+#   4) ~/.autobot/config.json:appleId (via skills/autobot-setup/scripts/config.sh)
 #
 # Team ID precedence (matches autobot-setup convention):
 #   1) --team-id flag
@@ -16,13 +26,14 @@
 #
 # Optional env:
 #   AUTOBOT_REGISTER_STATUS_FILE  — JSON status output path (atomic write via temp+rename)
+#   FASTLANE_SESSION              — spaceship session (alternative to the cookie cache)
 #
 # Exit codes:
 #   0  ok (registered or already exists on YOUR team)
 #   1  usage / input validation error
-#   2  missing ASC credentials or unreadable .p8
+#   2  missing Apple ID or no ASC session (run `fastlane spaceauth`)
 #   3  fastlane install failed
-#   4  registration failed (other fastlane error — see status reason)
+#   4  registration failed (fastlane error — see status reason)
 set -euo pipefail
 
 # ── Logging helpers (CONVENTIONS.md output-prefix policy) ──
@@ -53,6 +64,7 @@ log_fatal() { printf 'FATAL: %s\n' "$*" >&2; }
 BUNDLE_ID=""
 DISPLAY_NAME=""
 TEAM_ID=""
+APPLE_ID_ARG=""
 SKU=""
 LANGUAGE="ko"
 APP_VERSION="1.0.0"
@@ -71,6 +83,9 @@ Required:
   --display-name   App Store display name (2..30 characters).
 
 Optional:
+  --apple-id       Apple ID used for the App Store Connect web session.
+                   Precedence: --apple-id > $FASTLANE_USER > $APPLE_ID
+                   > config.json:appleId.
   --team-id        Apple Developer Team ID (10 alphanumeric uppercase).
                    Precedence: --team-id > $DEVELOPMENT_TEAM > config.json.
   --sku            Unique SKU. Defaults to bundle-id.
@@ -79,8 +94,12 @@ Optional:
   --dry-run        Validate inputs and print the resolved fastlane invocation,
                    but do not call fastlane. Exits 0 if everything checks out.
 
+Auth (app creation uses Apple's private API — ASC API keys do not work here):
+  cached spaceship session (`fastlane spaceauth -u <apple-id>`, ~30 days)
+  or FASTLANE_SESSION env var.
+
 Environment:
-  ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH (required)
+  FASTLANE_SESSION (optional, alternative to the cookie cache)
   AUTOBOT_REGISTER_STATUS_FILE (optional, JSON output)
 USAGE
 }
@@ -99,6 +118,7 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --bundle-id)    require_value "$1" "${2:-}"; BUNDLE_ID="$2";    shift 2;;
     --display-name) require_value "$1" "${2:-}"; DISPLAY_NAME="$2"; shift 2;;
+    --apple-id)     require_value "$1" "${2:-}"; APPLE_ID_ARG="$2"; shift 2;;
     --team-id)      require_value "$1" "${2:-}"; TEAM_ID="$2";      shift 2;;
     --sku)          require_value "$1" "${2:-}"; SKU="$2";          shift 2;;
     --language)     require_value "$1" "${2:-}"; LANGUAGE="$2";     shift 2;;
@@ -153,33 +173,38 @@ if [ "$NAME_LEN" -lt 2 ] || [ "$NAME_LEN" -gt 30 ]; then
   exit 1
 fi
 
+# Resolve config.sh from CLAUDE_PLUGIN_ROOT or this script's true location.
+# Plugins are commonly symlinked from ~/.claude/plugins/cache/... so we
+# must follow symlinks before walking up to the plugin root.
+resolve_symlink() {
+  local target="$1"
+  while [ -L "$target" ]; do
+    local link
+    link="$(readlink "$target")"
+    case "$link" in
+      /*) target="$link";;
+       *) target="$(cd "$(dirname "$target")" && pwd)/$link";;
+    esac
+  done
+  printf '%s' "$target"
+}
+REAL_SOURCE="$(resolve_symlink "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$REAL_SOURCE")" && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+CONFIG_SH="$PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh"
+
+config_get_or() {
+  # config_get_or <key> — empty string when config.sh or the key is absent
+  [ -f "$CONFIG_SH" ] || { echo ''; return 0; }
+  bash "$CONFIG_SH" get-or "$1" '' 2>/dev/null || echo ''
+}
+
 # Team ID precedence: arg → env → config.json
 if [ -z "$TEAM_ID" ] && [ -n "${DEVELOPMENT_TEAM:-}" ]; then
   TEAM_ID="$DEVELOPMENT_TEAM"
 fi
 if [ -z "$TEAM_ID" ]; then
-  # Resolve config.sh from CLAUDE_PLUGIN_ROOT or this script's true location.
-  # Plugins are commonly symlinked from ~/.claude/plugins/cache/... so we
-  # must follow symlinks before walking up to the plugin root.
-  resolve_symlink() {
-    local target="$1"
-    while [ -L "$target" ]; do
-      local link
-      link="$(readlink "$target")"
-      case "$link" in
-        /*) target="$link";;
-         *) target="$(cd "$(dirname "$target")" && pwd)/$link";;
-      esac
-    done
-    printf '%s' "$target"
-  }
-  REAL_SOURCE="$(resolve_symlink "${BASH_SOURCE[0]}")"
-  SCRIPT_DIR="$(cd "$(dirname "$REAL_SOURCE")" && pwd)"
-  PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
-  CONFIG_SH="$PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh"
-  if [ -f "$CONFIG_SH" ]; then
-    TEAM_ID="$(bash "$CONFIG_SH" get-or developmentTeam '' 2>/dev/null || echo '')"
-  fi
+  TEAM_ID="$(config_get_or developmentTeam)"
 fi
 
 if [ -n "$TEAM_ID" ] && ! printf '%s' "$TEAM_ID" | grep -Eq '^[A-Z0-9]{10}$'; then
@@ -208,24 +233,33 @@ if ! printf '%s' "$APP_VERSION" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}$'; then
   exit 1
 fi
 
-# ASC credentials check
-MISSING=()
-[ -z "${ASC_API_KEY_ID:-}" ]    && MISSING+=("ASC_API_KEY_ID")
-[ -z "${ASC_API_ISSUER_ID:-}" ] && MISSING+=("ASC_API_ISSUER_ID")
-[ -z "${ASC_API_KEY_PATH:-}" ]  && MISSING+=("ASC_API_KEY_PATH")
-if [ ${#MISSING[@]} -gt 0 ]; then
-  log_error "missing ASC API credentials: ${MISSING[*]}"
-  log_info  "set them in .env — see skills/autobot-upload-build/references/signing-guide.md"
+# ── Apple ID + ASC web session check ──
+# App-record creation uses Apple's private iris API — ASC API keys cannot
+# authenticate it (see AUTH MODEL in the header). We need an Apple ID plus a
+# cached spaceship session (or FASTLANE_SESSION).
+# Capture the inherited env var before the local assignment shadows it.
+_APPLE_ID_FROM_ENV="${APPLE_ID:-}"
+APPLE_ID="$APPLE_ID_ARG"
+[ -z "$APPLE_ID" ] && APPLE_ID="${FASTLANE_USER:-}"
+[ -z "$APPLE_ID" ] && APPLE_ID="$_APPLE_ID_FROM_ENV"
+[ -z "$APPLE_ID" ] && APPLE_ID="$(config_get_or appleId)"
+if [ -z "$APPLE_ID" ]; then
+  log_error "missing Apple ID for App Store Connect login"
+  log_info  "pass --apple-id, export FASTLANE_USER, or run /autobot:setup to store appleId"
   exit 2
 fi
 
-# Expand ~ if the user supplied it literally
-ASC_API_KEY_PATH_EXPANDED="${ASC_API_KEY_PATH/#\~/$HOME}"
-if [ ! -r "$ASC_API_KEY_PATH_EXPANDED" ]; then
-  log_error "ASC_API_KEY_PATH not readable: $ASC_API_KEY_PATH"
+# Session check (skipped in --dry-run — fastlane is never invoked there).
+# A cookie's presence doesn't guarantee validity (~30-day TTL); an expired
+# session is classified at fastlane time as asc_session_expired.
+if [ "$DRY_RUN" -eq 0 ] && [ -z "${FASTLANE_SESSION:-}" ] \
+   && [ ! -f "$HOME/.fastlane/spaceship/$APPLE_ID/cookie" ]; then
+  log_error "no App Store Connect session for $APPLE_ID"
+  log_info  "run once (interactive 2FA, session lasts ~30 days):"
+  log_info  "  fastlane spaceauth -u $APPLE_ID"
+  log_info  "app creation uses Apple's private API — ASC API keys cannot replace this step"
   exit 2
 fi
-ASC_API_KEY_PATH="$ASC_API_KEY_PATH_EXPANDED"
 
 # Ensure fastlane is available (skipped in --dry-run — we never invoke it)
 if [ "$DRY_RUN" -eq 0 ] && ! command -v fastlane &>/dev/null; then
@@ -249,16 +283,8 @@ if [ "$DRY_RUN" -eq 0 ] && ! command -v fastlane &>/dev/null; then
   fi
 fi
 
-# ── Work directory for transient artifacts (auto-cleaned) ──
-WORK_DIR="$(mktemp -d -t autobot-register.XXXXXX)"
 cleanup() {
   local rc=$?
-  if [ -n "${WORK_DIR:-}" ] && [ -d "$WORK_DIR" ]; then
-    # API key JSON contains key_id/issuer_id only — .p8 stays on disk — but
-    # still scrub before rm to defend against unlinked-while-open attacks.
-    find "$WORK_DIR" -type f -exec chmod 600 {} \; 2>/dev/null || true
-    rm -rf "$WORK_DIR"
-  fi
   # If a status write was in flight when we got killed, clean the orphan tmp.
   if [ -n "${AUTOBOT_REGISTER_STATUS_FILE:-}" ]; then
     rm -f "${AUTOBOT_REGISTER_STATUS_FILE}.tmp.$$" 2>/dev/null || true
@@ -279,16 +305,6 @@ for arg in sys.argv[1:]:
 print(json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2))
 ' "$@"
 }
-
-API_KEY_JSON="$WORK_DIR/fastlane_api_key.json"
-( umask 077
-  emit_json \
-    "key_id=$ASC_API_KEY_ID" \
-    "issuer_id=$ASC_API_ISSUER_ID" \
-    "key_filepath=$ASC_API_KEY_PATH" \
-    > "$API_KEY_JSON"
-)
-chmod 600 "$API_KEY_JSON"
 
 write_status() {
   # write_status <result> [reason]  — atomic temp+rename
@@ -325,11 +341,12 @@ if [ "$DRY_RUN" -eq 1 ]; then
   log_info "DRY RUN — would invoke:"
   # Use python3 shlex for safe shell quoting that survives multi-byte chars
   # (bash 3.2 %q on macOS mangles non-ASCII into broken byte escapes).
-  python3 - "$BUNDLE_ID" "$DISPLAY_NAME" "$LANGUAGE" "$APP_VERSION" "$SKU" "$TEAM_ID" <<'PY'
+  python3 - "$BUNDLE_ID" "$DISPLAY_NAME" "$LANGUAGE" "$APP_VERSION" "$SKU" "$TEAM_ID" "$APPLE_ID" <<'PY'
 import shlex, sys
-bid, name, lang, ver, sku, team = sys.argv[1:7]
+bid, name, lang, ver, sku, team, apple_id = sys.argv[1:8]
 parts = [
     "fastlane produce create",
+    f"  --username {shlex.quote(apple_id)}",
     f"  --app_identifier {shlex.quote(bid)}",
     f"  --app_name {shlex.quote(name)}",
     f"  --language {shlex.quote(lang)}",
@@ -338,7 +355,6 @@ parts = [
 ]
 if team:
     parts.append(f"  --team_id {shlex.quote(team)}")
-parts.append("  --api_key_path <tempdir>/fastlane_api_key.json")
 print(" \\\n".join(parts))
 PY
   log_ok "dry-run validation passed"
@@ -354,6 +370,9 @@ export FASTLANE_HIDE_CHANGELOG=1
 export FASTLANE_HIDE_PLUGINS_TABLE=1
 export FASTLANE_DISABLE_COLORS=1
 export FASTLANE_OPT_OUT_USAGE=1
+# On error fastlane appends matching GitHub issue TITLES — arbitrary text that
+# can contain "already being used" etc. and poison the classifier. Hide them.
+export FASTLANE_HIDE_GITHUB_ISSUES=1
 # Non-interactive: fastlane occasionally prompts for a 2FA upgrade or team
 # selection. In CI / Claude Code there is no human; deny stdin entirely.
 export FASTLANE_SKIP_2FA_UPGRADE=1
@@ -361,13 +380,13 @@ export FASTLANE_SKIP_2FA_UPGRADE=1
 set +e
 PRODUCE_OUTPUT="$(
   fastlane produce create \
+    --username "$APPLE_ID" \
     --app_identifier "$BUNDLE_ID" \
     --app_name "$DISPLAY_NAME" \
     --language "$LANGUAGE" \
     --app_version "$APP_VERSION" \
     --sku "$SKU" \
     ${TEAM_ID:+--team_id "$TEAM_ID"} \
-    --api_key_path "$API_KEY_JSON" \
     </dev/null \
     2>&1
 )"
@@ -393,7 +412,7 @@ printf '%s\n' "$PRODUCE_OUTPUT"
 # text (changelogs, progress noise) cannot trip the classifier even if a
 # future fastlane release re-introduces the update banner under our flags.
 error_lines() {
-  printf '%s' "$1" | grep -Ei '^\[!\]|error|warning|already|not available|could not|not authorized|insufficient' || true
+  printf '%s' "$1" | grep -Ei '^\[!\]|error|warning|already|not available|could not|not authorized|unauthorized|insufficient' || true
 }
 
 is_bundle_already_exists() {
@@ -411,7 +430,14 @@ is_bundle_id_taken() {
     'identifier .* is not available|app id .* not available'
 }
 
-is_api_role_insufficient() {
+is_session_expired() {
+  # Expired/missing spaceship session with stdin closed: fastlane tries an
+  # interactive login and dies on EOF, or Apple rejects the stale cookie.
+  error_lines "$1" | grep -Eiq \
+    'invalid username and password|could not login|unable to log ?in|session.*(expired|invalid)|not logged in|two.?(step|factor)|login failed|unauthorized access'
+}
+
+is_permission_denied() {
   error_lines "$1" | grep -Eiq \
     'could not create application|insufficient (privileges|permissions)|not authorized'
 }
@@ -438,9 +464,13 @@ if is_name_collision "$PRODUCE_OUTPUT"; then
 elif is_bundle_id_taken "$PRODUCE_OUTPUT"; then
   REASON="bundle_id_taken"
   log_info "the bundle ID is owned by another Apple Developer team — change the last segment or your prefix"
-elif is_api_role_insufficient "$PRODUCE_OUTPUT"; then
-  REASON="api_key_insufficient_role"
-  log_info "promote the ASC API key to 'App Manager' or 'Admin' and retry"
+elif is_session_expired "$PRODUCE_OUTPUT"; then
+  REASON="asc_session_expired"
+  log_info "the App Store Connect session for $APPLE_ID is expired or invalid"
+  log_info "refresh it once (interactive 2FA, ~30 days valid): fastlane spaceauth -u $APPLE_ID"
+elif is_permission_denied "$PRODUCE_OUTPUT"; then
+  REASON="asc_permission_denied"
+  log_info "the Apple ID's ASC role is too low — promote it to 'App Manager' or 'Admin' and retry"
 fi
 
 write_status "failed" "$REASON"

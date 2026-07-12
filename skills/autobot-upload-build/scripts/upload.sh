@@ -13,7 +13,8 @@
 #   1  usage / input validation error
 #   2  archive missing or xcodebuild unavailable
 #   4  export failed (no IPA produced)
-#   5  export ok but upload failed (IPA exists for manual upload)
+#   5  export ok but upload failed (IPA exists for manual upload) — only after
+#      --retries (default 2) bounded auto-retries of the transient upload class
 set -euo pipefail
 
 # ── Load ASC secrets from .env WITHOUT clobbering already-set vars ──
@@ -46,11 +47,13 @@ INTERNAL_ONLY=1
 NO_UPLOAD=0
 DRY_RUN=0
 TEAM_ID=""
+RETRIES=2
 
 usage() {
   cat <<'USAGE'
 Usage: upload.sh --archive-path <path> [--export-path <dir>] [--method <m>]
-                 [--no-internal-only] [--no-upload] [--team-id <id>] [--dry-run]
+                 [--no-internal-only] [--no-upload] [--team-id <id>]
+                 [--retries <n>] [--dry-run]
 
 Required:
   --archive-path     Path to the .xcarchive (output of autobot-archive-build).
@@ -62,6 +65,9 @@ Optional:
   --no-internal-only Allow external TestFlight distribution. Default: internal-only.
   --no-upload        Export to IPA but skip upload (destination: export).
   --team-id          Apple Developer Team ID (passed to xcodebuild if signing needs it).
+  --retries          Bounded auto-retries for transient upload failures (export OK,
+                     upload failed — ASC 5xx / network). Linear backoff 30s/60s/...
+                     Export/signing failures are never retried. Default: 2.
   --dry-run          Validate inputs and print resolved xcodebuild invocation; do not run.
 
 Environment:
@@ -84,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --export-path)       require_value "$1" "${2:-}"; EXPORT_PATH="$2";  shift 2;;
     --method)            require_value "$1" "${2:-}"; METHOD="$2";       shift 2;;
     --team-id)           require_value "$1" "${2:-}"; TEAM_ID="$2";      shift 2;;
+    --retries)           require_value "$1" "${2:-}"; RETRIES="$2";      shift 2;;
     --no-internal-only)  INTERNAL_ONLY=0;                                 shift 1;;
     --no-upload)         NO_UPLOAD=1;                                     shift 1;;
     --dry-run)           DRY_RUN=1;                                       shift 1;;
@@ -128,6 +135,11 @@ esac
 
 if [ -n "$TEAM_ID" ] && ! printf '%s' "$TEAM_ID" | grep -Eq '^[A-Z0-9]{10}$'; then
   log_error "team ID '$TEAM_ID' is not 10 uppercase alphanumeric characters"
+  exit 1
+fi
+
+if ! printf '%s' "$RETRIES" | grep -Eq '^[0-9]+$'; then
+  log_error "--retries must be a non-negative integer (got: $RETRIES)"
   exit 1
 fi
 
@@ -304,14 +316,32 @@ if [ "$AUTH_METHOD" = "api_key" ]; then
 fi
 [ -n "$TEAM_ID" ] && EXPORT_CMD+=("DEVELOPMENT_TEAM=$TEAM_ID")
 
-set +e
-"${EXPORT_CMD[@]}"
-EXPORT_EXIT=$?
-set -e
+# Transient upload failures (IPA exported, ASC rejected/network — 5xx class) are
+# retried in place up to --retries times. Export/signing failures are NOT retried:
+# they are deterministic, not transient.
+# ponytail: retry re-runs -exportArchive (re-export from the same .xcarchive is
+# cheap vs. archive); switch to an IPA-only uploader if re-export time ever matters.
+ATTEMPT=0
+while :; do
+  set +e
+  "${EXPORT_CMD[@]}"
+  EXPORT_EXIT=$?
+  set -e
 
-# Find IPA regardless of exit code — Apple sometimes returns nonzero for upload
-# failures after IPA was already exported.
-IPA_FILE="$(ls "$EXPORT_PATH"/*.ipa 2>/dev/null | head -1 || true)"
+  # Find IPA regardless of exit code — Apple sometimes returns nonzero for upload
+  # failures after IPA was already exported.
+  IPA_FILE="$(ls "$EXPORT_PATH"/*.ipa 2>/dev/null | head -1 || true)"
+
+  [ $EXPORT_EXIT -eq 0 ] && break
+  if [ -n "$IPA_FILE" ] && [ "$NO_UPLOAD" -eq 0 ] && [ "$ATTEMPT" -lt "$RETRIES" ]; then
+    ATTEMPT=$((ATTEMPT + 1))
+    BACKOFF=$((30 * ATTEMPT))
+    log_warn "upload failed (xcodebuild exit $EXPORT_EXIT) — auto-retry $ATTEMPT/$RETRIES in ${BACKOFF}s"
+    sleep "$BACKOFF"
+    continue
+  fi
+  break
+done
 
 if [ $EXPORT_EXIT -eq 0 ]; then
   if [ "$NO_UPLOAD" -eq 1 ]; then
@@ -325,7 +355,7 @@ if [ $EXPORT_EXIT -eq 0 ]; then
 fi
 
 if [ -n "$IPA_FILE" ] && [ "$NO_UPLOAD" -eq 0 ]; then
-  log_warn "export succeeded but upload failed (xcodebuild exit $EXPORT_EXIT)"
+  log_warn "export succeeded but upload failed (xcodebuild exit $EXPORT_EXIT, after $ATTEMPT auto-retries)"
   log_info "IPA at: $IPA_FILE"
   log_info "manual upload: Xcode Organizer → Distribute App, or Apple Transporter (Mac App Store)"
   write_status "upload_failed" "false" "$IPA_FILE" "xcodebuild_exit_${EXPORT_EXIT}"

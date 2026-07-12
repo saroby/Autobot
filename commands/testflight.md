@@ -24,7 +24,7 @@ allowed-tools:
 
 ## CRITICAL RULES
 
-1. **앱 등록은 자동(멱등)** — deployer 가 Step 1 에서 `autobot-register-app` 을 호출한다. 이미 등록된 앱이면 즉시 통과(`already_exists`), 미등록이면 archive 시작 전에 등록한다. name_collision/bundle_id_taken/api_key_insufficient_role 충돌은 archive 시작 전에 사용자에게 보고하고 중단 — 긴 빌드를 낭비하지 않는다.
+1. **앱 등록은 자동(멱등)** — deployer 가 Step 1 에서 `autobot-register-app` 을 호출한다. 이미 등록된 앱이면 즉시 통과(`already_exists`), 미등록이면 archive 시작 전에 등록한다. name_collision/bundle_id_taken/asc_session_expired/asc_permission_denied 는 archive 시작 전에 사용자에게 보고하고 중단 — 긴 빌드를 낭비하지 않는다.
 2. **`.autobot/build-state.json` 이 존재해야 한다** — 없으면 "이 디렉토리는 Autobot 프로젝트가 아닙니다. `/autobot:mvp`로 먼저 빌드하세요." 출력 후 중단.
 3. **상태 전이 / Gate 실행은 `scripts/pipeline.sh` 만** — `spec/pipeline.json` 의 Phase 6 / Gate 6→7 머신을 그대로 사용.
 4. **CWD 규칙**: 명령은 프로젝트 루트(`build-state.json` 이 있는 디렉토리)에서 실행한다고 가정. `cd` 로 이탈하지 않는다.
@@ -146,7 +146,8 @@ Agent 도구로 deployer 에이전트를 호출한다. deployer 는 다음을 �
 **deployer 가 사용자에게 보고해야 하는 경우:**
 - register 실패 (`name_collision`) → display name 변경 안내. archive 시작 안 함.
 - register 실패 (`bundle_id_taken`) → bundle ID 변경 안내. archive 시작 안 함.
-- register 실패 (`api_key_insufficient_role`) → ASC Key role 승격 안내. archive 시작 안 함.
+- register 실패 (`asc_session_expired` 또는 exit 2) → `fastlane spaceauth -u <apple-id>` 세션 갱신 안내 (2FA 1회, ~30일 유효). archive 시작 안 함.
+- register 실패 (`asc_permission_denied`) → Apple ID 의 ASC role 승격 안내. archive 시작 안 함.
 - upload 가 export 성공 + ASC 5xx 로 실패 (`exit 5`) → IPA 경로 + Transporter/Organizer 안내
 - archive 가 signing 실패 → Xcode → Settings → Accounts 안내
 

@@ -28,6 +28,55 @@ class TestVerifySpecDocsContracts(unittest.TestCase):
 
         self.assertEqual([], errors)
 
+    def test_generic_drift_rejects_unknown_event(self):
+        spec = {"logEvents": {"learning_applied": {}}}
+        docs = [("doc", "run `build-log.sh --event learning_aplied` now")]
+
+        errors = verify_spec_docs.check_prose_generic_drift(
+            spec, docs, pipeline_subs={"run-gate"}
+        )
+
+        self.assertTrue(any("learning_aplied" in e for e in errors), errors)
+
+    def test_generic_drift_rejects_unknown_pipeline_subcommand(self):
+        spec = {"logEvents": {}}
+        docs = [("doc", "then `bash pipeline.sh set-phase-stats --phase 4`")]
+
+        errors = verify_spec_docs.check_prose_generic_drift(
+            spec, docs, pipeline_subs={"start-phase", "advance-phase"}
+        )
+
+        self.assertTrue(any("set-phase-stats" in e for e in errors), errors)
+
+    def test_generic_drift_ignores_prose_words_after_pipeline_sh(self):
+        # "pipeline.sh is ..." in plain prose must not be read as a subcommand —
+        # only code spans (backticks / fenced blocks) are scanned.
+        spec = {"logEvents": {}}
+        docs = [("doc", "pipeline.sh is the only mutation entry point")]
+
+        errors = verify_spec_docs.check_prose_generic_drift(
+            spec, docs, pipeline_subs={"start-phase"}
+        )
+
+        self.assertEqual([], errors)
+
+    def test_generic_drift_rejects_missing_script_path(self):
+        spec = {"logEvents": {}}
+        docs = [("doc", "call `bash $CLAUDE_PLUGIN_ROOT/scripts/no-such-script.sh`")]
+
+        errors = verify_spec_docs.check_prose_generic_drift(
+            spec, docs, pipeline_subs={"run-gate"}
+        )
+
+        self.assertTrue(any("no-such-script.sh" in e for e in errors), errors)
+
+    def test_current_docs_have_no_generic_prose_drift(self):
+        spec = verify_spec_docs.load_spec()
+
+        errors = verify_spec_docs.check_prose_generic_drift(spec)
+
+        self.assertEqual([], errors)
+
     def test_phase_count_handles_fractional_ids(self):
         # Guards the 0.7.2 fractional-phase-id fix: the row counter must include
         # "| 2.5 |". A regression to a \d+-only pattern (or a dropped 2.5 row in

@@ -14,6 +14,7 @@ import_runtime_modules()
 
 from learning_impact import (  # noqa: E402
     QUARANTINE_THRESHOLD,
+    _merge_patterns,
     active,
     grade_build,
     quarantined,
@@ -154,14 +155,35 @@ class TestGradeBuild(unittest.TestCase):
             self.assertEqual(summary["updated"], 0)
             self.assertEqual(summary["reason"], "no_build_state")
 
-    def test_legacy_string_consumed_records_still_grade(self):
-        # Older builds recorded learningsConsumed as plain strings (agent names).
-        # The grader must still attribute outcomes to them via stable_id(phase, rec).
+    def test_legacy_string_records_never_mint_new_items(self):
+        # Bare agent-name strings (legacy records + the gate-visible name
+        # cli.py always appends, incl. first-build sources:[] records) must NOT
+        # create new items — that promoted strings like "architect" into
+        # HIGH-IMPACT LEARNINGS and leaked them to the global store.
         with tempfile.TemporaryDirectory() as tmp:
             proj = Path(tmp)
             _seed(proj, phases={
                 "4": {"status": "completed", "learningsConsumed": ["ui-builder"]}
             })
+            summary = grade_build(proj, "build-001")
+            self.assertEqual(summary["updated"], 0)
+            data = json.loads((proj / ".autobot" / "learnings.json").read_text())
+            self.assertEqual(data["items"], [])
+
+    def test_legacy_string_record_still_grades_preexisting_item(self):
+        # Items minted by older versions keep being graded via
+        # stable_id(phase, agent-name) — only NEW minting is blocked.
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, phases={
+                "4": {"status": "completed", "learningsConsumed": ["ui-builder"]}
+            })
+            legacy_id = stable_id("4", "ui-builder")
+            (proj / ".autobot" / "learnings.json").write_text(json.dumps({
+                "patterns": {},
+                "items": [{"id": legacy_id, "phase": "4", "effect_score": 0,
+                           "last_outcome": "untried", "applied_runs": []}],
+            }))
             summary = grade_build(proj, "build-001")
             self.assertEqual(summary["updated"], 1)
             self.assertEqual(summary["summaries"][0]["outcome"], "helped")
@@ -210,6 +232,44 @@ class TestGradeBuild(unittest.TestCase):
             data = json.loads((proj / ".autobot" / "learnings.json").read_text())
             entry = data["patterns"]["common_build_errors"][0]
             self.assertLessEqual(entry.get("effect_score", 0), QUARANTINE_THRESHOLD)
+
+
+class TestExternalFeedbackMerge(unittest.TestCase):
+    """patterns.external_feedback entries key on `theme` (not `pattern`) and
+    must merge idempotently on the publish hop, with source_apps unioned so the
+    global store can spot the same theme across DIFFERENT apps."""
+
+    def _entry(self, apps: list[str], freq: int = 1, rule: str = "surface primary CTA") -> dict:
+        return {"theme": "Onboarding is confusing", "severity": "high",
+                "source_apps": apps, "sample_quotes": ["confusing"],
+                "suggested_prevention_rule": rule, "frequency": freq}
+
+    def test_same_theme_merges_instead_of_duplicating(self):
+        merged = _merge_patterns(
+            {"external_feedback": [self._entry(["AppA"], freq=2)]},
+            {"external_feedback": [self._entry(["AppB"], freq=1)]},
+        )
+        entries = merged["external_feedback"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["frequency"], 2)  # max, not sum
+        self.assertEqual(entries[0]["source_apps"], ["AppA", "AppB"])  # union
+
+    def test_publish_roundtrip_is_idempotent(self):
+        glob = {"external_feedback": [self._entry(["AppA"])]}
+        proj = {"external_feedback": [self._entry(["AppA"])]}
+        once = _merge_patterns(glob, proj)
+        twice = _merge_patterns(once, proj)
+        self.assertEqual(once, twice)
+        self.assertEqual(len(twice["external_feedback"]), 1)
+
+    def test_distinct_themes_both_survive(self):
+        other = dict(self._entry(["AppB"]), theme="Crash on rotation")
+        merged = _merge_patterns(
+            {"external_feedback": [self._entry(["AppA"])]},
+            {"external_feedback": [other]},
+        )
+        themes = {e["theme"] for e in merged["external_feedback"]}
+        self.assertEqual(themes, {"Onboarding is confusing", "Crash on rotation"})
 
 
 if __name__ == "__main__":

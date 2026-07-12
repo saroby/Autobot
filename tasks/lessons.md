@@ -135,3 +135,18 @@
 - **실패 모드**: Autobot 평가에서 비결정적 critique / visual judge / P1 warning 을 기본 `/autobot:mvp` 경로의 hard-fail 또는 자동 재작업 루프로 올리자고 제안하면, "질문 없이 끝까지 빌드"라는 시스템 정체성과 충돌한다. 과거 visual judge 는 false-positive 가 circuit breaker 를 태우지 않도록 hard-fail 에서 DEGRADED-only 로 이미 후퇴했다.
 - **검출 신호**: `scripts/gate_checks/build.py` 의 visual judge 주석처럼, hard-fail 이 Phase 5 retryCount 증가와 global circuit breaker trip 으로 이어져 자율 빌드를 멈춘다는 명시적 설계 근거가 있는데도 이를 무시한 우선순위 제안.
 - **방지 규칙**: 기본 경로는 자율 완주를 보존한다. 비결정적·미보정 품질 신호는 기본 경로에서 DEGRADED/reporting 으로 제한하고, 엄격화는 `--quality=max` 같은 opt-in 모드에 격리한다. 자동 재실행은 quality-max 에서도 1회 제한 + DEGRADED fallback 으로 circuit breaker 를 보호한다.
+
+## 전체 감사에서 발견 (2026-07-12)
+
+### 25. 존재한 적 없는 CLI 플래그가 "성공 연극"에 가려짐
+- **실패 모드**: `register-app.sh` 의 `fastlane produce create --api_key_path` 는 produce 에 존재한 적 없는 옵션 (produce 는 Apple ID 세션 전용 — 앱 생성은 공개 ASC API 에 endpoint 자체가 없음). 결정론적 경로는 항상 exit 4 로 죽었지만, 에이전트의 임기응변 + 과거 사람이 만든 spaceship 세션 잔광으로 전체 실행은 "성공"해 보였다. status JSON 스키마가 스크립트의 write_status 와 다른 것(에이전트 수기 작성)이 결정적 증거였다.
+- **검출 신호**: (a) 결정적 스크립트가 항상 실패하는데 상위 플로우는 성공 (b) 산출물 스키마가 스크립트 출력과 불일치 (c) 성공 시각과 인간 로그인 아티팩트(쿠키 mtime)의 일치.
+- **방지 규칙**: 외부 도구 호출 스크립트는 dry-run 이 아니라 **실제 플래그 집합을 도구의 --help/소스에 대조**하는 스모크를 갖춘다. 단계가 성공하면 "의도된 경로로 성공했는지"(스크립트가 쓴 status 파일인지)까지 확인한다.
+
+### 26. env 변수 strip 만으로는 테스트 격리가 안 됨 — 스크립트가 사용자 전역 설정을 재로드
+- **실패 모드**: `test_app_register.py` 가 ASC env 3종을 지웠지만 스크립트가 `~/.autobot/.env` 를 소스해 실 자격증명으로 진짜 fastlane 을 호출. 같은 클래스로 테스트 스위트가 실 `~/.config/autobot/learnings.json` 을 오염시킨 사례도 이번 감사에서 확인 (WS3).
+- **방지 규칙**: 사용자 전역 설정을 self-load 하는 스크립트의 테스트는 env strip 이 아니라 **로드 경로 자체를 샌드박스** (`AUTOBOT_CONFIG_DIR`/`XDG_CONFIG_HOME`/`HOME`/cwd 를 임시 디렉토리로). 이중 방어선: 스크립트 쪽에도 publish 차단 env 가드.
+
+### 27. 레퍼런스 스니펫의 비컴파일 API 는 매 빌드 build-fix 예산을 태움
+- **실패 모드**: `references/ios-ux-style.md` 등 권위 레퍼런스가 실존하지 않는 Liquid Glass API(`.buttonStyle(.liquidGlass)`, `.glassEffect(tint:)`)를 예시로 제공 → 에이전트가 그대로 생성 → 매 빌드 컴파일 에러 → buildFixLoop 소모.
+- **방지 규칙**: 레퍼런스에 넣는 코드 스니펫은 `swiftc -typecheck` (실제 SDK 대상) 로 컴파일 검증 후 수록한다. good/bad 쌍으로 검증해 정정 방향도 확인 (0.11.3 에서 `.buttonStyle(.glass)` / `.glassEffect(.regular.tint(...))` 로 정정, 실컴파일 확인 완료).

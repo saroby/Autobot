@@ -108,6 +108,55 @@ def check_no_tabbar_safearea_smells(proj: Path, app: str, state: dict) -> list[d
     return [_ok("tabbar_safearea_smell", True, "no bottom-safearea anti-patterns found")]
 
 
+def check_no_hardcoded_font_sizes(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 4→5 — deterministic Dynamic Type accessibility smell.
+
+    `.font(.system(size: N))` pins a fixed point size, so the text ignores the
+    user's Dynamic Type setting — the accessibility contract that until now
+    lived ONLY in prose (ios-ux-style.md / ui-builder.md). Same scan shape as
+    check_no_tabbar_safearea_smells: Views/**/*.swift, comment lines excluded.
+
+    A line carrying an inline justification comment (`// ...`) is allowed —
+    the escape hatch for genuinely fixed-size art/branding text.
+
+    DEGRADED-only, NEVER a hard fail (heuristic grep; a false positive must
+    not consume the circuit breaker — 철칙 1). Icon-only-Button label checks
+    are deliberately deferred (higher false-positive risk).
+    """
+    views = proj / app / "Views"
+    if not views.is_dir():
+        return [_ok("no_hardcoded_font_sizes", True, "no Views/ dir", skipped=True)]
+
+    pattern = re.compile(r"\.font\(\s*\.system\(\s*size:")
+    violations: list[str] = []
+    for swift in sorted(views.rglob("*.swift")):
+        try:
+            lines = swift.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for lineno, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if stripped.startswith("//"):
+                continue
+            if pattern.search(line) and "//" not in line:
+                violations.append(f"{swift.relative_to(proj)}:{lineno}")
+    if not violations:
+        return [_ok(
+            "no_hardcoded_font_sizes", True,
+            "no unjustified .font(.system(size:)) in Views/ (Dynamic Type respected)",
+        )]
+    detail = ", ".join(violations[:5])
+    if len(violations) > 5:
+        detail += f" (+{len(violations) - 5} more)"
+    return [_ok(
+        "no_hardcoded_font_sizes", False,
+        f"{len(violations)} hardcoded font size(s) defeat Dynamic Type: {detail} "
+        f"— use semantic styles (<Module>Font.* / .font(.headline)) or add an "
+        f"inline `// reason` comment. DEGRADED (not a hard fail).",
+        skipped=True, degraded=True,
+    )]
+
+
 def check_models_checksum_matches(proj: Path, app: str, state: dict) -> list[dict]:
     script = SCRIPT_DIR / "snapshot-contracts.sh"
     try:

@@ -54,7 +54,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 4. **primary 모델 우선 (필수)**: `app-intent.json.primaryScreenTitle` 이 렌더하는 화면의 모델을 반드시 채운다. 주변 모델만 채우면 홈이 비어 vision_judge 가 깨진다.
 5. **`@Relationship` 그래프까지 채움**: 관계가 있으면 부모–자식을 함께 만들어 연결한다 (예: 글에 댓글, 앨범에 사진). 그래야 detail 화면도 산다.
 6. **데이터 품질**: 도메인에 현실적인 카피/값으로 화면을 채울 만큼 (보통 8–12 개). `"Sample"`, `"Item 1"`, `lorem ipsum` 같은 placeholder 금지 — 첫인상이 곧 전문성이다.
-7. 마지막에 `do { try context.save() } catch { assertionFailure(...) }` — `try?`/`try!` 금지(Phase 5 가 신규 `try?` 0건을 grep). seed 실패는 빈 화면이므로 loud fail 이 옳고, save 성공 후에만 seed-once 플래그를 세운다.
+7. 마지막에 `do { try context.save() } catch { assertionFailure(...) }` — `try?`/`try!` 금지 (quality-engineer 의 Phase 5 체크리스트가 비-테스트 코드 신규 `try?` 0건을 확인한다). seed 실패는 빈 화면이므로 loud fail 이 옳고, save 성공 후에만 seed-once 플래그를 세운다.
 
 ```swift
 import SwiftData

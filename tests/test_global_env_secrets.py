@@ -111,20 +111,16 @@ class ConfigSetEnvTests(unittest.TestCase):
 class DeployEnvPrecedenceTests(unittest.TestCase):
     """register-app.sh --dry-run: precedence env > project .env > global .env.
 
-    Probe trick: point the .p8 path at a readable file via the layer under test
-    and an unreadable (missing) file via the lower-precedence layer. If the
-    higher layer wins, --dry-run reaches 'dry-run validation passed'; if the
-    lower layer wins, the readability check fails with exit 2.
+    Probe: seed FASTLANE_USER with a different value per layer. The dry-run
+    output prints the resolved `--username <value>`, directly exposing which
+    layer won. (The old probe — readable vs unreadable .p8 — died with the
+    ASC-key requirement: app registration now authenticates via Apple ID web
+    session, not the API key.)
     """
-
-    def _seed_global(self, gdir, key_path):
-        config(["set-env", "ASC_API_KEY_ID", "GLOBALKEY0"], config_dir=gdir)
-        config(["set-env", "ASC_API_ISSUER_ID", "g-iss"], config_dir=gdir)
-        config(["set-env", "ASC_API_KEY_PATH", str(key_path)], config_dir=gdir)
 
     def _run(self, workdir, gdir, env_extra=None):
         env = os.environ.copy()
-        for k in ("ASC_API_KEY_ID", "ASC_API_ISSUER_ID", "ASC_API_KEY_PATH"):
+        for k in ("FASTLANE_USER", "APPLE_ID", "FASTLANE_SESSION"):
             env.pop(k, None)
         env["AUTOBOT_CONFIG_DIR"] = str(gdir)
         if env_extra:
@@ -135,24 +131,23 @@ class DeployEnvPrecedenceTests(unittest.TestCase):
             cwd=str(workdir), env=env, capture_output=True, text=True,
         )
 
+    def _assert_username(self, r, expected):
+        self.assertIn("dry-run validation passed", r.stdout, r.stdout + r.stderr)
+        self.assertIn(f"--username {expected}", r.stdout, r.stdout)
+
     def test_global_env_alone_is_used(self):
         with tempfile.TemporaryDirectory() as g, tempfile.TemporaryDirectory() as w:
             g, w = Path(g), Path(w)
-            (g / "real.p8").write_text("k")
-            self._seed_global(g, g / "real.p8")
+            config(["set-env", "FASTLANE_USER", "global@example.com"], config_dir=g)
             r = self._run(w, g)
-            self.assertIn("dry-run validation passed", r.stdout, r.stdout + r.stderr)
+            self._assert_username(r, "global@example.com")
 
     def test_inherited_env_beats_global(self):
         with tempfile.TemporaryDirectory() as g, tempfile.TemporaryDirectory() as w:
             g, w = Path(g), Path(w)
-            (w / "envkey.p8").write_text("k")
-            self._seed_global(g, g / "MISSING.p8")  # global points at unreadable
-            r = self._run(w, g, env_extra={
-                "ASC_API_KEY_ID": "ENVKEY1234", "ASC_API_ISSUER_ID": "env-iss",
-                "ASC_API_KEY_PATH": str(w / "envkey.p8"),
-            })
-            self.assertIn("dry-run validation passed", r.stdout, r.stdout + r.stderr)
+            config(["set-env", "FASTLANE_USER", "global@example.com"], config_dir=g)
+            r = self._run(w, g, env_extra={"FASTLANE_USER": "env@example.com"})
+            self._assert_username(r, "env@example.com")
 
     def test_export_form_project_env_is_loaded(self):
         # signing-guide.md tells users to write `export KEY=...`. A hand-written
@@ -160,27 +155,21 @@ class DeployEnvPrecedenceTests(unittest.TestCase):
         # loader strips a leading `export ` before extracting the key).
         with tempfile.TemporaryDirectory() as g, tempfile.TemporaryDirectory() as w:
             g, w = Path(g), Path(w)
-            (w / "k.p8").write_text("k")
             (w / ".env").write_text(
                 "# project creds\n"
-                'export ASC_API_KEY_ID="PROJ123456"\n'
-                'export ASC_API_ISSUER_ID="proj-iss"\n'
-                f'export ASC_API_KEY_PATH="{w / "k.p8"}"\n'
+                'export FASTLANE_USER="proj@example.com"\n'
             )
-            r = self._run(w, g)  # global config dir empty → only project .env supplies creds
-            self.assertIn("dry-run validation passed", r.stdout, r.stdout + r.stderr)
+            r = self._run(w, g)  # global config dir empty → only project .env supplies the Apple ID
+            self._assert_username(r, "proj@example.com")
 
     def test_project_env_beats_global(self):
         with tempfile.TemporaryDirectory() as g, tempfile.TemporaryDirectory() as w:
             g, w = Path(g), Path(w)
-            (w / "projkey.p8").write_text("k")
-            self._seed_global(g, g / "MISSING.p8")
-            # Project ./.env (written via AUTOBOT_ENV_FILE override) points readable.
-            config(["set-env", "ASC_API_KEY_ID", "PROJKEY111"], env_file=w / ".env")
-            config(["set-env", "ASC_API_ISSUER_ID", "p-iss"], env_file=w / ".env")
-            config(["set-env", "ASC_API_KEY_PATH", str(w / "projkey.p8")], env_file=w / ".env")
+            config(["set-env", "FASTLANE_USER", "global@example.com"], config_dir=g)
+            # Project ./.env (written via AUTOBOT_ENV_FILE override) wins over global.
+            config(["set-env", "FASTLANE_USER", "proj@example.com"], env_file=w / ".env")
             r = self._run(w, g)
-            self.assertIn("dry-run validation passed", r.stdout, r.stdout + r.stderr)
+            self._assert_username(r, "proj@example.com")
 
 
 if __name__ == "__main__":

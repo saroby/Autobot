@@ -68,6 +68,23 @@ class TestLearningApplied(IsolatedProjectCase):
         self.assertIn("pin the design-system module import", rules)
         self.assertTrue(all(r.get("id") for r in rule_recs))
 
+    def test_first_build_empty_sources_records_agent(self):
+        # First build (no learning files): learning-bootstrap.md now instructs
+        # recording with sources:[] and NO --rule instead of skipping — the
+        # gate's learningsConsumed requirement is satisfied without fabricating
+        # fake rules ("clean first build").
+        result = run_build_log(
+            "--event", "learning_applied",
+            "--phase", "1", "--agent", "architect",
+            "--detail", '{"sources":[]}',
+            project_dir=self.project_dir,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        consumed = self.state()["phases"]["1"].get("learningsConsumed", [])
+        self.assertIn("architect", consumed)
+        # No structured rule records — nothing for grading to mint items from.
+        self.assertEqual([c for c in consumed if isinstance(c, dict)], [])
+
     def test_rule_records_dedupe_by_id(self):
         for _ in range(3):
             run_build_log(

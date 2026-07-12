@@ -1,7 +1,7 @@
 ---
 name: meta
-description: "App Store 텍스트 메타데이터(이름·설명·키워드·릴리스 노트 등)를 앱 컨텍스트로 자동 생성하여 `fastlane/metadata/` 에 저장합니다. 작성 후 결과를 보고하고 ASC 업로드 여부를 묻습니다."
-argument-hint: "(인자 없음 — 현재 디렉토리의 build-state.json 컨텍스트 사용)"
+description: "App Store 텍스트 메타데이터(이름·설명·키워드·릴리스 노트 등)와 연령등급 config 를 앱 컨텍스트로 자동 생성하여 `fastlane/metadata/` 에 저장합니다. 작성 후 결과를 보고하고 ASC 업로드 여부를 묻습니다 (`--upload`/`--no-upload` 명시 시 질문 생략)."
+argument-hint: "[--upload | --no-upload] (생략 시 업로드 여부를 AskUserQuestion 으로 질문)"
 allowed-tools:
   - Read
   - Write
@@ -22,8 +22,9 @@ allowed-tools:
 
 1. **`.autobot/build-state.json` 이 있어야 한다** — 없으면 "이 디렉토리는 Autobot 프로젝트가 아닙니다." 출력 후 중단.
 2. **ASC 길이 한도 enforce** — `autobot-generate-metadata/scripts/write-metadata.sh` 가 모든 필드를 검증. 한 개라도 초과면 어떤 파일도 안 쓰임 (atomic-all-or-nothing).
-3. **업로드는 사용자 확인 후** — `AskUserQuestion` 으로 명시적 yes 받은 뒤에만 `autobot-upload-metadata` 호출.
+3. **업로드는 사용자 확인 후** — `AskUserQuestion` 으로 명시적 yes 받은 뒤에만 `autobot-upload-metadata` 호출. 단, 인자에 `--upload` 또는 `--no-upload` 가 명시된 경우(체인/비대화형 사용) 그 플래그가 답변을 대신하며 질문을 생략한다.
 4. **CWD 규칙**: 프로젝트 루트(`build-state.json` 위치)에서 실행. `cd` 로 이탈하지 않음.
+5. **연령등급 config 동반 필수** — 텍스트 메타데이터만 쓰고 `app_store_rating_config.json` 을 빠뜨리면 이후 `/autobot:app-review` 의 심사 제출이 `age_rating_missing` 으로 결정적으로 중단된다. Step 3b 를 건너뛰지 않는다.
 
 ## Step 0: 사전 검증
 
@@ -112,6 +113,41 @@ rm -f "/tmp/autobot-meta-$$.json"
 - `failed` (`reason: field=X len=N max=M`) → 해당 필드 줄여서 LLM 이 재작성 후 재호출 (최대 2회)
 - `failed` (다른 reason) → 사용자에게 보고하고 중단
 
+## Step 3b: 연령등급 config 작성
+
+텍스트 메타데이터와 함께 `fastlane/metadata/app_store_rating_config.json` 을 항상 기록한다. `autobot-upload-metadata` 가 이 경로를 자동 감지해 `fastlane deliver` 에 전달하고, deliver 가 ASC 연령등급 설문을 같은 호출에서 답한다. 이 파일이 없으면 `/autobot:app-review` 의 심사 제출(Phase G)이 `age_rating_missing` 으로 중단된다.
+
+```bash
+cat > fastlane/metadata/app_store_rating_config.json <<'JSON'
+{
+  "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+  "contests": "NONE",
+  "gamblingSimulated": "NONE",
+  "gunsOrOtherWeapons": "NONE",
+  "horrorOrFearThemes": "NONE",
+  "matureOrSuggestiveThemes": "NONE",
+  "medicalOrTreatmentInformation": "NONE",
+  "profanityOrCrudeHumor": "NONE",
+  "sexualContentGraphicAndNudity": "NONE",
+  "sexualContentOrNudity": "NONE",
+  "violenceCartoonOrFantasy": "NONE",
+  "violenceRealistic": "NONE",
+  "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+  "advertising": false,
+  "ageAssurance": false,
+  "gambling": false,
+  "healthOrWellnessTopics": false,
+  "lootBox": false,
+  "messagingAndChat": false,
+  "parentalControls": false,
+  "unrestrictedWebAccess": false,
+  "userGeneratedContent": false
+}
+JSON
+```
+
+**모든 필드를 명시한다** — 13개 content-descriptor enum (`NONE`) + 9개 capability boolean (`false`). ASC 는 누락 필드를 '미응답'으로 취급해 `age_rating_missing` 을 재발시킨다. 위는 기본 Autobot 스캐폴드용 4+/무해 콘텐츠 답변 세트. 앱에 해당 콘텐츠가 명백히 있을 때만 조정하며, derive-adjust 규칙(어떤 근거에 어떤 필드를 올리는지)은 `skills/autobot-app-review/SKILL.md` Phase B step 2b 가 SSOT — 여기 복제하지 않는다.
+
 ## Step 4: 결과 보고
 
 `fastlane/metadata/` 를 스캔하고 사용자에게 출력. 각 필드의 character count + 한도까지 함께:
@@ -131,15 +167,21 @@ root/
   copyright         "© 2026 Axiom"
   primary_category  HEALTH_AND_FITNESS
 
+app_store_rating_config.json  ✓ (기본 4+ 답변 세트, 13 enum + 9 boolean)
+
 description 미리보기 (첫 3줄):
   런타임은 러닝, 사이클링, 등산을 한 곳에서 기록하고
   친구와 비교할 수 있는 피트니스 앱입니다.
   ...
 ```
 
-## Step 5: 업로드 여부 확인 — `AskUserQuestion`
+## Step 5: 업로드 여부 확인
 
-**필수**: 사용자 명시 yes 받기 전엔 절대 자동 업로드하지 않는다.
+**플래그가 명시된 경우 (비대화형/체인 사용) — 질문 생략:**
+- 인자에 `--upload` → Step 6 으로 직행
+- 인자에 `--no-upload` → Step 7 로 직행
+
+**플래그가 없으면 `AskUserQuestion` (기본 동작)** — 사용자 명시 yes 받기 전엔 절대 자동 업로드하지 않는다.
 
 ```
 Question: "메타데이터를 지금 App Store Connect 에 업로드할까요?"
@@ -194,7 +236,8 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-metadata/scripts/upload-metadata
 ## Output
 
 - `fastlane/metadata/<locale>/*.txt` + `fastlane/metadata/*.txt` (root) — 실제 메타데이터 파일
+- `fastlane/metadata/app_store_rating_config.json` — 연령등급 config (Step 3b, 항상 작성)
 - `.autobot/metadata-status.json` — 생성 결과 (atomic write)
 - `.autobot/metadata-upload-status.json` — 업로드 결과 (업로드 단계 진행 시만)
 
-Do NOT ask questions during Step 1-4. The single `AskUserQuestion` is at Step 5 (upload decision). All other decisions (locale, field content, retry on length violation) are autonomous.
+Do NOT ask questions during Step 1-4. The single `AskUserQuestion` is at Step 5 (upload decision), and it is skipped entirely when `--upload` / `--no-upload` is passed. All other decisions (locale, field content, rating config defaults, retry on length violation) are autonomous.

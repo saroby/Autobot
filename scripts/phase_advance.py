@@ -199,6 +199,9 @@ def _advance_phase_core(args: argparse.Namespace) -> AdvanceResult:
             phase_state.pop("failedAt", None)
             phase_state.pop("skippedAt", None)
             phase_state.pop("error", None)
+            # Success resets the retry counter (consecutive-failure breaker
+            # semantics — see transitions.update_phase_status).
+            phase_state.pop("retryCount", None)
             # Soft-gate failure information lives in gates[gate_id].status
             # (already written above as "soft_failed"); no per-phase mirror.
 

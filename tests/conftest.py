@@ -18,6 +18,21 @@ from pathlib import Path
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PLUGIN_DIR / "scripts"
 
+# ── Global learning-store isolation (suite-wide, import-time) ──
+# learning_impact.grade_build() publishes to the host-wide store under
+# XDG_CONFIG_HOME (or ~/.config). Tests must NEVER touch the developer's real
+# store — that is exactly how fixtures ("good rule", "always pin the sdk")
+# leaked into ~/.config/autobot/learnings.json. unittest has no pytest-style
+# autouse fixtures, so conftest import time is the earliest hook shared by
+# every test module (they all `from conftest import ...`). _scoped_env() copies
+# os.environ, so subprocess-driven tests inherit the isolation too.
+# Defense line 2: tests/run_tests.sh exports the same vars for the discover
+# entrypoint, and grade_build honors AUTOBOT_NO_GLOBAL_PUBLISH directly.
+if not os.environ.get("AUTOBOT_TEST_XDG_ISOLATED"):
+    os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="autobot-tests-xdg-")
+    os.environ["AUTOBOT_TEST_XDG_ISOLATED"] = "1"
+os.environ.setdefault("AUTOBOT_NO_GLOBAL_PUBLISH", "1")
+
 
 def import_runtime_modules():
     """Insert SCRIPTS_DIR into sys.path so test modules can import runtime."""

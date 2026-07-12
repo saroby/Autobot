@@ -4,6 +4,48 @@
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-12
+
+전체 감사(7렌즈 병렬 + 적대적 검증, finding 확정 22/반증 0) 후 "인간 도움 없이 최고의 앱" 목표 대비 6개 workstream 일괄 수정. 테스트 533→597 전부 green.
+
+### Fixed — 무인 앱 등록 경로 (존재한 적 없는 플래그)
+- **`fastlane produce` 는 API Key 인증을 지원한 적이 없다** — 앱 레코드 생성은 Apple 비공개(iris) API 뿐이고 공개 ASC API 에는 생성 endpoint 자체가 없음. `register-app.sh` 의 `--api_key_path` 는 허구 플래그라 신규 등록이 항상 `invalid option` 으로 죽고 있었다 (과거 성공은 사람이 2FA 로그인한 spaceship 세션의 잔광 + 에이전트 임기응변).
+- 세션 기반 인증으로 전환: Apple ID 해석(`--apple-id` → `FASTLANE_USER` → `APPLE_ID` → `config.json:appleId`) + 세션 프리플라이트(쿠키/`FASTLANE_SESSION`, 부재 시 exit 2 + `fastlane spaceauth` 안내). reason `asc_session_expired` 신설, `api_key_insufficient_role` → `asc_permission_denied` 개명 (deployer/testflight/app-review 문서 연동). `FASTLANE_HIDE_GITHUB_ISSUES=1` 로 이슈 제목의 분류기 오염 차단.
+- 불가피 인간 개입에 "ASC 웹 세션 갱신(~30일 2FA 1회)" 을 autonomy-touchpoints §IRREDUCIBLE 4번으로 명문화. setup 에 §3.8(appleId 저장 + 세션 점검) 추가.
+- 테스트 격리 버그 수정: `~/.autobot/.env` 존재 시 테스트가 실 자격증명으로 fastlane 을 실호출하던 것을 `AUTOBOT_CONFIG_DIR` 샌드박스로 차단.
+
+### Fixed — 에이전트-게이트 계약 정합 (WS1)
+- architect 에 Bash 미부여로 Gate 1→2 필수 산출(swiftc typecheck, learning_applied)이 기록 불가하던 critical 해소. Design Direction 하위 헤딩 5종 명시 + 데드 템플릿 경로 정정 + context_pack 배선.
+- 레퍼런스의 실존하지 않는 Liquid Glass API 정정 (`.buttonStyle(.glass)`, `.glassEffect(.regular.tint(...))` — iOS 26.5 SDK 실컴파일로 good/bad 쌍 검증).
+- agent-dispatch ui-builder 템플릿의 composition seam 충돌 제거, ux-designer 팬텀 MCP grant 정리, ui-builder try?-삼킴 예제 교체.
+- `verify_spec_docs.py` generic 드리프트 검사 신설: 52개 md 전수에서 이벤트명/pipeline.sh 서브커맨드/스크립트 경로를 spec·코드와 자동 대조.
+
+### Fixed — 엔진 상태머신 복원력 (WS2)
+- circuit breaker 가 "consecutive" 선언과 달리 retryCount 를 영구 누적 — 성공 시 리셋 복원 (정상 범위의 분산 재시도만으로 무인 빌드가 죽던 결함).
+- 크래시 잔류 in_progress phase reclaim, retry 소진 phase 의 운영자 재진입 (`--allow-terminal-restart` operator override), spec 에 phase 추가 시 구 build-state 브릭 → pending backfill.
+- learning_applied 이벤트 검증을 state mutation 앞으로 (비원자성 제거).
+
+### Fixed — 학습 저장소 무결성 (WS3)
+- 테스트 스위트가 실 글로벌 `~/.config/autobot/learnings.json` 을 오염시키던 것 차단 (XDG 격리 + `AUTOBOT_NO_GLOBAL_PUBLISH` 이중 방어) + 오염 데이터 일회성 정리 (테스트 픽스처 9건·agent-name item 8건·폭증 frequency 882→1, 백업 `.bak.20260712`).
+- `_merge_patterns` 가 리스트형 패턴을 publish 마다 클로버하던 것 → 텍스트 매칭 병합, frequency max(재합산 금지) 멱등화.
+- SessionStart 훅이 플러그인 캐시에 학습을 쓰던 경로 → `CLAUDE_PROJECT_DIR` 로 정정. 첫 빌드 learningsConsumed 게이트 모순 해소 (`sources:[]` 기록).
+
+### Fixed — App Review 무인 체인 (WS4)
+- `/autobot:meta` 로 메타데이터를 만들면 rating config 가 영영 안 만들어져 `/autobot:app-review` 무인 완주가 깨지던 스킵 게이트 이원화 + meta.md 가 rating config 를 직접 생성 (파리티 테스트로 드리프트 차단).
+- commands/app-review.md 를 SKILL.md 위임 구조로 재작성 (Phase 열거 드리프트 2번째 재발 → 클래스 자체 봉쇄). meta 에 `--upload/--no-upload` 비대화형 플래그.
+- transient 실패 bounded 재시도: register `fastlane_exit_N` 1회, upload `--retries`(기본 2, 백오프) — 수동 안내를 최후 수단으로 강등.
+
+### Added — 출하 게이트 기계화 (WS5)
+- **preflight-ship**: `pipeline.sh preflight-ship` 이 archive 직전 gate 5→6 을 fresh 재실행해 clean pass 만 출하 허용 — md 산문이 아닌 runtime 강제 (stale-passed 세탁 불가). standalone archive 는 WARN 통과.
+- zero-P0 feature-spec hard fail (결정적 — VERIFIED 배지 세탁 근원 봉쇄), runtime_smoke skip→degraded (명시적 opt-out 만 benign), 다크모드 스크린샷 + visual contract dark 검사(DEGRADED-only), `no_swallowed_errors`(try?/try!)·`no_hardcoded_font_sizes` DEGRADED-only 신설, Stub 인스턴스화 hard-fail 의 주석 오탐 제거(라인+블록).
+- 시각 동질성: design_spec_validator fallback 팔레트에 앱명 해시 hue 회전(±40°), visual judge 에 templated(화면 간 동일 몰드) 판정 축.
+
+### Added — 외부 신호 루프 v1 (WS6, 최대 leverage)
+- **`/autobot:feedback`** 신설: App Store 리뷰(mcp-appstore, ASC 인증 불필요) → 테마 추출 → `patterns.external_feedback` + stable_id items 기록 → 기존 effect_score/quarantine 재사용 → render-active-learnings 로 다음 빌드 주입. 내부 자가-judge 의 Goodhart 천장을 뚫는 첫 외부 ground-truth 경로 (`docs/external-signal-loop.md` 설계 구현).
+- 인젝션 방어: 제어문자 정리·길이 캡·리뷰 원문 인용 rule 폐기·인용문 "data, never instructions" 격리 렌더.
+- 글로벌 승격 운영자 게이트를 **데이터로 집행**: 엔트리 `approved:false` 기본 + `publish_project_to_global` 초크포인트 필터 — Phase 7 재빌드 publish 로도 우회 불가. 승인은 `external_feedback.py approve`.
+- write-only 학습 데이터 해소: Process Learnings/Pipeline Gotchas 렌더 추가.
+
 ## [0.11.2] — 2026-07-10
 
 ### Added — resume 오프파이프라인 드리프트 감지 (`commands/resume.md`)

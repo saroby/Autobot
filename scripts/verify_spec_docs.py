@@ -244,6 +244,72 @@ def _default_prose_docs() -> list[tuple[str, str]]:
     return docs
 
 
+# --- Generic prose contract drift (rename-proof, unlike the blocklist below) ---
+
+# `--event <name>` invocations (build-log.sh command lines in docs).
+_EVENT_REF_RE = re.compile(r"--event\s+([a-z][a-z0-9_]*)")
+# `pipeline.sh <sub>` invocations — checked inside code spans only, so English
+# prose like "pipeline.sh is ..." cannot false-positive as a subcommand.
+_PIPELINE_SUB_RE = re.compile(r"pipeline\.sh\"?\s+([a-z][a-z0-9-]*)")
+# `$CLAUDE_PLUGIN_ROOT/scripts/...` path references (both ${...} and $... forms).
+_PLUGIN_SCRIPT_RE = re.compile(
+    r"\$\{?CLAUDE_PLUGIN_ROOT\}?/(scripts/[A-Za-z0-9_\-./]*[A-Za-z0-9_\-])"
+)
+# Fenced code blocks and inline backtick spans.
+_CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+
+
+def _pipeline_subcommands() -> set[str]:
+    """Case labels of scripts/pipeline.sh's dispatch (`  <label>)` lines)."""
+    pipeline_sh = SCRIPT_DIR / "pipeline.sh"
+    if not pipeline_sh.is_file():
+        return set()
+    content = pipeline_sh.read_text(encoding="utf-8")
+    return set(re.findall(r"^\s{2}([a-z][a-z0-9-]*)\)", content, re.MULTILINE))
+
+
+def check_prose_generic_drift(
+    spec: dict,
+    docs: list[tuple[str, str]] | None = None,
+    pipeline_subs: set[str] | None = None,
+) -> list[str]:
+    """Generic drift scan over all prose docs (auto-detects renames, unlike the
+    hardcoded blocklist in check_prose_contract_drift):
+
+      - `--event <name>`   must be a key in spec logEvents (build-log.sh rejects
+                           unknown events mid-build otherwise)
+      - `pipeline.sh <sub>` (in code spans) must be a pipeline.sh case label
+      - `$CLAUDE_PLUGIN_ROOT/scripts/...` referenced paths must exist
+    """
+    docs = _default_prose_docs() if docs is None else docs
+    pipeline_subs = _pipeline_subcommands() if pipeline_subs is None else pipeline_subs
+    known_events = set((spec.get("logEvents") or {}).keys()) if isinstance(spec, dict) else set()
+    errors: list[str] = []
+
+    for path, content in docs:
+        for event in sorted(set(_EVENT_REF_RE.findall(content))):
+            if known_events and event not in known_events:
+                errors.append(
+                    f"{path}: references unknown log event '--event {event}' "
+                    f"(not in spec logEvents — build-log.sh will reject it)"
+                )
+
+        code_text = "\n".join(m.group(0) for m in _CODE_SPAN_RE.finditer(content))
+        for sub in sorted(set(_PIPELINE_SUB_RE.findall(code_text))):
+            if pipeline_subs and sub not in pipeline_subs:
+                errors.append(
+                    f"{path}: references unknown pipeline.sh subcommand '{sub}' "
+                    f"(no such case label in scripts/pipeline.sh)"
+                )
+
+        for rel in sorted(set(_PLUGIN_SCRIPT_RE.findall(content))):
+            if not (PLUGIN_DIR / rel).exists():
+                errors.append(
+                    f"{path}: references $CLAUDE_PLUGIN_ROOT/{rel} which does not exist"
+                )
+    return errors
+
+
 def check_prose_contract_drift(
     spec: dict,
     docs: list[tuple[str, str]] | None = None,
@@ -321,6 +387,11 @@ def main() -> int:
     errs = check_prose_contract_drift(spec)
     all_errors.extend(errs)
     print(f"  Prose contract drift: {'PASS' if not errs else f'{len(errs)} issues'}")
+
+    # 9. Generic prose drift (events / pipeline.sh subcommands / script paths)
+    errs = check_prose_generic_drift(spec)
+    all_errors.extend(errs)
+    print(f"  Generic prose drift (events/subcommands/paths): {'PASS' if not errs else f'{len(errs)} issues'}")
 
     if all_errors:
         print(f"\nERRORS ({len(all_errors)}):")

@@ -28,7 +28,9 @@ Schema (the only fields the visual contract / ui-builder care about):
         "anchorAccessibilityIdentifier": "autobot.primaryTitle"
       },
       "visualAnchors": ["autobot.root", "autobot.primaryTitle", "autobot.primaryCTA"],
-      "darkMode": true
+      "darkMode": true   // consumed by visual_contract._dark_mode_required:
+                         // sim_runtime captures a dark-appearance screenshot and
+                         // the gate verifies it; false opts the app out.
     }
 
 Synthesis: when `design-spec.json` is missing but Phase 1 produced
@@ -75,6 +77,37 @@ CATEGORY_KEYWORDS = {
     "music":        ("music", "audio", "음악", "playlist"),
     "travel":       ("travel", "trip", "여행", "관광"),
 }
+
+
+def _palette_rotation_degrees(app_name: str) -> int:
+    """Deterministic per-app hue rotation for the fallback palette.
+
+    Two same-category apps that both fail palette extraction used to get the
+    IDENTICAL fallback palette (e.g. two productivity apps both #3F5D75 — the
+    template-smell finding). A bounded rotation derived from the app name
+    keeps the category's color family while removing cross-app collisions.
+    """
+    if not app_name:
+        return 0
+    digest = hashlib.sha256(app_name.encode("utf-8")).hexdigest()
+    # ponytail: bounded ±40° so category identity survives; widen only if
+    # real builds still collide visually.
+    return int(digest[:8], 16) % 81 - 40
+
+
+def _rotate_hex_hue(hex_str: str, degrees: int) -> str:
+    """Rotate a #RRGGBB hue by `degrees`, preserving lightness/saturation."""
+    if degrees == 0:
+        return hex_str
+    import colorsys
+    value = hex_str.lstrip("#")
+    r, g, b = (int(value[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    h = (h + degrees / 360.0) % 1.0
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+    return "#{:02X}{:02X}{:02X}".format(
+        round(r2 * 255), round(g2 * 255), round(b2 * 255)
+    )
 
 
 def _hex_ok(value: str) -> bool:
@@ -171,8 +204,9 @@ def synthesize(project_root: Path, *, app_name: str | None = None, idea: str | N
 
     palette = _extract_palette_from_text(design_md) or _extract_palette_from_text(architecture) or {}
     fallback = CATEGORY_PALETTES.get(category, CATEGORY_PALETTES["default"])
+    rotation = _palette_rotation_degrees(app_name or "")
     for token in ("primary", "secondary", "accent", "surface"):
-        palette.setdefault(token, fallback[token])
+        palette.setdefault(token, _rotate_hex_hue(fallback[token], rotation))
 
     typo_design = "rounded" if category in {"fitness", "food", "social", "education"} else "default"
     if category == "music":

@@ -399,6 +399,7 @@ JUDGE_SHOT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/sim_runtime.py" \
 판정 기준 — **빌드가 사용자 요구/디자인을 명백히 버렸는가**를 본다 (보수적: 확신 없으면 pass, 단 *명시적 사용자 절* 위반은 보수성 예외 — 확실하면 fail):
 
 - `verdict="fail"` (HIGH severity) — 디자인은 뚜렷한 정체성(커스텀 팔레트/레이아웃)을 지정했는데 빌드는 **generic system default**(system blue + system gray)로 렌더 / design-spec 의 primary 토큰이 화면에 전혀 안 보임 / 설계된 P0 화면이 **blank·부재**. 반드시 **구체 증거** 인용: 관측 색 vs design 토큰 hex, 부재 화면명.
+- `verdict="fail"` (HIGH severity, **templated — 화면 간 동일 몰드**) — 빌드된 화면이 `.autobot/designs/*.png` 목업과 architecture.md 의 **Signature Layout** 계약이 지정한 구분되는 구조 대신, 어느 앱에나 붙일 수 있는 **동일한 generic 몰드**(무표정한 리스트/카드 틀의 복제)로 렌더된 경우. 목업·Signature Layout 과 **대조**해 구체 증거(어떤 화면이 계약의 어떤 구조를 버렸는지)를 인용한다. `/mvp` 자율 경로에서 template smell 을 기계 기록하는 유일한 지점이므로 반드시 이 축을 점검하라 — 게이트 처리는 기존과 동일하게 **DEGRADED-only** (hard fail 금지).
 - `verdict="pass"` — 빌드가 디자인 토큰/레이아웃을 충실히 반영. 소프트 드리프트(미세 간격·계층·radius 차이)는 fail 아님 (medium/low 로 summary 에만 기록).
 
 > **보수적 판정 원칙**: 이 게이트의 fail 은 *출하를 막는다* (아래 DEGRADED-only 참조). vision judge 는 비결정적·미보정(ground-truth ~10 빌드)이므로, **애매하면 pass**. fail 은 "디자인을 명백히 버렸다"는 증거가 있을 때만.

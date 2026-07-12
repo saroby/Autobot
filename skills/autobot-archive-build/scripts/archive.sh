@@ -9,6 +9,7 @@
 #   0  archive succeeded (or dry-run passed)
 #   1  usage / input validation error
 #   2  project/scheme missing or xcodebuild unavailable
+#   3  preflight-ship refused (gate 5->6 not a clean pass — unverified build)
 #   4  xcodebuild archive failed
 set -euo pipefail
 
@@ -80,6 +81,23 @@ fi
 
 PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 
+# Resolve the plugin root once (preflight-ship + config.sh fallback below).
+resolve_symlink() {
+  local target="$1"
+  while [ -L "$target" ]; do
+    local link
+    link="$(readlink "$target")"
+    case "$link" in
+      /*) target="$link";;
+       *) target="$(cd "$(dirname "$target")" && pwd)/$link";;
+    esac
+  done
+  printf '%s' "$target"
+}
+REAL_SOURCE="$(resolve_symlink "${BASH_SOURCE[0]}")"
+SELF_DIR="$(cd "$(dirname "$REAL_SOURCE")" && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SELF_DIR/../../.." && pwd)}"
+
 # Locate .xcodeproj or .xcworkspace (workspace wins if both exist)
 XCWORKSPACE="$(ls -d "$PROJECT_PATH"/*.xcworkspace 2>/dev/null | head -1 || true)"
 XCODEPROJ="$(ls -d "$PROJECT_PATH"/*.xcodeproj 2>/dev/null | head -1 || true)"
@@ -117,21 +135,6 @@ if [ -z "$TEAM_ID" ] && [ -n "$XCODEPROJ" ] && [ -f "$XCODEPROJ/project.pbxproj"
     "$XCODEPROJ/project.pbxproj" 2>/dev/null | head -1 || true)"
 fi
 if [ -z "$TEAM_ID" ]; then
-  resolve_symlink() {
-    local target="$1"
-    while [ -L "$target" ]; do
-      local link
-      link="$(readlink "$target")"
-      case "$link" in
-        /*) target="$link";;
-         *) target="$(cd "$(dirname "$target")" && pwd)/$link";;
-      esac
-    done
-    printf '%s' "$target"
-  }
-  REAL_SOURCE="$(resolve_symlink "${BASH_SOURCE[0]}")"
-  SCRIPT_DIR="$(cd "$(dirname "$REAL_SOURCE")" && pwd)"
-  PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
   CONFIG_SH="$PLUGIN_ROOT/skills/autobot-setup/scripts/config.sh"
   if [ -f "$CONFIG_SH" ]; then
     TEAM_ID="$(bash "$CONFIG_SH" get-or developmentTeam '' 2>/dev/null || echo '')"
@@ -197,6 +200,23 @@ cleanup() {
   return $rc
 }
 trap cleanup EXIT INT TERM HUP
+
+# ── Shipping preflight (anti-laundering) ─────────────────────────────────
+# Archiving is where a build becomes a shippable artifact, so gate 5->6 is
+# re-proven HERE at runtime — command-markdown snippets alone can be bypassed
+# (skill triggered directly, resume 6). Standalone use stays supported by
+# contract: without .autobot/build-state.json this warns and proceeds.
+if [ "$DRY_RUN" -eq 0 ]; then
+  if [ -f "$PROJECT_PATH/.autobot/build-state.json" ]; then
+    if ! CLAUDE_PROJECT_DIR="$PROJECT_PATH" bash "$PLUGIN_ROOT/scripts/pipeline.sh" preflight-ship; then
+      log_error "preflight-ship refused: gate 5->6 is not a clean pass — not archiving an unverified build"
+      write_status "failed" "preflight_ship_gate_failed"
+      exit 3
+    fi
+  else
+    log_warn "no .autobot/build-state.json under $PROJECT_PATH — standalone archive, pipeline gate 5->6 not enforced"
+  fi
+fi
 
 # Resolve project target for xcodebuild
 PROJECT_FLAG=()

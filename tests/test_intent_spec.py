@@ -387,19 +387,41 @@ class TestAssessFeatureSpecQuality(unittest.TestCase):
 
     def test_p1_logic_only_is_allowed(self):
         # P1 flow failures only warn, so a P1 need not declare a flow acceptance.
+        # The payload keeps its valid P0 feature — a zero-P0 spec is rejected
+        # outright by rule 3 (tested separately below).
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             payload = _valid_feature_payload()
-            payload["features"][0]["priority"] = "P1"
-            payload["features"][0]["acceptance"] = [{
-                "id": "log-workout.logic",
-                "kind": "logic",
-                "steps": [{"action": "noop"}],
-                "postcondition": {"kind": "setting_stored", "params": {}},
-            }]
+            payload["features"].append({
+                "id": "export-report",
+                "title": "Export report",
+                "priority": "P1",
+                "screen": "Settings",
+                "anchor": "autobot.exportRow",
+                "acceptance": [{
+                    "id": "export-report.logic",
+                    "kind": "logic",
+                    "steps": [{"action": "noop"}],
+                    "postcondition": {"kind": "setting_stored", "params": {}},
+                }],
+            })
             _write_feature_spec(tmp_path, payload)
             ok, problems = assess_feature_spec_quality(tmp_path)
             self.assertTrue(ok, problems)
+
+    def test_zero_p0_spec_rejected(self):
+        # All-P1/P2 spec: every flow could fail and the suite would still pass
+        # (P1 failures only warn) — the zero-P0 VERIFIED-badge laundering hole.
+        # Rule 3 demands >=1 P0 feature; the P0 count is deterministic, so this
+        # is a safe Gate 1->2 hard fail.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = _valid_feature_payload()
+            payload["features"][0]["priority"] = "P1"  # leaves only P1 + P2
+            _write_feature_spec(tmp_path, payload)
+            ok, problems = assess_feature_spec_quality(tmp_path)
+            self.assertFalse(ok)
+            self.assertTrue(any("no P0 feature" in p for p in problems), problems)
 
 
 if __name__ == "__main__":

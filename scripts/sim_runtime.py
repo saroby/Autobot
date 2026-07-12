@@ -213,6 +213,26 @@ def _capture_screenshot(udid: str, dest: Path) -> bool:
     return rc == 0 and dest.is_file() and dest.stat().st_size > 1024
 
 
+def _capture_dark_screenshot(udid: str, dest: Path) -> bool:
+    """Switch the sim to dark appearance, capture a screenshot, restore light.
+
+    Best-effort: `simctl ui <udid> appearance` can be unsupported (older
+    runtimes) — any failure just skips the dark capture; it never fails the
+    smoke. The gate side (visual_contract darkMode) treats a missing dark
+    screenshot as a benign skip, so environments without this capability
+    degrade gracefully. Light is always restored so later steps (flow_runner,
+    visual judge) keep operating on the light appearance.
+    """
+    rc, _, _ = _run(["xcrun", "simctl", "ui", udid, "appearance", "dark"])
+    if rc != 0:
+        return False
+    try:
+        time.sleep(1)  # let the appearance switch propagate before capturing
+        return _capture_screenshot(udid, dest)
+    finally:
+        _run(["xcrun", "simctl", "ui", udid, "appearance", "light"])
+
+
 def _result(status: str, **fields) -> dict:
     fields["status"] = status
     return fields
@@ -273,6 +293,11 @@ def smoke(project_root: Path, app_name: str, *, wait_seconds: int = DEFAULT_LAUN
             udidSource=udid_source,
         )
 
+    # Second screenshot in dark appearance — the runtime consumer of the
+    # design-spec `darkMode` policy (visual_contract checks both renders).
+    dark_path = screenshot_path.with_name("screenshot-dark.png")
+    dark_captured = _capture_dark_screenshot(udid, dark_path)
+
     return _result(
         "passed",
         udid=udid,
@@ -281,6 +306,8 @@ def smoke(project_root: Path, app_name: str, *, wait_seconds: int = DEFAULT_LAUN
         processDetail=alive_detail,
         screenshotCaptured=captured,
         screenshotPath=str(screenshot_path) if captured else None,
+        darkScreenshotCaptured=dark_captured,
+        darkScreenshotPath=str(dark_path) if dark_captured else None,
         udidSource=udid_source,
     )
 

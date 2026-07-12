@@ -6,6 +6,7 @@ All check signatures: ``(project_dir: Path, app: str, state: dict) -> list[dict]
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -77,10 +78,35 @@ def check_visual_contract(proj: Path, app: str, state: dict) -> list[dict]:
             extra = f" — dominant matches '{match['closestToken']}' (ΔE={match['deltaE']})"
         else:
             extra = " — no palette tokens declared, structural checks only"
-        return [_ok(
+        results = [_ok(
             "visual_contract", True,
             f"screenshot OK{extra} ({result.get('notes')})",
         )]
+        # Dark-mode render verification (design-spec darkMode consumer).
+        # DEGRADED-only, never a hard fail: the dark capture is a secondary
+        # heuristic render check and must not trip the circuit breaker.
+        dark = result.get("darkMode")
+        if isinstance(dark, dict):
+            dark_status = dark.get("status")
+            if dark_status == "failed":
+                results.append(_ok(
+                    "visual_contract_dark", False,
+                    f"dark-mode render violated: {dark.get('reason', 'unknown')} "
+                    f"— DEGRADED (not shippable)",
+                    skipped=True, degraded=True,
+                ))
+            elif dark_status == "passed":
+                results.append(_ok(
+                    "visual_contract_dark", True,
+                    f"dark-mode screenshot OK ({dark.get('notes', 'variance check')})",
+                ))
+            else:
+                results.append(_ok(
+                    "visual_contract_dark", True,
+                    f"dark-mode check skipped: {dark.get('skipReason', 'unknown')}",
+                    skipped=True,
+                ))
+        return results
     return [_ok(
         "visual_contract", False,
         f"visual contract violated: {result.get('reason', 'unknown')}",
@@ -198,19 +224,29 @@ def check_runtime_smoke(proj: Path, app: str, state: dict) -> list[dict]:
     """Phase 5→6 — boot a simulator, install the .app, launch it, confirm the
     process stays alive a few seconds, and capture a screenshot.
 
-    `simctl_unavailable` / `app_artifact_missing` / `no_ios_simulator_available`
-    are treated as `skipped` (the gate still records the check exists).
-    Hard failures (boot/install/launch/process-death) fail the gate.
+    Skips are DEGRADED (shipping-blocked), not benign: a build whose app was
+    never launched must not roll up as a clean pass ("the binary compiled" is
+    not "the app starts"). The ONLY benign skip is the explicit CI opt-out
+    `AUTOBOT_DISABLE_SIMULATOR=1` — an operator decision, not a missing
+    resource. Hard failures (boot/install/launch/process-death) fail the gate.
     """
     from sim_runtime import smoke
 
     result = smoke(proj, app)
     status = result.get("status")
     if status == "skipped":
+        reason = result.get("skipReason", "unknown")
+        if os.environ.get("AUTOBOT_DISABLE_SIMULATOR") == "1":
+            return [_ok(
+                "runtime_smoke", True,
+                f"skipped: {reason} (explicit AUTOBOT_DISABLE_SIMULATOR opt-out)",
+                skipped=True,
+            )]
         return [_ok(
-            "runtime_smoke", True,
-            f"skipped: {result.get('skipReason', 'unknown')}",
-            skipped=True,
+            "runtime_smoke", False,
+            f"skipped (degraded): {reason} — the app was never launched, so "
+            f"this build cannot roll up as a clean pass",
+            skipped=True, degraded=True,
         )]
     if status == "passed":
         screenshot = result.get("screenshotPath") or "no screenshot"
@@ -257,9 +293,56 @@ def check_metadata_readiness(proj: Path, app: str, state: dict) -> list[dict]:
 
 
 def check_app_uses_real_repositories(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 5→6 — production wiring must not instantiate preview stubs.
+
+    Scans ALL of ``{app}/App/*.swift`` (entry point AND CompositionRoot — stub
+    wiring moved to another composition file must not slip through), except
+    ``ServiceStubs.swift`` itself (that file legitimately defines the preview
+    stubs). Comment lines are ignored and only an INSTANTIATION pattern
+    (``StubFoo(``) is a violation, so a `// previews use ServiceStubs` comment
+    can no longer hard-fail the gate (false-positive breaker risk).
+    """
     entry = proj / app / "App" / f"{app}App.swift"
+    app_dir = proj / app / "App"
+    stub_call = re.compile(r"\bStub[A-Z]\w*\s*\(")
+    violations: list[str] = []
+    swift_files = sorted(app_dir.glob("*.swift")) if app_dir.is_dir() else []
+    for swift in swift_files:
+        if swift.name == "ServiceStubs.swift":
+            continue  # preview-stub definitions live here by contract
+        try:
+            source = swift.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # Strip /* block comments */ (incl. multi-line) before scanning —
+        # this is a HARD-FAIL check, so a commented-out Stub call must never
+        # trip it. Newlines are preserved to keep line numbers accurate.
+        source = re.sub(
+            r"/\*.*?\*/",
+            lambda m: "".join(ch if ch == "\n" else " " for ch in m.group(0)),
+            source,
+            flags=re.DOTALL,
+        )
+        for lineno, line in enumerate(source.splitlines(), 1):
+            if line.strip().startswith("//"):
+                continue
+            if stub_call.search(line):
+                violations.append(f"{swift.name}:{lineno}")
+    if violations:
+        detail = ", ".join(violations[:5])
+        no_stubs = _ok(
+            "no_stubs_in_app", False,
+            f"Stub instantiation in production composition: {detail}",
+        )
+    elif not swift_files:
+        no_stubs = _ok("no_stubs_in_app", False, f"MISSING: {app_dir}/*.swift")
+    else:
+        no_stubs = _ok(
+            "no_stubs_in_app", True,
+            f"no Stub instantiations in {len(swift_files)} App/*.swift file(s)",
+        )
     return [
-        _file_grep(entry, r"Stub", "no_stubs_in_app", expect=False),
+        no_stubs,
         _file_grep(entry, r"Repository|Service\(", "has_real_services"),
         _file_grep(entry, r"ModelContainer", "has_model_container"),
     ]
@@ -359,4 +442,53 @@ def check_first_launch_seeded(proj: Path, app: str, state: dict) -> list[dict]:
         "first_launch_seeded", found,
         f"seedPolicy=seeded → seedIfNeeded() {'found' if found else 'MISSING'} "
         f"in {app}/App/*.swift",
+    )]
+
+
+def check_no_swallowed_errors(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 5→6 — `try?` / `try!` in ViewModels/Services swallow errors.
+
+    The agent prompts (ui-builder/data-engineer/quality-engineer) declare
+    "zero new try?/try!" as a checklist item; this is the runtime enforcement
+    of that prose contract (dead-policy elimination). A ViewModel that renders
+    a load failure as an empty list shows the user "no data" instead of an
+    error state — a quality defect, not a crash.
+
+    DEGRADED-only, NEVER a hard fail (heuristic grep — a hard fail could trip
+    the circuit breaker on a false positive and halt the autonomous build).
+    DEGRADED still blocks shipping via the anti-laundering path. Comment lines
+    are excluded; `#Preview` blocks are not parsed (known ceiling).
+    """
+    # ponytail: line-based grep, no Swift parsing — upgrade to a syntax-aware
+    # scan only if preview-block false positives show up in real builds.
+    pattern = re.compile(r"\btry[?!]")
+    violations: list[str] = []
+    for sub in ("ViewModels", "Services"):
+        root = proj / app / sub
+        if not root.is_dir():
+            continue
+        for swift in sorted(root.rglob("*.swift")):
+            try:
+                lines = swift.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for lineno, line in enumerate(lines, 1):
+                if line.strip().startswith("//"):
+                    continue
+                if pattern.search(line):
+                    violations.append(f"{swift.relative_to(proj)}:{lineno}")
+    if not violations:
+        return [_ok(
+            "no_swallowed_errors", True,
+            "no try?/try! in ViewModels/Services (errors surface to the UI)",
+        )]
+    detail = ", ".join(violations[:5])
+    if len(violations) > 5:
+        detail += f" (+{len(violations) - 5} more)"
+    return [_ok(
+        "no_swallowed_errors", False,
+        f"{len(violations)} try?/try! occurrence(s) swallow errors in "
+        f"ViewModels/Services: {detail} — replace with do/catch surfacing an "
+        f"errorMessage state. DEGRADED (not shippable, not a hard fail).",
+        skipped=True, degraded=True,
     )]

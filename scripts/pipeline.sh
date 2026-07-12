@@ -8,6 +8,7 @@
 #   bash pipeline.sh advance-phase --phase 2 --status fallback --detail "Stitch unavailable"
 #   bash pipeline.sh fail-phase --phase 5 --error "xcodebuild failed" --increment-retry
 #   bash pipeline.sh run-gate --gate "4->5"             # run gate, record evidence (no phase mutation)
+#   bash pipeline.sh preflight-ship                     # fresh gate 5->6; exit 1 unless a CLEAN pass (shipping entry points)
 #   bash pipeline.sh record-environment --xcodegen true --stitch false
 #   bash pipeline.sh set-flag --key backend_required --value true
 #
@@ -29,7 +30,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${SCRIPT_DIR}/runtime.py"
 
-USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|error-signature|design-spec|sandbox|build-lock> [options]"
+USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|preflight-ship|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|error-signature|design-spec|sandbox|build-lock> [options]"
 
 if [[ -z "$MODE" ]]; then
   echo "$USAGE" >&2
@@ -59,6 +60,40 @@ EOF
     ;;
   fail-phase)         exec python3 "$RUNTIME" fail-phase         --project-dir "$PROJECT_DIR" "$@" ;;
   run-gate)           exec python3 "$RUNTIME" run-gate           --project-dir "$PROJECT_DIR" "$@" ;;
+  preflight-ship)
+    # Runtime shipping block (anti-laundering): archive/upload entry points
+    # call this to re-prove gate 5->6 FRESH before producing a shippable
+    # artifact. The verdict is judged from the fresh run's own JSON output —
+    # never from previously persisted state.gates evidence — so a crashed
+    # re-run cannot hide behind a stale 'passed'. Only a CLEAN pass ships:
+    # 'degraded' means functional verification could not run (unverified).
+    # Standalone use (no build-state.json) passes with a warning — archive.sh
+    # is also a manual, out-of-pipeline tool by contract.
+    if [[ ! -f "$PROJECT_DIR/.autobot/build-state.json" ]]; then
+      echo "WARN: preflight-ship: no .autobot/build-state.json in $PROJECT_DIR — standalone use, gate 5->6 not enforced" >&2
+      exit 0
+    fi
+    GATE_JSON="$(python3 "$RUNTIME" run-gate --project-dir "$PROJECT_DIR" --gate "5->6" --format json "$@" || true)"
+    printf '%s' "$GATE_JSON" | python3 -c '
+import json, sys
+raw = sys.stdin.read().strip()
+try:
+    result = json.loads(raw)
+except ValueError:
+    sys.stderr.write("ERROR: preflight-ship: gate 5->6 re-run produced no parseable result -- refusing to ship\n")
+    raise SystemExit(1)
+passed = bool(result.get("passed"))
+degraded = bool(result.get("degraded"))
+if passed and not degraded:
+    print("OK: preflight-ship: gate 5->6 clean pass -- shipping permitted")
+    raise SystemExit(0)
+if degraded:
+    sys.stderr.write("ERROR: preflight-ship: gate 5->6 DEGRADED -- functional verification could not run; refusing to ship an unverified build (re-run /autobot:resume 5 with simulator+axe+xcodebuild)\n")
+else:
+    sys.stderr.write("ERROR: preflight-ship: gate 5->6 FAILED -- fix Phase 5 (/autobot:resume 5) before shipping\n")
+raise SystemExit(1)
+'
+    ;;
 
   # ── Helper passthroughs to focused modules ───────────────────────────────
   env-snapshot)

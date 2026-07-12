@@ -96,6 +96,21 @@ ASC API Key 3종은 **시크릿**이라 `config.json` 이 아니라 전역 `.env
   - **`.p8` 경로** — 다운로드한 AuthKey 파일 경로 (예: `~/.appstoreconnect/private_keys/AuthKey_ABC123XYZ0.p8`). 파일 자체는 그 자리에 두고 **경로만** 기록한다.
 - 검증: Key ID `^[A-Z0-9]{10}$` 권장, Issuer ID UUID 형태, `.p8` 경로는 `~` 확장 후 `[ -r ]` 로 읽기 가능 확인. 셋 중 하나라도 비면 전체 Skip(부분 자격증명은 무의미).
 
+### 3.8 Apple ID + ASC 웹 세션 (선택, 신규 앱 등록 시 필수)
+
+**앱 레코드 생성(`autobot-register-app`)은 ASC API Key 로 인증 불가** — Apple 비공개 API 라 Apple ID 웹 세션이 필요하다 (자세히: `skills/autobot-register-app/SKILL.md` §Prerequisites).
+
+- 질문: "ASC 로그인용 Apple ID 를 입력하세요 (신규 앱 등록에 필요). 이미 등록된 앱만 다룬다면 'Skip'."
+- 기록: `bash "$CONFIG_SH" set appleId "<입력값>"` (시크릿 아님 — config.json OK)
+- 세션 점검: `~/.fastlane/spaceship/<appleId>/cookie` 가 없거나 mtime 이 25일 이상이면 안내:
+
+  ```
+  ⚠️  ASC 웹 세션이 없거나 곧 만료됩니다. 지금 갱신하면 ~30일간 앱 등록이 완전 무인으로 돕니다:
+      fastlane spaceauth -u <appleId>    (대화형 2FA 1회)
+  ```
+
+  spaceauth 실행 자체는 사용자 몫(2FA 는 사람만 가능) — setup 은 안내만 하고 블로킹하지 않는다.
+
 ## 4. 기록
 
 수집한 값을 환경변수로 export 후 `config.sh init --force` 호출:

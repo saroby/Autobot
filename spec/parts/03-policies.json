@@ -1,7 +1,8 @@
 {
   "policies": {
     "resume": {
-      "allowExplicitRestartFromTerminal": true
+      "allowExplicitRestartFromTerminal": true,
+      "comment": "Gates the --allow-terminal-restart operator flag. Despite the name it covers three recovery paths, all human-invoked (never on automated paths): (1) explicit restart of a completed/fallback/skipped phase, (2) reclaim of a crash-stranded in_progress phase, (3) forced re-entry of a retry-exhausted failed phase — and for that one call it also bypasses the circuit breaker (operator override). Enforced in scripts/transitions.py:validate_transition_request."
     },
     "dependency": {
       "resumeAllowedPreviousStatuses": [

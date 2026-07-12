@@ -261,6 +261,12 @@
         },
         {
           "type": "procedural",
+          "name": "no_hardcoded_font_sizes",
+          "label": "no_hardcoded_font_sizes",
+          "docs": "접근성(Dynamic Type) 결정적 grep — Views/ 의 사유 주석 없는 .font(.system(size:)) 검출. 휴리스틱이므로 DEGRADED-only(hard fail 금지), 위반은 출하 차단 등급이 아닌 품질 신호로 기록"
+        },
+        {
+          "type": "procedural",
           "name": "composition_seam_intact",
           "label": "composition_seam_intact"
         },
@@ -314,6 +320,12 @@
           "type": "procedural",
           "name": "app_uses_real_repositories",
           "label": "app_uses_real_repositories"
+        },
+        {
+          "type": "procedural",
+          "name": "no_swallowed_errors",
+          "label": "no_swallowed_errors",
+          "docs": "ViewModels/Services 의 try?/try! grep — 에러를 삼키는 로드 경로 검출. 휴리스틱이므로 DEGRADED-only(hard fail 금지): 위반 시 출하 차단, circuit breaker 는 소모하지 않음"
         },
         {
           "type": "procedural",

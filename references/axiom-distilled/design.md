@@ -38,7 +38,7 @@
 .glassEffect()                 // iOS 26+, Regular
 .glassEffect(.clear)           // Clear 변형
 .glassEffect(in: .rect(cornerRadius: 16))  // shape 명시
-.glassEffect(tint: .accentColor)           // primary action 강조
+.glassEffect(.regular.tint(.accentColor))  // primary action 강조 (tint: 파라미터는 없다)
 ```
 
 `@available(iOS 26, *)` 가드 없이 사용. 타깃이 iOS 26+ 이면 OK. 더 낮은 타깃이라면 `if #available(iOS 26, *) { … } else { .ultraThinMaterial }` 패턴.
@@ -46,7 +46,7 @@
 ### 흔한 실수 (감지 패턴)
 
 - **Glass on Glass nesting**: `.glassEffect()` 가 또 다른 `.glassEffect()` 안에 들어가면 시각 노이즈. 한 컴포넌트는 한 glass 레이어만.
-- **Primary action tinting 누락**: 강조 버튼은 `.glassEffect(tint: .accentColor)`. 누락 시 시각 위계 손실.
+- **Primary action tinting 누락**: 강조 버튼은 `.glassEffect(.regular.tint(.accentColor))`. 누락 시 시각 위계 손실.
 - **TabRole 누락**: 검색 탭은 `.tabRole(.search)` 로 마킹해야 iOS 26 검색 전용 표면을 받는다.
 - **UIBlurEffect/.regularMaterial 잔존**: pre-iOS 26 코드의 흔적. iOS 26+ 타깃에서는 Liquid Glass 로 교체.
 

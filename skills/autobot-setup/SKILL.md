@@ -29,6 +29,7 @@ Autobot 빌드는 사용자별로 일정한 메타데이터 — bundle ID prefix
   "version": 1,
   "bundleIdPrefix": "com.axi",
   "developmentTeam": "A1B2C3D4E5",
+  "appleId": "user@example.com",
   "companyName": "Axiom",
   "deploymentTarget": "26.0",
   "testerEmails": ["tester@example.com"],
@@ -41,6 +42,7 @@ Autobot 빌드는 사용자별로 일정한 메타데이터 — bundle ID prefix
 | `version` | int | yes | 스키마 버전. 현재 `1` |
 | `bundleIdPrefix` | string | **yes** | `^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$` — 도메인 역순. 마지막 segment 뒤에 `.<appname>` 가 붙는다. |
 | `developmentTeam` | string | no | Apple Developer Team ID. 10자 영숫자. Archive/TestFlight 단계에서 필요. |
+| `appleId` | string | no | ASC 웹 세션용 Apple ID. `autobot-register-app` 이 앱 등록 시 사용 (앱 생성은 비공개 API 라 ASC API Key 로 대체 불가 — 해당 SKILL.md §Prerequisites). |
 | `deploymentTarget` | string | **yes** | iOS 최소 버전. 기본 `26.0`. |
 | `companyName` | string | no | 저작권/CFBundleDevelopmentRegion 등에 사용 |
 | `testerEmails` | string[] | no | TestFlight 내부 그룹 기본 초대 목록. Phase 6에서 사용 |
@@ -143,6 +145,14 @@ architecture.md 에서 명시적으로 더 낮은 버전을 요구하지 않는 
 ```bash
 export DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-$(bash "$CONFIG_SH" get-or developmentTeam '')}"
 ```
+
+### 6. Apple ID + ASC 웹 세션 — 앱 등록 전용
+
+`autobot-register-app` 은 ASC API Key 가 아니라 **Apple ID 웹 세션**을 쓴다 (앱 레코드 생성은 Apple 비공개 API — 공개 API 에 생성 endpoint 없음). setup 은:
+
+1. `appleId` 를 config.json 에 저장 (`config.sh set appleId <value>`)
+2. 세션 상태 점검: `~/.fastlane/spaceship/<appleId>/cookie` 존재 + 30일 이내면 OK
+3. 세션이 없거나 오래됐으면 안내: `fastlane spaceauth -u <appleId>` (대화형 2FA 1회, ~30일 유효). **이것이 파이프라인에서 프로그래밍으로 제거 불가능한 유일한 주기적 인간 개입이다** — setup 시점에 미리 갱신해 두면 이후 ~30일간 등록이 완전 무인으로 돈다.
 
 ## /autobot:setup 트리거 시점
 
