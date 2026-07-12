@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.12.2] — 2026-07-12
+
+### Fixed — fastlane deliver 인증이 항상 실패 (API 키 JSON 에 `key` 누락)
+- `fastlane deliver` 를 쓰는 3개 스크립트(`upload-metadata.sh`, `upload-screenshots.sh`, `submit-for-review.sh`)가 `--api_key_path` 에 넘길 JSON 을 `{"key_id", "issuer_id", "key_filepath": <.p8 경로>}` 로 생성했다. fastlane 의 `Spaceship::ConnectAPI::Token.from_json_file` 는 `key_filepath` 를 인식하지 않고 **PEM 콘텐츠를 담은 `key` 필드를 강제**하므로, 로그인 단계에서 `App Store Connect API key JSON is missing field(s): key` 로 죽었다 — 즉 메타데이터 업로드·스크린샷 업로드·심사 제출이 **ASC 에 닿기도 전에** 전부 차단돼 있었다 (모든 API-Key 인증 deliver 경로의 공유 결함).
+- `.p8` 파일 내용을 `ASC_API_KEY_CONTENT="$(cat "$ASC_API_KEY_PATH")"` 로 읽어 `key` 필드에 임베드하도록 3개 스크립트 동일 수정. 실제 `.p8` + 설치된 fastlane 2.237.0 `Token.from_json_file` 로 토큰 로드·PEM 파싱 성공 확인.
+- 회귀 `tests/test_fastlane_api_key_json.py` — 3개 스크립트가 `key_filepath` 로 되돌아가지 않고 `key` 콘텐츠를 emit 하는지 소스 계약 검증.
+- ⚠️ 이 수정은 fastlane **인증(토큰 구성)** 만 푼다. 업로드 자체는 앱이 ASC 에 등록돼 있어야 하고(등록은 spaceauth 세션 경로 — [0.12.0] 참조), 세션 만료 시 `asc_session_expired` 로 다음 단계에서 별도로 막힐 수 있다.
+
 ## [0.12.1] — 2026-07-12
 
 ### Fixed — 테스터 초대가 config 경로에서 조용히 0명 (invite.sh)

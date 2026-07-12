@@ -216,11 +216,15 @@ print(json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2))
 }
 
 API_KEY_JSON="$WORK_DIR/fastlane_api_key.json"
+# fastlane's Spaceship::ConnectAPI::Token.from_json_file requires the .p8 PEM
+# CONTENT under `key` — it does not recognize a `key_filepath` field and fails
+# with "API key JSON is missing field(s): key". Embed the file contents.
+ASC_API_KEY_CONTENT="$(cat "$ASC_API_KEY_PATH")"
 ( umask 077
   emit_json \
     "key_id=$ASC_API_KEY_ID" \
     "issuer_id=$ASC_API_ISSUER_ID" \
-    "key_filepath=$ASC_API_KEY_PATH" \
+    "key=$ASC_API_KEY_CONTENT" \
     > "$API_KEY_JSON"
 )
 chmod 600 "$API_KEY_JSON"
