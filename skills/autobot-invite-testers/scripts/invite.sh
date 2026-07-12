@@ -125,11 +125,23 @@ if [ ! -r "$ASC_API_KEY_PATH_EXPANDED" ]; then
   exit 2
 fi
 
-# Parse emails — strict validation, no empty / no duplicates
+# Parse emails — strict validation, no empty / no duplicates.
+# Accept BOTH forms so every caller works: a comma-separated string
+# (standalone use, or the TESTER_EMAIL env fallback) AND a JSON array
+# (`config.sh get-or testerEmails` emits json.dumps(list) for array values —
+# deployer passes that verbatim, which the comma split alone would mangle
+# into `["a@x.com` / `"b@x.com"]` tokens that fail email validation).
 EMAILS_JSON="$(python3 - "$EMAILS" <<'PY'
 import json, re, sys
-raw = sys.argv[1]
-items = [e.strip() for e in raw.split(",") if e.strip()]
+raw = sys.argv[1].strip()
+if raw.startswith("["):
+    try:
+        parsed = json.loads(raw)
+        items = [str(e).strip() for e in parsed if str(e).strip()]
+    except (ValueError, TypeError):
+        items = [e.strip() for e in raw.split(",") if e.strip()]
+else:
+    items = [e.strip() for e in raw.split(",") if e.strip()]
 emailre = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 seen = []
 for e in items:

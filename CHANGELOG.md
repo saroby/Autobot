@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Fixed — 테스터 초대가 config 경로에서 조용히 0명 (invite.sh)
+- `config.sh get-or testerEmails` 는 배열을 `json.dumps` 해 `["a@x.com", "b@x.com"]` 문자열로 반환하는데, deployer 가 이를 그대로 `--emails` 로 넘기고 `invite.sh` 는 콤마 split 만 해서 `["a@x.com` / `"b@x.com"]` 토큰이 이메일 검증에 걸려 exit 1 — 즉 `/autobot:setup` 으로 테스터를 넣는 **정식 경로가 초대 0명으로 깨져** 있었다 (env `TESTER_EMAIL` 단수 fallback 만 동작). `invite.sh` 파서가 콤마 문자열과 JSON 배열을 **둘 다** 수용하도록 수정 (모든 호출자가 지나는 공유 지점). 회귀 `tests/test_invite_emails.py`(6).
+
 ## [0.12.0] — 2026-07-12
 
 전체 감사(7렌즈 병렬 + 적대적 검증, finding 확정 22/반증 0) 후 "인간 도움 없이 최고의 앱" 목표 대비 6개 workstream 일괄 수정. 테스트 533→597 전부 green.
