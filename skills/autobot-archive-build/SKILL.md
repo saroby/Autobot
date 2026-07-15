@@ -65,6 +65,13 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-archive-build/scripts/archive.sh" \
 
 ```json
 {
+  "schemaVersion": 1,
+  "buildId": "build-20260715-001",
+  "bundleId": "com.example.AppName",
+  "buildNumber": "42",
+  "artifactSha256": "<app-bundle-sha256>",
+  "archiveSha256": "<xcarchive-sha256>",
+  "inputManifestHash": "<phase-5-input-hash>",
   "archive_path": "/Users/.../build/AppName.xcarchive",
   "configuration": "Release",
   "reason": "",
@@ -84,6 +91,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-archive-build/scripts/archive.sh" \
 | 0 | archive 성공 또는 dry-run 통과 | 다음 단계 (`autobot-upload-build`) 로 |
 | 1 | 사용법/입력값 오류 | 인자/포맷 수정 |
 | 2 | 프로젝트/scheme 누락 또는 xcodebuild 미설치 | `xcode-select -p`, `--project-path` 확인 |
+| 3 | build state 누락 또는 출하 preflight 차단 | upload 중단. `missing_build_state`는 `/autobot:mvp`, `preflight_ship_gate_failed`는 `/autobot:resume 5` |
 | 4 | xcodebuild archive 실패 | 로그 확인, signing/provisioning 점검 |
 
 ## Behavior

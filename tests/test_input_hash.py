@@ -62,6 +62,34 @@ class TestComputeHash(unittest.TestCase):
             h2, _ = compute_phase_input_hash(proj, spec, state, "1")
             self.assertNotEqual(h1, h2)
 
+    def test_transitive_upstream_file_change_changes_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            state = _setup_project(proj)
+            upstream = proj / ".autobot" / "design-spec.md"
+            upstream.write_text("design A")
+            spec = load_spec()
+
+            h1, manifest = compute_phase_input_hash(proj, spec, state, "3")
+            self.assertIn(".autobot/design-spec.md", manifest["requiredInputs"])
+
+            upstream.write_text("design B")
+            h2, _ = compute_phase_input_hash(proj, spec, state, "3")
+            self.assertNotEqual(h1, h2)
+
+    def test_phase_three_includes_phase_one_model_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            state = _setup_project(proj, models=["Item"])
+            spec = load_spec()
+            model = proj / "DemoApp" / "Models" / "Item.swift"
+
+            h1, manifest = compute_phase_input_hash(proj, spec, state, "3")
+            self.assertIn("DemoApp/Models/Item.swift", manifest["requiredInputs"])
+            model.write_text("struct Item { let id: Int }")
+            h2, _ = compute_phase_input_hash(proj, spec, state, "3")
+            self.assertNotEqual(h1, h2)
+
 
 class TestShouldSkip(unittest.TestCase):
     def test_unstored_hash_means_no_skip(self):
@@ -132,9 +160,7 @@ class TestMarkInputs(unittest.TestCase):
         phase_block = state["phases"]["4"]
         self.assertEqual(phase_block["inputHash"], "HASH123")
         self.assertEqual(phase_block["inputManifest"]["ownedFileCount"], 2)
-        # upstreamFileCount intentionally not tracked — the simplified manifest
-        # only records owned files (upstream changes propagate via this phase's
-        # owned files when the upstream agent re-runs and modifies them).
+        self.assertEqual(phase_block["inputManifest"]["requiredInputCount"], 0)
 
 
 if __name__ == "__main__":

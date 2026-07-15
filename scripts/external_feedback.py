@@ -24,12 +24,11 @@ operator confirmation before `learning_impact.py publish-global` runs.
 
 Event logging: feedback_fetched / external_feedback_recorded are declared in
 spec.logEvents with entry-level fields (bundle_id, review_count, themes_count)
-that the phase/agent/detail-only build-log.sh wrapper cannot carry, so this
-module validates through the same runtime validator (event_log.validate_log_event
-— spec stays the SSOT) and appends the entry itself. Target file: the project's
-existing `.autobot/build-log.jsonl` when present; otherwise (feedback runs
-outside any build session, post-release) `.autobot/feedback-log.jsonl`. Each
-event lands in exactly one file — logs are audit-only, no gate reads them.
+that the shell wrapper cannot carry. In a live build this module delegates to
+event_log.append_build_log so the event receives the current buildId envelope;
+outside a build session it validates against the same SSOT and writes
+`.autobot/feedback-log.jsonl`. Each event lands in exactly one file — logs are
+audit-only, no gate reads them.
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import learning_impact  # noqa: E402
-from event_log import validate_log_event  # noqa: E402
+from event_log import append_build_log, validate_log_event  # noqa: E402
 from learning_impact import _norm_text, stable_id  # noqa: E402
 from state_store import utc_now  # noqa: E402
 
@@ -128,23 +127,30 @@ def append_feedback_event(project_root: Path, event: str, fields: dict,
                           *, spec: dict | None = None) -> Path:
     """Spec-validated append for the entry-level-field feedback events.
 
-    Validation reuses event_log.validate_log_event against spec.logEvents (the
-    SSOT). Writes to build-log.jsonl when the project has one, else to
-    feedback-log.jsonl (explicit out-of-build-session fallback; see module
-    docstring — never both)."""
+    A live build delegates to event_log.append_build_log for buildId scoping.
+    Without a build log, validation still reuses spec.logEvents before writing
+    feedback-log.jsonl (explicit out-of-build-session fallback; never both)."""
     if spec is None:
         from spec_loader import load_spec
         spec = load_spec()
+    log_dir = project_root / ".autobot"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    target = log_dir / BUILD_LOG
     present = {k: v for k, v in fields.items() if v is not None}
+    if target.is_file():
+        append_build_log(
+            project_root,
+            event,
+            spec=spec,
+            extra_fields=present,
+        )
+        return target
+
     errors = validate_log_event(spec, event, present)
     if errors:
         raise SystemExit("FATAL: invalid feedback event: " + "; ".join(errors))
 
-    log_dir = project_root / ".autobot"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    target = log_dir / BUILD_LOG
-    if not target.is_file():
-        target = log_dir / FEEDBACK_LOG
+    target = log_dir / FEEDBACK_LOG
     entry = {"ts": utc_now(), "event": event, **present}
     with target.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False))

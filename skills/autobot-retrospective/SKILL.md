@@ -136,12 +136,19 @@ Read $CLAUDE_PLUGIN_ROOT/skills/autobot-axiom-bridge/SKILL.md
 ```bash
 # (a) Learning effect 채점: phase 별 status / breaker / build-fix attempts 를 보고
 #     learnings.json 의 effect_score 누적. hurt 누적 시 자동 quarantine.
+BUILD_ID=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json'))['buildId'])")
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" grade-learnings \
-  --build-id "$(python3 -c "import json; print(json.load(open('.autobot/build-state.json'))['buildId'])")"
+  --build-id "$BUILD_ID"
 
 # (b) Run summary 생성: artifacts/<buildId>/run-summary.{json,md} + latest 심볼릭.
 #     성공/실패 모든 run 에서 호출. /autobot:resume 안내가 footer 에 자동 들어간다.
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" write-run-summary
+
+# (c) 현재 실행이 Phase 0 또는 resume에서 획득해 보관한 generation token으로 해제.
+# status에서 token을 다시 읽지 않는다. 다른 세션이 takeover한 경우 그 세대는 보호돼야 한다.
+: "${OWNED_LOCK_TOKEN:?Phase 0/resume에서 획득한 build lock token이 필요합니다}"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-lock release \
+  --build-id "$BUILD_ID" --expected-token "$OWNED_LOCK_TOKEN"
 ```
 
 `grade-learnings` 의 출력 (`{"updated": N, "summaries": [...]}`) 을 build-report.md 의 `## Learning Impact` 섹션에 그대로 첨부한다. quarantined 가 발생했다면 `## Quarantined Learnings` 섹션도 추가한다 (`pipeline.sh grade-learnings` 출력의 negative effect_score 항목들).

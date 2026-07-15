@@ -1,7 +1,6 @@
 ---
 name: ui-builder
 description: Use this agent when building SwiftUI views for an iOS 26+ app. Reads architecture document and Model/ServiceProtocol files, generates all view files with Liquid Glass design, navigation, and accessibility.
-model: opus
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 
@@ -77,66 +76,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 8. **Create Each Screen** (Layout Personality 반영): One Swift file per screen in `<AppName>/Views/Screens/`
    - **Primary (design-spec.md 존재 시)**: 해당 화면의 디자인 토큰, 레이아웃 노트, 목업 이미지(`.autobot/designs/<ScreenName>.png`)를 참조하여 Stitch 디자인을 충실히 구현
    - **Fallback (목업 이미지 미존재 시)**: design-spec.md의 최소 룩앤필 계약과 architecture.md의 Key UI Elements를 결합한다. 기능만 되는 기본 SwiftUI 화면으로 대체하지 않는다.
-   - **Signature Layout 우선 (시각 동질성 방지)**: 먼저 architecture.md의 `### Signature Layout` 을 읽고 그 hero element·정보 위계·density·화면 간 차별화를 구현한다. 아래 4종 패턴은 *출발 골격*일 뿐 — **그대로 베끼지 말고 Signature Layout 에 맞춰 변형**한다. 모든 화면을 동일한 `List`/`LazyVStack` 카드로 채우면 안 된다(최소 primary 와 2순위 화면은 시각적으로 구별; Phase 2.5 critique 의 디자인 축이 "templated/제네릭/화면 간 동일"을 점검). `Layout Personality` = 출발 힌트, `Signature Layout` = 그 위의 앱 고유 결정. 아래는 변형의 출발점으로만 참조한다:
-
-   **data-driven 패턴:**
-   ```swift
-   // 큰 숫자 stat 카드 + LazyVGrid 대시보드
-   ScrollView {
-       LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: <Module>Spacing.m) {
-           StatCard(title: "Steps", value: "12,345", trend: .up)  // 큰 숫자 + 트렌드 아이콘
-           StatCard(title: "Calories", value: "890", trend: .down)
-       }
-       // 하단에 차트나 상세 리스트
-   }
-   ```
-
-   **content-forward 패턴:**
-   ```swift
-   // 큰 이미지 카드 피드
-   ScrollView {
-       LazyVStack(spacing: <Module>Spacing.l) {
-           ForEach(items) { item in
-               ContentCard(image: item.image, title: item.title, subtitle: item.description)
-                   .frame(height: 280)  // photo-forward: 이미지가 카드의 60%+
-           }
-       }
-   }
-   ```
-
-   **utility 패턴:**
-   ```swift
-   // Form 기반 단계별 레이아웃
-   Form {
-       Section("Step 1") {
-           TextField("Name", text: $name)
-           DatePicker("Date", selection: $date)
-       }
-       Section("Step 2") {
-           // 체크리스트 또는 피커
-       }
-   }
-   ```
-
-   **social 패턴:**
-   ```swift
-   // 타임라인 + 프로필 헤더 + FAB
-   ZStack(alignment: .bottomTrailing) {
-       List(posts) { post in
-           PostRow(avatar: post.author.avatar, name: post.author.name, content: post.content, timestamp: post.date)
-       }
-       Button(action: { showCompose = true }) {
-           Image(systemName: "plus")
-               .font(.title2.weight(.semibold))
-       }
-       .buttonStyle(.borderedProminent)
-       .clipShape(Circle())
-       .padding()
-   }
-   ```
-
-   > 화면별로 다른 Layout Personality가 지정된 경우 각 화면에 맞는 패턴을 적용한다.
-   > Layout Personality가 없으면 Screens 테이블의 Key UI Elements에서 추론한다.
+   - **Signature Layout 우선 (시각 동질성 방지)**: architecture.md의 `### Signature Layout` 이 정한 hero element·정보 위계·density·화면 간 차별화를 구현한다. 고정된 dashboard/feed/form/social 템플릿에서 출발하지 말고 각 화면의 목적과 Key UI Elements에서 composition을 도출한다. 최소 primary 와 2순위 화면은 시각적으로 구별되어야 하며 모든 화면을 동일한 `List`/`LazyVStack` 카드로 채우지 않는다.
 8. **Extract Components**: Reusable UI components in `<AppName>/Views/Components/`
 9. **Create ViewModels**: One ViewModel per screen in `<AppName>/ViewModels/`
 

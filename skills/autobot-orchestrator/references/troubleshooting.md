@@ -41,11 +41,11 @@
 
 | 증상 | 원인 | 해결 |
 |------|------|------|
-| "Cannot find type 'X'" | import 누락 또는 타입명 불일치 | quality-engineer가 자동 수정 (5회 반복) |
+| "Cannot find type 'X'" | import 누락 또는 타입명 불일치 | quality-engineer가 spec의 build-fix 한도 안에서 자동 수정 |
 | "No such module 'X'" | SPM dependency 미해결 | `xcodebuild -resolvePackageDependencies` 실행 |
 | 새 .swift 파일이 빌드에 안 잡힘 | pbxproj 재생성 안 함 | Phase 5 시작 시 자동 재생성 (Step 0) |
 | ServiceStubs 남아있음 | Integration Wiring 실패 | `/autobot:resume 5` |
-| 5회 재시도 후에도 실패 | 구조적 불일치 | Phase 4부터 재시도: `/autobot:resume 4` |
+| build-fix 한도 소진 | 구조적 불일치 | Phase 4부터 재시도: `/autobot:resume 4` |
 
 ### Phase 6: 배포 실패
 
@@ -86,6 +86,6 @@ cd .. && rm -rf <AppName>/
 
 | 증상 | 원인 | 완화 |
 |------|------|------|
-| Phase 1이 5분 이상 | opus 모델 사용 + 복잡한 아이디어 | 아이디어를 단순화 |
+| Phase 1이 오래 걸림 | 복잡한 아이디어·과도한 기능 범위 | 아이디어 범위를 줄임 |
 | Phase 4이 10분 이상 | 에이전트가 너무 많은 파일 생성 시도 | architect에서 화면 수를 5개 이하로 제한 |
-| Phase 5가 무한 루프 | 에이전트가 같은 에러를 반복 수정 | 5회 재시도 후 자동 중단됨, `/autobot:resume 4`으로 코드 재생성 |
+| Phase 5가 같은 에러를 반복 | 근본 원인 미해결 | signature breaker가 중단한 증거를 확인하고 `/autobot:resume 4`로 코드 재생성 |

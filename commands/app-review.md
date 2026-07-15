@@ -17,7 +17,7 @@ allowed-tools:
 
 `/autobot:testflight` 로 TestFlight까지 갔다면 그 다음 자연스러운 단계. **ASC 앱 등록 선행 → 메타데이터(연령등급 포함) 생성/업로드 → 스크린샷 계획·캡쳐·합성 → ASC 업로드 → 심사 제출**까지 한 번에 수행한다.
 
-**Phase 별 세부 절차·스킵 게이트·실패 매트릭스의 SSOT 는 `$CLAUDE_PLUGIN_ROOT/skills/autobot-app-review/SKILL.md` 다.** 본 커맨드는 진입점이며 다음만 소유한다: (1) 상태머신 진입/이탈 (Step 0/1/3/4), (2) Phase F 선행 anti-laundering 게이트 (Step 2.5). Phase 본문을 여기 복제하지 마라 — 커맨드-스킬 문서 드리프트가 무인 완주를 이미 두 번 깨뜨렸다 (register 선행 누락, 연령등급 단계 누락).
+**Phase 별 세부 절차·스킵 게이트·실패 매트릭스의 SSOT 는 `$CLAUDE_PLUGIN_ROOT/skills/autobot-app-review/SKILL.md` 다.** 본 커맨드는 상태머신 진입/이탈만 소유한다. 출하 anti-laundering은 archive 경계의 `pipeline.sh preflight-ship`이 소유한다. Phase 본문을 여기 복제하지 마라 — 커맨드-스킬 문서 드리프트가 무인 완주를 이미 두 번 깨뜨렸다 (register 선행 누락, 연령등급 단계 누락).
 
 ## CRITICAL RULES
 
@@ -30,41 +30,18 @@ allowed-tools:
 
 ## Step 0: 사전 검증
 
+controller의 Phase 0 완료가 통합 출하 진단을 실행한다. 실패 결과에는
+복구 방법이 구조화되어 있다.
+
 ```bash
-if [ ! -f .autobot/build-state.json ]; then
-  echo "ERROR: .autobot/build-state.json not found. Run /autobot:mvp first."
-  exit 1
-fi
-
-P5=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('phases',{}).get('5',{}).get('status',''))")
-if [ "$P5" != "completed" ]; then
-  echo "ERROR: Phase 5 (Integration & Build) not completed (status: $P5)."
-  echo "Run /autobot:resume to finish the build first."
-  exit 1
-fi
-
-# ASC 자격증명: 전역(`~/.autobot/.env`, /autobot:setup 이 기록) → 프로젝트 .env 순 로드.
-AUTOBOT_ENV_DIR="${AUTOBOT_CONFIG_DIR:-$HOME/.autobot}"
-set -a
-[ -f "$AUTOBOT_ENV_DIR/.env" ] && . "$AUTOBOT_ENV_DIR/.env"
-[ -f .env ] && . .env
-set +a
-for v in ASC_API_KEY_ID ASC_API_ISSUER_ID ASC_API_KEY_PATH; do
-  if [ -z "${!v:-}" ]; then
-    echo "ERROR: $v missing. Set once via /autobot:setup (~/.autobot/.env) or per-project ./.env"
-    echo "See: skills/autobot-upload-build/references/signing-guide.md"
-    exit 1
-  fi
-done
-
-BUNDLE_ID=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('bundleId',''))")
-DISPLAY_NAME=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('displayName',''))")
-if [ -z "$BUNDLE_ID" ]; then
-  echo "ERROR: bundleId missing in build-state.json. Run /autobot:setup."
-  exit 1
-fi
-echo "INFO: app-review for $DISPLAY_NAME ($BUNDLE_ID)"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" app-review-controller init
 ```
+
+Phase 0도 Step 2의 claim/complete 루프에서 실행한다. init 직후 미리 claim하지 않는다.
+
+build-state, Phase 5, bundle identity, ASC 자격증명 검증은 controller Phase 0의
+ship doctor가 단독 소유한다. command는 같은 조건을 다시 구현하지 않고 구조화된
+실패 결과와 복구 안내만 표시한다.
 
 ## Step 1: Phase 6 진입
 
@@ -81,9 +58,28 @@ case "$P6" in
 esac
 ```
 
-## Step 2: SKILL.md 의 phase 머신 실행
+## Step 2: 실행형 phase controller 구동
 
-`$CLAUDE_PLUGIN_ROOT/skills/autobot-app-review/SKILL.md` 를 Read 하고 그 안의 phase 머신을 **문서 그대로** 실행한다: **Phase 0 → 0b → A → B → C → D-1 → D-2 → H → E → F → G**. 각 phase 는 멱등 — 이미 완료된 산출물은 SKILL.md 의 스킵 게이트가 건너뛴다. 단 하나의 예외: **Phase F(deployer 디스패치) 직전에 아래 Step 2.5 게이트를 먼저 통과시킨다.**
+상태 순서·재개·산출물 identity 판정의 SSOT는 `app_review_controller.py`다.
+SKILL.md는 각 action의 실행 방법과 실패 원인만 제공한다.
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" app-review-controller next
+```
+
+controller가 반환한 단 하나의 action과 `claimToken`을 보관하고, SKILL.md에서
+action을 실행한 뒤 같은 token으로 결과를 기록한다. `action: busy`면 다른
+세션이 해당 phase를 소유한 것이므로 실행하지 않는다.
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" app-review-controller complete \
+  --phase '<PHASE>' --claim-token '<CLAIM_TOKEN>'
+# 실패 시
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" app-review-controller fail \
+  --phase '<PHASE>' --claim-token '<CLAIM_TOKEN>' --reason '<canonical reason>'
+```
+
+`next`가 `action: complete`를 반환할 때까지 반복한다. controller는 **0 → 0b → A → B → C → D1 → D2 → H → E → F → G** 의존성을 강제하며, Phase F는 현재 `buildId`·`bundleId`와 digest가 모두 일치하는 upload status만 재사용한다.
 
 사용자-가시 요약 (전체 흐름 — 각 phase 의 실행 명령·분기표는 SKILL.md 참조):
 
@@ -103,21 +99,7 @@ esac
 
 ## Step 2.5: Phase F 진입 전 기능 검증 게이트 (anti-laundering)
 
-deployer 디스패치 전에 Gate 5→6 을 신선하게 재실행한다. 정책 세부사항은 `spec/pipeline.json`과 `gate_checks.registry`가 소유한다; 이 명령 문서는 PASS 아니면 review 제출을 중단한다.
-
-```bash
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" run-gate --gate "5->6" || true
-
-FUNC_STATUS=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('gates',{}).get('5->6',{}).get('status','missing'))")
-if [ "$FUNC_STATUS" != "passed" ]; then
-  echo "ERROR: functional verification not passed (gate 5->6 status: $FUNC_STATUS). Refusing to submit for review."
-  [ "$FUNC_STATUS" = "degraded" ] && echo "       Functional flows UNVERIFIED — re-run /autobot:resume 5 on a host with simulator + axe + xcodebuild."
-  exit 1
-fi
-echo "INFO: functional verification passed — proceeding with Phase F"
-```
-
-통과하면 SKILL.md Phase F(deployer 디스패치)로 진행한다. deployer 가 중단 사유(name_collision / bundle_id_taken / asc_session_expired / asc_permission_denied / signing failure / upload 실패)를 보고하면 진단을 사용자에게 표시하고 Phase G 를 진행하지 않는다.
+Phase F의 deployer가 archive를 시작하면 `archive.sh`가 `pipeline.sh preflight-ship`으로 Gate 5→6의 fresh JSON 결과를 직접 판정한다. 이 command는 같은 gate를 선실행하거나 persisted status를 다시 해석하지 않는다. archive가 차단되면 deployer의 `preflight_ship_gate_failed`를 표시하고 Phase G를 진행하지 않는다.
 
 ## Step 3: Phase 6 advance
 

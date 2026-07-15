@@ -138,11 +138,9 @@ def _completeness_subcheck(
 ) -> dict:
     """P0 logic acceptance ↔ authored test coverage.
 
-    Default mode: NON-blocking WARNING (passed=True, never degraded) — the
-    autonomous /mvp path is not blocked by missing tests.
-    quality-max: a P0 logic acceptance with no named test becomes DEGRADED
-    (shipping-blocked) — deterministic (named-test grep), so this is a safe
-    gate to raise; still NOT a hard fail (no circuit-breaker risk).
+    A P0 logic acceptance with no named test is always DEGRADED. This remains
+    non-fatal for local autonomous progress, but the shipping gate refuses the
+    unverified result without consuming circuit-breaker retries.
     """
     if not features:
         return _ok("logic_test_completeness", True, "no P0 logic acceptances declared")
@@ -156,9 +154,8 @@ def _completeness_subcheck(
         return _ok(
             "logic_test_completeness", True,
             f"{len(missing)} P0 logic acceptance(s) without a named test: {missing}"
-            + (" — quality-max: DEGRADED (add a named test per P0 logic acceptance)"
-               if quality_max else " (WARNING)"),
-            skipped=quality_max, degraded=quality_max,
+            + " — DEGRADED (add a named test per P0 logic acceptance)",
+            skipped=True, degraded=True,
         )
     return _ok("logic_test_completeness", True,
                f"all {sum(len(f.logic_acceptance_ids) for f in features)} P0 logic acceptance(s) have a named test")
@@ -238,7 +235,7 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
     """Gate 5→6 — drive declared P0/P1 feature flows through AXe and assert
     postconditions.
 
-    - feature-spec absent          -> benign skip (passed=True, skipped=True)
+    - feature-spec absent          -> degraded skip (shipping-blocked)
     - zero P0 features declared     -> hard fail (deterministic count — an
       all-P1/P2 spec can fail every flow and still "pass" because P1 failures
       only warn; refusing it here is the gate-5->6 defense-in-depth for the
@@ -251,9 +248,9 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
     features = load_feature_spec(proj)
     if not features:
         return [_ok(
-            "functional_flows_pass", True,
-            ".autobot/feature-spec.json absent — skipping (no declared flows)",
-            skipped=True,
+            "functional_flows_pass", False,
+            ".autobot/feature-spec.json absent — functional release contract is missing",
+            skipped=True, degraded=True,
         )]
 
     if not any(getattr(f, "priority", None) == "P0" for f in features):

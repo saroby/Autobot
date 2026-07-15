@@ -58,7 +58,7 @@ mvp 와 동일한 3 tier (`autonomous` / `warn` / `require_confirmation`).
 | 3 | `bash scripts/pipeline.sh start-phase --phase 2.5 --detail "Plan preview"` | dispatcher 의 manual-skip 을 우회하는 **명시적** 진입 |
 | 4 | `autobot-plan-preview` 스킬 invoke | 스킬이 `build-preview.sh` + 멀티모달 critique + HTML 주입 + `open` 모두 수행 |
 | 5 | `bash scripts/pipeline.sh advance-phase --phase 2.5 --metadata preview_html_path=.autobot/designs/preview/index.html` | gate 2.5→3 (file_exists) 검증 + 상태 마킹 |
-| 6 | `bash scripts/pipeline.sh build-lock release` | Phase 7 의 `write-run-summary` 에 도달하지 않으므로 명시적 release 필요. 생략 시 다음 세션의 PID-liveness 가 reclaim 하지만 첫 명령에서 "build in progress" 경고 가능 |
+| 6 | `bash scripts/pipeline.sh build-lock release --force` | Phase 7의 generation-token release에 도달하지 않는 의도적 조기 종료이므로 명시적 force release |
 | 7 | **STOP** — Phase 3 자동 진입 금지. 완료 보고 출력 후 사용자 결정 대기 |
 
 각 phase 의 gate 실행, error recovery, retry 정책은 spec 과 orchestrator 가 소유한다.

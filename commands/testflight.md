@@ -15,6 +15,12 @@ allowed-tools:
 
 # Autobot TestFlight — 현재 버전을 TestFlight 에 업로드
 
+출하 전에 공통 준비도 진단을 실행한다.
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" doctor --profile ship --format json
+```
+
 `/autobot:mvp` 로 만든 MVP 를 사용자가 확인한 뒤, TestFlight 에 올릴 준비가 됐을 때 호출하는 명령. **register → archive → upload → invite-testers** 를 deployer 에이전트가 순차 실행한다. register 는 멱등이므로 첫 실행이면 자동 등록, 재실행이면 즉시 통과한다.
 
 **`/autobot:mvp` 와 분리된 이유:**
@@ -53,11 +59,8 @@ fi
 # 0c. ASC 자격증명 — 전역(`~/.autobot/.env`, /autobot:setup 이 기록) → 프로젝트 .env 순으로 로드.
 #     deployer 가 도는 register/upload/invite 스크립트도 같은 순서로 self-source 하므로,
 #     이 사전 검사는 그들이 보게 될 값을 그대로 반영한다.
-AUTOBOT_ENV_DIR="${AUTOBOT_CONFIG_DIR:-$HOME/.autobot}"
-set -a
-[ -f "$AUTOBOT_ENV_DIR/.env" ] && . "$AUTOBOT_ENV_DIR/.env"
-[ -f .env ] && . .env
-set +a
+. "$CLAUDE_PLUGIN_ROOT/scripts/release_env.sh"
+autobot_load_release_env .
 if [ -z "${ASC_API_KEY_ID:-}" ] || [ -z "${ASC_API_ISSUER_ID:-}" ] || [ -z "${ASC_API_KEY_PATH:-}" ]; then
   echo "ERROR: ASC API credentials not found."
   echo "Required: ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH"
@@ -108,30 +111,7 @@ esac
 
 ## Step 1.5: 기능 검증 사전 차단 (anti-laundering)
 
-archive/upload 직전에는 과거 metadata 를 믿지 말고 Gate 5→6 을 신선하게 재실행한다. 정책 세부사항은 `spec/pipeline.json`과 `gate_checks.registry`가 소유한다; 이 명령 문서는 PASS 아니면 배포 중단만 수행한다.
-
-```bash
-# 5→6 게이트를 신선하게 재실행 (evidence 를 state.gates["5->6"] 에 갱신 기록)
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" run-gate --gate "5->6" || true
-
-FUNC_STATUS=$(python3 -c "
-import json
-s = json.load(open('.autobot/build-state.json'))
-print(s.get('gates', {}).get('5->6', {}).get('status', 'missing'))
-")
-if [ "$FUNC_STATUS" != "passed" ]; then
-  echo "ERROR: functional verification not passed (gate 5->6 status: $FUNC_STATUS)."
-  if [ "$FUNC_STATUS" = "degraded" ]; then
-    echo "       Functional flows were UNVERIFIED (simulator/axe/xcodebuild unavailable)."
-    echo "       Refusing to ship an unverified build. Re-run /autobot:resume 5 on a host"
-    echo "       with a booted simulator + axe + xcodebuild, then retry /autobot:testflight."
-  else
-    echo "       Re-run /autobot:resume to fix Phase 5 before shipping."
-  fi
-  exit 1
-fi
-echo "INFO: functional verification passed (gate 5->6 = passed) — proceeding to deploy"
-```
+Gate 5→6 은 archive가 실제 출하 산출물을 만들기 직전에 `archive.sh`가 `pipeline.sh preflight-ship`으로 한 번 신선하게 검증한다. 이 command에서 같은 gate를 미리 실행하지 않는다. 그래야 고비용 기능 테스트를 중복 실행하지 않으면서, 직접 skill 호출이나 Phase 6 resume도 archive 경계에서 동일하게 차단된다.
 
 ## Step 2: deployer 에이전트 디스패치
 

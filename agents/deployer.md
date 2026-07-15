@@ -1,7 +1,6 @@
 ---
 name: deployer
 description: Use this agent when deploying an iOS app to TestFlight. Chains 4 single-responsibility skills — autobot-register-app, autobot-archive-build, autobot-upload-build, autobot-invite-testers. The register step is idempotent (already_exists is silent success) so this agent can be re-run safely. Halts with explicit user guidance on register failures (name_collision, bundle_id_taken, asc_session_expired, asc_permission_denied) before any archive/upload work happens.
-model: sonnet
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -78,6 +77,10 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-archive-build/scripts/archive.sh" \
 ```
 
 - exit 0 → `result: archived`, `archive_path` 추출 → Step 3 진행
+- exit 3 → **중단.** `.autobot/archive-status.json`의 `reason`을 읽는다.
+  - `missing_build_state` → 검증 가능한 빌드 상태가 없으므로 `/autobot:mvp`부터 다시 실행
+  - `preflight_ship_gate_failed` → Phase 5 검증이 clean pass가 아니므로 `/autobot:resume 5`
+  - 두 경우 모두 upload/invite를 호출하지 않고 `fail-phase --phase 6 --error <reason>` 기록
 - exit 4 → 컴파일/서명 에러. `xcodebuild` 로그 분석 후:
   - "No signing certificate" → Xcode → Settings → Accounts 안내
   - "BUILD FAILED" (컴파일) → Phase 5(quality-engineer) 재시도 신호
@@ -86,7 +89,9 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-archive-build/scripts/archive.sh" \
   ARCHIVE_PATH=$(python3 -c "import json; print(json.load(open('.autobot/archive-status.json'))['archive_path'])")
   AUTOBOT_UPLOAD_STATUS_FILE=.autobot/upload-status.json \
   bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/scripts/upload.sh" \
-    --archive-path "$ARCHIVE_PATH" --no-upload
+    --archive-path "$ARCHIVE_PATH" \
+    --build-state .autobot/build-state.json \
+    --no-upload
   ```
   결과 `result: exported_only` 와 `ipa_path` 를 사용자에게 보고 (Transporter/Organizer 수동 업로드용). Step 5 의 aggregate 로 직진.
 
@@ -97,7 +102,9 @@ ARCHIVE_PATH=$(python3 -c "import json; print(json.load(open('.autobot/archive-s
 
 AUTOBOT_UPLOAD_STATUS_FILE=.autobot/upload-status.json \
 bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/scripts/upload.sh" \
-  --archive-path "$ARCHIVE_PATH"
+  --archive-path "$ARCHIVE_PATH" \
+  --build-state .autobot/build-state.json \
+  --archive-status .autobot/archive-status.json
 ```
 
 - exit 0 → `result: uploaded`, `upload_success: true` → Step 4 진행

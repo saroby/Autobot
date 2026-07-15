@@ -14,6 +14,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -341,6 +342,49 @@ def check_prose_contract_drift(
     return errors
 
 
+def check_release_metadata_consistency(
+    manifest_text: str | None = None,
+    pyproject_text: str | None = None,
+) -> list[str]:
+    """Keep package metadata aligned with the plugin manifest release SSOT."""
+    manifest_path = PLUGIN_DIR / ".claude-plugin" / "plugin.json"
+    pyproject_path = PLUGIN_DIR / "pyproject.toml"
+    if manifest_text is None:
+        manifest_text = manifest_path.read_text(encoding="utf-8")
+    if pyproject_text is None:
+        pyproject_text = pyproject_path.read_text(encoding="utf-8")
+
+    try:
+        manifest = json.loads(manifest_text)
+    except (json.JSONDecodeError, TypeError) as exc:
+        return [f"{manifest_path.relative_to(PLUGIN_DIR)}: invalid JSON: {exc}"]
+
+    project_match = re.search(
+        r"(?ms)^\[project\]\s*$\n(.*?)(?=^\[|\Z)",
+        pyproject_text,
+    )
+    if project_match is None:
+        return ["pyproject.toml: missing [project] table"]
+
+    project_block = project_match.group(1)
+    errors: list[str] = []
+    for key in ("version", "description"):
+        value_match = re.search(
+            rf'(?m)^{key}\s*=\s*"([^"\n]*)"\s*$',
+            project_block,
+        )
+        if value_match is None:
+            errors.append(f"pyproject.toml: missing project.{key}")
+            continue
+        manifest_value = manifest.get(key)
+        if value_match.group(1) != manifest_value:
+            errors.append(
+                f"pyproject.toml project.{key} does not match "
+                f".claude-plugin/plugin.json {key}"
+            )
+    return errors
+
+
 def main() -> int:
     spec = load_spec()
     all_errors: list[str] = []
@@ -392,6 +436,11 @@ def main() -> int:
     errs = check_prose_generic_drift(spec)
     all_errors.extend(errs)
     print(f"  Generic prose drift (events/subcommands/paths): {'PASS' if not errs else f'{len(errs)} issues'}")
+
+    # 10. Release metadata
+    errs = check_release_metadata_consistency()
+    all_errors.extend(errs)
+    print(f"  Release metadata consistency: {'PASS' if not errs else f'{len(errs)} issues'}")
 
     if all_errors:
         print(f"\nERRORS ({len(all_errors)}):")

@@ -1,13 +1,15 @@
 """Tests for scripts/build_lock.py — the (previously unimplemented) build lock.
 
-Covers acquire/release/status, stale-lock reclaim via PID liveness, concurrent
-build rejection, and idempotent same-build / same-process re-acquire.
+Covers acquire/release/status, stale-lock reclaim, concurrent rejection, and
+explicit same-build takeover for resume.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,8 +37,12 @@ class TestBuildLock(unittest.TestCase):
     def _lock(self) -> Path:
         return self.proj / ".autobot" / "build.lock"
 
-    def _seed_lock(self, *, pid: int, build_id: str) -> None:
-        self._lock().write_text(json.dumps({"pid": pid, "buildId": build_id}))
+    def _seed_lock(self, *, pid: int, build_id: str, token: str = "seed-token") -> None:
+        self._lock().write_text(json.dumps({
+            "pid": pid,
+            "buildId": build_id,
+            "lockToken": token,
+        }))
 
     # ── acquire ──
 
@@ -47,6 +53,79 @@ class TestBuildLock(unittest.TestCase):
         self.assertEqual(data["pid"], os.getpid())
         self.assertEqual(data["buildId"], "build-A")
         self.assertIn("acquiredAt", data)
+        self.assertIn("leaseExpiresAt", data)
+
+    def test_cli_acquire_remains_live_after_acquiring_process_exits(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(build_lock.__file__)),
+                "acquire",
+                "--project-dir",
+                str(self.proj),
+                "--build-id",
+                "build-A",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        lock_status = build_lock.status(self.proj)
+        self.assertTrue(lock_status["holderAlive"], lock_status)
+        self.assertFalse(lock_status["stale"], lock_status)
+
+        contender = subprocess.run(
+            [
+                sys.executable,
+                str(Path(build_lock.__file__)),
+                "acquire",
+                "--project-dir",
+                str(self.proj),
+                "--build-id",
+                "build-B",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(contender.returncode, 2, contender.stdout)
+        self.assertIn("another build is already running", contender.stdout)
+
+        released = subprocess.run(
+            [
+                sys.executable,
+                str(Path(build_lock.__file__)),
+                "release",
+                "--project-dir",
+                str(self.proj),
+                "--build-id",
+                "build-A",
+                "--expected-token",
+                str(lock_status["lockToken"]),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(released.returncode, 0, released.stderr)
+        self.assertEqual(build_lock.status(self.proj), {"locked": False})
+
+    def test_cli_json_acquire_returns_owned_generation_atomically(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(build_lock.__file__)),
+                "acquire",
+                "--project-dir", str(self.proj),
+                "--build-id", "build-A",
+                "--format", "json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["lockToken"], build_lock.status(self.proj)["lockToken"])
 
     def test_acquire_blocks_when_live_foreign_build_holds_lock(self):
         self._seed_lock(pid=FOREIGN_ALIVE_PID, build_id="other-build")
@@ -63,26 +142,125 @@ class TestBuildLock(unittest.TestCase):
         self.assertIn("reclaimed stale", reason)
         self.assertEqual(json.loads(self._lock().read_text())["buildId"], "build-A")
 
-    def test_acquire_same_build_different_process_reacquires(self):
-        self._seed_lock(pid=FOREIGN_ALIVE_PID, build_id="build-A")
+    def test_acquire_reclaims_expired_lease_even_if_recorded_pid_is_live(self):
+        self._lock().write_text(
+            json.dumps(
+                {
+                    "pid": FOREIGN_ALIVE_PID,
+                    "buildId": "crashed-build",
+                    "acquiredAt": "2000-01-01T00:00:00Z",
+                    "leaseExpiresAt": "2000-01-01T01:00:00Z",
+                }
+            )
+        )
         ok, reason = build_lock.acquire(self.proj, "build-A")
         self.assertTrue(ok, reason)
-        self.assertIn("same build", reason)
+        self.assertIn("reclaimed stale", reason)
+        self.assertEqual(json.loads(self._lock().read_text())["buildId"], "build-A")
+
+    def test_acquire_same_build_different_process_requires_explicit_takeover(self):
+        self._seed_lock(pid=FOREIGN_ALIVE_PID, build_id="build-A")
+        ok, reason = build_lock.acquire(self.proj, "build-A")
+        self.assertFalse(ok, reason)
+        ok, reason = build_lock.acquire(
+            self.proj,
+            "build-A",
+            takeover_same_build=True,
+            expected_token="seed-token",
+        )
+        self.assertTrue(ok, reason)
+        self.assertIn("takeover", reason)
         self.assertEqual(json.loads(self._lock().read_text())["pid"], os.getpid())
 
-    def test_acquire_same_process_reacquires(self):
-        build_lock.acquire(self.proj, "build-A")
-        ok, reason = build_lock.acquire(self.proj, "build-B")  # same process
+    def test_same_build_takeover_rejects_stale_compare_and_swap_token(self):
+        ok, reason = build_lock.acquire(self.proj, "build-A")
         self.assertTrue(ok, reason)
-        self.assertIn("same process", reason)
+        stale_token = build_lock.status(self.proj)["lockToken"]
+        ok, reason = build_lock.acquire(
+            self.proj,
+            "build-A",
+            takeover_same_build=True,
+            expected_token=stale_token,
+        )
+        self.assertTrue(ok, reason)
+        ok, reason = build_lock.acquire(
+            self.proj,
+            "build-A",
+            takeover_same_build=True,
+            expected_token=stale_token,
+        )
+        self.assertFalse(ok)
+        self.assertIn("token changed", reason)
+
+    def test_acquire_same_process_different_build_is_blocked(self):
+        build_lock.acquire(self.proj, "build-A")
+        ok, reason = build_lock.acquire(self.proj, "build-B")
+        self.assertFalse(ok, reason)
+        self.assertIn("already running", reason)
+
+    def test_two_processes_cannot_acquire_the_same_unlocked_project(self):
+        start = self.proj / "start"
+        code = (
+            "import pathlib,sys,time; import build_lock; "
+            "root=pathlib.Path(sys.argv[1]); start=pathlib.Path(sys.argv[2]); "
+            "\nwhile not start.exists(): time.sleep(0.001)\n"
+            "ok,_=build_lock.acquire(root, sys.argv[3]); raise SystemExit(0 if ok else 2)"
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path(build_lock.__file__).parent)
+        processes = [
+            subprocess.Popen(
+                [sys.executable, "-c", code, str(self.proj), str(start), build_id],
+                env=env,
+            )
+            for build_id in ("build-A", "build-B")
+        ]
+        start.touch()
+        returncodes = sorted(process.wait(timeout=10) for process in processes)
+        self.assertEqual(returncodes, [0, 2])
 
     # ── release ──
 
     def test_release_removes_own_lock(self):
         build_lock.acquire(self.proj, "build-A")
-        ok, reason = build_lock.release(self.proj, "build-A")
+        token = build_lock.status(self.proj)["lockToken"]
+        ok, reason = build_lock.release(
+            self.proj, "build-A", expected_token=token
+        )
         self.assertTrue(ok, reason)
         self.assertFalse(self._lock().exists())
+
+    def test_superseded_owner_cannot_release_new_generation(self):
+        build_lock.acquire(self.proj, "build-A")
+        old_token = build_lock.status(self.proj)["lockToken"]
+        build_lock.acquire(
+            self.proj,
+            "build-A",
+            takeover_same_build=True,
+            expected_token=old_token,
+        )
+        ok, _ = build_lock.release(
+            self.proj, "build-A", expected_token=old_token
+        )
+        self.assertFalse(ok)
+        self.assertTrue(self._lock().exists())
+
+    def test_terminal_summary_cannot_supersede_live_generation(self):
+        build_lock.acquire(self.proj, "build-A")
+        old_token = build_lock.status(self.proj)["lockToken"]
+        build_lock.acquire(
+            self.proj,
+            "build-A",
+            takeover_same_build=True,
+            expected_token=old_token,
+        )
+        new_token = build_lock.status(self.proj)["lockToken"]
+        summary = self.proj / "artifacts" / "build-A" / "run-summary.json"
+        summary.parent.mkdir(parents=True)
+        summary.write_text("{}")
+        ok, reason = build_lock.acquire(self.proj, "build-B")
+        self.assertFalse(ok, reason)
+        self.assertEqual(build_lock.status(self.proj)["lockToken"], new_token)
 
     def test_release_no_lock_is_ok(self):
         ok, reason = build_lock.release(self.proj, "build-A")

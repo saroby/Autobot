@@ -98,8 +98,8 @@ def _propagate_to_common_errors(data: dict, rule_text: str, delta: int) -> int:
     primary prompt channel ignored quarantine entirely (the W2 defect). The
     match is best-effort text equality/containment: when an agent logs the exact
     prevention rule it applied via ``--rule`` the link is exact, and a miss is
-    harmless (the items[]/context_pack channel still honors quarantine on its
-    own). Returns the number of entries updated.
+    harmless because items[] remains audit/grade data rather than a prompt
+    channel. Returns the number of entries updated.
     """
     rule_n = _norm_text(rule_text)
     if not rule_n:
@@ -200,7 +200,7 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
                     # strings (legacy + the gate-visible name cli.py always
                     # appends) and first-build sources:[] placeholders would
                     # otherwise promote strings like "architect" or fabricated
-                    # "clean first build" rules into HIGH-IMPACT LEARNINGS and
+                    # "clean first build" rules into active learnings and
                     # leak to the global store. Existing items keep grading.
                     continue
                 item = {
@@ -221,8 +221,7 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
                 runs.append(build_id)
                 runs[:] = runs[-10:]  # cap history
             # Mirror the outcome onto the rendered prevention-rule store so a
-            # hurtful rule also drops out of active-learnings.md / phase files,
-            # not only the items[]/context_pack channel (W2).
+            # hurtful rule also drops out of active-learnings.md / phase files.
             if rule_text:
                 _propagate_to_common_errors(data, rule_text, delta)
             updated += 1

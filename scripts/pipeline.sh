@@ -20,9 +20,12 @@
 #   bash pipeline.sh freeze-contracts     decide|apply --phase 1 [--regenerate]
 #   bash pipeline.sh context-pack         --phase N --agent <name> [--budget N] [--format text|json]
 #   bash pipeline.sh error-signature      check|record|normalize --phase N [--stderr-file ...|--signature ...]
+#   bash pipeline.sh build-checkpoint     save|latest|restore [--attempt N] [--exclude-signature HASH]
+#   bash pipeline.sh app-review-controller init|next|complete|fail|status
+#   bash pipeline.sh doctor               --profile local|ship --format text|json
 #   bash pipeline.sh design-spec          validate|synthesize|ensure ...
 #   bash pipeline.sh sandbox              check|set-active|clear-active ...
-#   bash pipeline.sh build-lock           acquire --build-id <id> | release [--force] | status
+#   bash pipeline.sh build-lock           acquire --build-id <id> | release --build-id <id> [--expected-token <token>|--force] | status
 set -euo pipefail
 
 MODE="${1:-}"
@@ -30,7 +33,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${SCRIPT_DIR}/runtime.py"
 
-USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|preflight-ship|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|error-signature|design-spec|sandbox|build-lock> [options]"
+USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|preflight-ship|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|error-signature|build-checkpoint|app-review-controller|doctor|design-spec|sandbox|build-lock> [options]"
 
 if [[ -z "$MODE" ]]; then
   echo "$USAGE" >&2
@@ -67,11 +70,12 @@ EOF
     # never from previously persisted state.gates evidence — so a crashed
     # re-run cannot hide behind a stale 'passed'. Only a CLEAN pass ships:
     # 'degraded' means functional verification could not run (unverified).
-    # Standalone use (no build-state.json) passes with a warning — archive.sh
-    # is also a manual, out-of-pipeline tool by contract.
+    # A shippable artifact without build state has no verification identity.
+    # Manual callers must initialize/verify the project rather than bypassing
+    # the anti-laundering boundary.
     if [[ ! -f "$PROJECT_DIR/.autobot/build-state.json" ]]; then
-      echo "WARN: preflight-ship: no .autobot/build-state.json in $PROJECT_DIR — standalone use, gate 5->6 not enforced" >&2
-      exit 0
+      echo "ERROR: preflight-ship: no .autobot/build-state.json in $PROJECT_DIR — refusing to ship without verified build state" >&2
+      exit 1
     fi
     GATE_JSON="$(python3 "$RUNTIME" run-gate --project-dir "$PROJECT_DIR" --gate "5->6" --format json "$@" || true)"
     printf '%s' "$GATE_JSON" | python3 -c '
@@ -120,6 +124,17 @@ raise SystemExit(1)
   error-signature)
     SUBCMD="${1:-check}"; shift || true
     exec python3 "${SCRIPT_DIR}/error_signature.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
+    ;;
+  build-checkpoint)
+    SUBCMD="${1:-latest}"; shift || true
+    exec python3 "${SCRIPT_DIR}/build_checkpoint.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
+    ;;
+  app-review-controller)
+    SUBCMD="${1:-status}"; shift || true
+    exec python3 "${SCRIPT_DIR}/app_review_controller.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
+    ;;
+  doctor)
+    exec python3 "${SCRIPT_DIR}/doctor.py" --project-dir "$PROJECT_DIR" "$@"
     ;;
   design-spec)
     SUBCMD="${1:-ensure}"; shift || true

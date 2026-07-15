@@ -24,6 +24,15 @@ TEAM_ID=""
 ARCHIVE_PATH=""
 CONFIGURATION="Release"
 DRY_RUN=0
+ARTIFACT_APP_PATH=""
+ARTIFACT_BUNDLE_ID=""
+ARTIFACT_VERSION=""
+ARTIFACT_BUILD=""
+ARTIFACT_DIGEST=""
+ARCHIVE_DIGEST=""
+ARTIFACT_CODESIGN_STATUS=""
+STATUS_BUILD_ID=""
+STATUS_INPUT_MANIFEST_HASH=""
 
 usage() {
   cat <<'USAGE'
@@ -112,6 +121,12 @@ if ! command -v python3 &>/dev/null; then
   exit 1
 fi
 
+BUILD_STATE_PATH="$PROJECT_PATH/.autobot/build-state.json"
+if [ -f "$BUILD_STATE_PATH" ]; then
+  STATUS_BUILD_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("buildId", ""))' "$BUILD_STATE_PATH" 2>/dev/null || true)"
+  STATUS_INPUT_MANIFEST_HASH="$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print((((s.get("phases") or {}).get("5") or {}).get("inputHash")) or "")' "$BUILD_STATE_PATH" 2>/dev/null || true)"
+fi
+
 # Scheme validation — keep simple, Xcode allows fairly broad chars but we lock down
 if ! printf '%s' "$SCHEME" | grep -Eq '^[A-Za-z0-9._ -]{1,100}$'; then
   log_error "scheme name invalid (allowed: A-Z a-z 0-9 . _ - space, 1..100 chars)"
@@ -165,7 +180,7 @@ import json, sys
 data = {}
 for arg in sys.argv[1:]:
     k, _, v = arg.partition("=")
-    data[k] = v
+    data[k] = int(v) if k == "schemaVersion" else v
 print(json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2))
 ' "$@"
 }
@@ -181,12 +196,26 @@ write_status() {
   mkdir -p "$(dirname "$target")"
   local tmp="${target}.tmp.$$"
   emit_json \
+    "schemaVersion=1" \
     "result=$result" \
+    "buildId=$STATUS_BUILD_ID" \
+    "bundleId=$ARTIFACT_BUNDLE_ID" \
+    "buildNumber=$ARTIFACT_BUILD" \
+    "artifactSha256=$ARTIFACT_DIGEST" \
+    "archiveSha256=$ARCHIVE_DIGEST" \
+    "inputManifestHash=$STATUS_INPUT_MANIFEST_HASH" \
     "scheme=$SCHEME" \
     "archive_path=$ARCHIVE_PATH" \
     "configuration=$CONFIGURATION" \
     "team_id=$TEAM_ID" \
     "reason=$reason" \
+    "app_path=$ARTIFACT_APP_PATH" \
+    "bundle_id=$ARTIFACT_BUNDLE_ID" \
+    "version=$ARTIFACT_VERSION" \
+    "build=$ARTIFACT_BUILD" \
+    "artifact_digest=$ARTIFACT_DIGEST" \
+    "archive_digest=$ARCHIVE_DIGEST" \
+    "codesign_status=$ARTIFACT_CODESIGN_STATUS" \
     "timestamp=$ts" \
     > "$tmp"
   mv -f "$tmp" "$target"
@@ -204,17 +233,19 @@ trap cleanup EXIT INT TERM HUP
 # ── Shipping preflight (anti-laundering) ─────────────────────────────────
 # Archiving is where a build becomes a shippable artifact, so gate 5->6 is
 # re-proven HERE at runtime — command-markdown snippets alone can be bypassed
-# (skill triggered directly, resume 6). Standalone use stays supported by
-# contract: without .autobot/build-state.json this warns and proceeds.
+# (skill triggered directly, resume 6). Missing state is not evidence: release
+# archive creation therefore fails closed instead of silently becoming a
+# standalone unverified shipping path.
 if [ "$DRY_RUN" -eq 0 ]; then
-  if [ -f "$PROJECT_PATH/.autobot/build-state.json" ]; then
-    if ! CLAUDE_PROJECT_DIR="$PROJECT_PATH" bash "$PLUGIN_ROOT/scripts/pipeline.sh" preflight-ship; then
-      log_error "preflight-ship refused: gate 5->6 is not a clean pass — not archiving an unverified build"
-      write_status "failed" "preflight_ship_gate_failed"
-      exit 3
-    fi
-  else
-    log_warn "no .autobot/build-state.json under $PROJECT_PATH — standalone archive, pipeline gate 5->6 not enforced"
+  if [ ! -f "$PROJECT_PATH/.autobot/build-state.json" ]; then
+    log_error "preflight-ship refused: no .autobot/build-state.json under $PROJECT_PATH"
+    write_status "failed" "missing_build_state"
+    exit 3
+  fi
+  if ! CLAUDE_PROJECT_DIR="$PROJECT_PATH" bash "$PLUGIN_ROOT/scripts/pipeline.sh" preflight-ship; then
+    log_error "preflight-ship refused: gate 5->6 is not a clean pass — not archiving an unverified build"
+    write_status "failed" "preflight_ship_gate_failed"
+    exit 3
   fi
 fi
 
@@ -308,17 +339,39 @@ if [ $ARCHIVE_EXIT -ne 0 ] || [ ! -d "$ARCHIVE_PATH" ]; then
   exit 4
 fi
 
+# Prove the packaged artifact, not merely the .xcarchive directory. The helper
+# requires exactly one embedded app, a complete bundle identity, a Mach-O
+# executable, and a valid signature when codesign is available.
+set +e
+ARTIFACT_JSON="$(python3 "$PLUGIN_ROOT/scripts/artifact_provenance.py" \
+  inspect-archive --archive-path "$ARCHIVE_PATH" 2>&1)"
+ARTIFACT_EXIT=$?
+set -e
+if [ $ARTIFACT_EXIT -ne 0 ]; then
+  log_error "archive artifact verification failed: $ARTIFACT_JSON"
+  write_status "failed" "invalid_archive_artifact"
+  exit 4
+fi
+
+json_field() {
+  python3 -c 'import json,sys; value=json.loads(sys.argv[1]).get(sys.argv[2], ""); print(value)' "$1" "$2"
+}
+ARTIFACT_APP_PATH="$(json_field "$ARTIFACT_JSON" appPath)"
+ARTIFACT_BUNDLE_ID="$(json_field "$ARTIFACT_JSON" bundleId)"
+ARTIFACT_VERSION="$(json_field "$ARTIFACT_JSON" version)"
+ARTIFACT_BUILD="$(json_field "$ARTIFACT_JSON" build)"
+ARTIFACT_DIGEST="$(json_field "$ARTIFACT_JSON" artifactDigest)"
+ARCHIVE_DIGEST="$(json_field "$ARTIFACT_JSON" archiveDigest)"
+ARTIFACT_CODESIGN_STATUS="$(json_field "$ARTIFACT_JSON" codesignStatus)"
+
 # Export Compliance post-check: verify the embedded Info.plist contains
 # ITSAppUsesNonExemptEncryption. If missing, the build will be flagged
 # "Missing Compliance" on ASC and testers can't install it — refuse to ship it.
-EMBEDDED_APP="$(ls -d "$ARCHIVE_PATH"/Products/Applications/*.app 2>/dev/null | head -1 || true)"
-if [ -n "$EMBEDDED_APP" ] && [ -f "$EMBEDDED_APP/Info.plist" ]; then
-  if ! plutil -extract ITSAppUsesNonExemptEncryption raw "$EMBEDDED_APP/Info.plist" &>/dev/null; then
-    log_error "archive Info.plist missing ITSAppUsesNonExemptEncryption — would trigger '수출 규정 관련 문서 누락' on ASC"
-    log_info  "set INFOPLIST_KEY_ITSAppUsesNonExemptEncryption=NO in the target's build settings"
-    write_status "failed" "missing_export_compliance"
-    exit 4
-  fi
+if ! plutil -extract ITSAppUsesNonExemptEncryption raw "$ARTIFACT_APP_PATH/Info.plist" &>/dev/null; then
+  log_error "archive Info.plist missing ITSAppUsesNonExemptEncryption — would trigger '수출 규정 관련 문서 누락' on ASC"
+  log_info  "set INFOPLIST_KEY_ITSAppUsesNonExemptEncryption=NO in the target's build settings"
+  write_status "failed" "missing_export_compliance"
+  exit 4
 fi
 
 log_ok "archive created: $ARCHIVE_PATH"

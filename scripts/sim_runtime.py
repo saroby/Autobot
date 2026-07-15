@@ -29,6 +29,13 @@ import time
 from pathlib import Path
 
 import env_snapshot
+from artifact_provenance import (
+    ArtifactVerificationError,
+    MANIFEST_NAME,
+    inspect_app_bundle,
+    load_verified_app_manifest,
+)
+from state_store import state_file_for, try_load_state
 
 DEFAULT_LAUNCH_WAIT_SECONDS = 4
 DEFAULT_SIMCTL_TIMEOUT = 120
@@ -36,13 +43,7 @@ MAX_BOOT_RETRY = 1
 
 
 def _runtime_smoke_screenshot(project_root: Path) -> Path:
-    state = project_root / ".autobot" / "build-state.json"
-    build_id = "unknown-build"
-    if state.is_file():
-        try:
-            build_id = json.loads(state.read_text(encoding="utf-8")).get("buildId") or build_id
-        except (json.JSONDecodeError, OSError):
-            pass
+    build_id = _current_build_id(project_root)
     path = project_root / "artifacts" / build_id / "phase-5" / "runtime-smoke"
     path.mkdir(parents=True, exist_ok=True)
     return path / "screenshot.png"
@@ -115,63 +116,59 @@ def _boot(udid: str) -> tuple[bool, str]:
 
 
 def _is_valid_app_bundle(app: Path, app_name: str) -> bool:
-    """Reject .app bundles where `<App>.app/<App>` is a directory, not a
-    Mach-O executable.
-
-    The xcodegen `type: folder` regression (Solos / Murmur build-20260526)
-    produced bundles whose primary binary was itself a directory, so
-    `simctl install` failed with IXUserPresentableErrorDomain code=1 after
-    the smoke gate accepted the path. Validating the Mach-O header at
-    discovery time keeps stale DerivedData artifacts from poisoning the
-    smoke check.
-    """
-    inner = app / app_name
-    if not inner.is_file():
-        return False
+    """Compatibility wrapper around the provenance verifier."""
     try:
-        with inner.open("rb") as f:
-            head = f.read(4)
-    except OSError:
+        inspect_app_bundle(app, expected_name=app_name)
+    except ArtifactVerificationError:
         return False
-    # Mach-O magic numbers (any of these): 32/64-bit, big/little endian, fat.
-    mach_o_magics = {
-        b"\xfe\xed\xfa\xce",  # 32-bit BE
-        b"\xce\xfa\xed\xfe",  # 32-bit LE
-        b"\xfe\xed\xfa\xcf",  # 64-bit BE
-        b"\xcf\xfa\xed\xfe",  # 64-bit LE
-        b"\xca\xfe\xba\xbe",  # universal/fat BE
-        b"\xbe\xba\xfe\xca",  # universal/fat LE
-    }
-    return head in mach_o_magics
+    return True
+
+
+def _current_build_id(project_root: Path) -> str:
+    state = try_load_state(state_file_for(project_root)) or {}
+    return state.get("buildId") or "unknown-build"
+
+
+def _attempt_number(path: Path) -> int:
+    try:
+        return int(path.name.removeprefix("attempt-"))
+    except ValueError:
+        return -1
+
+
+def _load_built_app_provenance(project_root: Path, app_name: str) -> tuple[Path | None, dict | None, str | None]:
+    """Load and re-hash only the newest manifest for the current build.
+
+    There is intentionally no global DerivedData fallback. A runtime result is
+    useful as shipping proof only when it identifies the exact Phase 5 output
+    that produced the current build's provenance manifest.
+    """
+    build_id = _current_build_id(project_root)
+    phase5 = project_root / "artifacts" / build_id / "phase-5"
+    attempts = sorted(
+        (path for path in phase5.glob("attempt-*") if path.is_dir()),
+        key=_attempt_number,
+        reverse=True,
+    )
+    if not attempts:
+        return None, None, "artifact_provenance_missing"
+    manifest_path = attempts[0] / MANIFEST_NAME
+    if not manifest_path.is_file():
+        return None, None, "artifact_provenance_missing_for_latest_attempt"
+    try:
+        manifest = load_verified_app_manifest(
+            manifest_path,
+            expected_build_id=build_id,
+            expected_app_name=app_name,
+        )
+    except ArtifactVerificationError as exc:
+        return None, None, f"artifact_provenance_invalid: {exc}"
+    return Path(manifest["appPath"]), manifest, None
 
 
 def _find_built_app(project_root: Path, app_name: str) -> Path | None:
-    """Look for the .app produced by xcodebuild.
-
-    Order:
-      1. The artifact captured by `phase-5/attempt-*/Build/Products/Debug-iphonesimulator/<App>.app`
-         (when we ran with -resultBundlePath)
-      2. `~/Library/Developer/Xcode/DerivedData/<App>-*/Build/Products/Debug-iphonesimulator/<App>.app`
-
-    Each candidate is Mach-O verified before being returned so a corrupted
-    cached bundle (folder-typed binary) cannot mask a healthy newer build.
-    """
-    candidates: list[Path] = []
-    phase5 = project_root / ".autobot" / "phase-5"
-    if phase5.is_dir():
-        for attempt in sorted(phase5.glob("attempt-*"), reverse=True):
-            for app in attempt.rglob(f"{app_name}.app"):
-                candidates.append(app)
-    derived = Path.home() / "Library" / "Developer" / "Xcode" / "DerivedData"
-    if derived.is_dir():
-        for product_dir in derived.glob(f"{app_name}-*/Build/Products/Debug-iphonesimulator"):
-            app = product_dir / f"{app_name}.app"
-            if app.is_dir():
-                candidates.append(app)
-    for c in candidates:
-        if _is_valid_app_bundle(c, app_name):
-            return c
-    return None
+    app, _, _ = _load_built_app_provenance(project_root, app_name)
+    return app
 
 
 def _resolve_bundle_id(project_root: Path, app_name: str, app_path: Path) -> str | None:
@@ -184,14 +181,8 @@ def _resolve_bundle_id(project_root: Path, app_name: str, app_path: Path) -> str
     if rc == 0 and stdout.strip():
         return stdout.strip()
     # Fallback: read the .autobot/build-state.json bundleId, if present.
-    state = project_root / ".autobot" / "build-state.json"
-    if state.is_file():
-        try:
-            data = json.loads(state.read_text(encoding="utf-8"))
-            return data.get("bundleId")
-        except (json.JSONDecodeError, OSError):
-            pass
-    return None
+    state = try_load_state(state_file_for(project_root)) or {}
+    return state.get("bundleId")
 
 
 def _is_process_alive(udid: str, bundle_id: str) -> tuple[bool, str]:
@@ -246,9 +237,9 @@ def smoke(project_root: Path, app_name: str, *, wait_seconds: int = DEFAULT_LAUN
     if not udid:
         return _result("skipped", skipReason=udid_source)
 
-    app = _find_built_app(project_root, app_name)
+    app, provenance, provenance_error = _load_built_app_provenance(project_root, app_name)
     if app is None:
-        return _result("skipped", skipReason="app_artifact_missing")
+        return _result("skipped", skipReason=provenance_error or "app_artifact_missing")
 
     bundle_id = _resolve_bundle_id(project_root, app_name, app)
     if not bundle_id:
@@ -303,6 +294,13 @@ def smoke(project_root: Path, app_name: str, *, wait_seconds: int = DEFAULT_LAUN
         udid=udid,
         bundleId=bundle_id,
         appPath=str(app),
+        artifactDigest=provenance.get("artifactDigest") if provenance else None,
+        artifactBuildId=provenance.get("buildId") if provenance else None,
+        artifactManifestPath=(
+            str(project_root / "artifacts" / provenance["buildId"] / "phase-5"
+                / f"attempt-{provenance['attempt']}" / MANIFEST_NAME)
+            if provenance else None
+        ),
         processDetail=alive_detail,
         screenshotCaptured=captured,
         screenshotPath=str(screenshot_path) if captured else None,

@@ -31,18 +31,21 @@ import subprocess
 import time
 from pathlib import Path
 
+from artifact_provenance import (
+    ArtifactVerificationError,
+    MANIFEST_NAME,
+    find_app_in_derived_data,
+    write_app_manifest,
+)
+from state_store import state_file_for, try_load_state
+
 DEFAULT_DESTINATION = "generic/platform=iOS Simulator"
 DEFAULT_TIMEOUT = 600  # 10 minutes — scaffold builds are tiny but cold caches are slow.
 
 
 def _build_id(project_root: Path) -> str:
-    state = project_root / ".autobot" / "build-state.json"
-    if state.is_file():
-        try:
-            return json.loads(state.read_text(encoding="utf-8")).get("buildId") or "unknown-build"
-        except (json.JSONDecodeError, OSError):
-            pass
-    return "unknown-build"
+    state = try_load_state(state_file_for(project_root)) or {}
+    return state.get("buildId") or "unknown-build"
 
 
 def _artifact_dir(project_root: Path, *, phase: int, attempt: int | None) -> Path:
@@ -242,10 +245,22 @@ def integration_build(
     attempt_root = _canonical_attempt_dir(project_root, phase=5, attempt=attempt)
     log_path = attempt_root / "xcodebuild.log"
     result_bundle = attempt_root / "Build.xcresult"
+    build_cache = attempt_root.parent / "_DerivedData"
+    derived_data = attempt_root / "DerivedData"
+    manifest_path = attempt_root / MANIFEST_NAME
     # xcodebuild refuses to overwrite an existing -resultBundlePath; clear any
-    # stale bundle from a prior attempt/run so re-runs don't spuriously fail.
+    # stale output from a prior run. Keep one build-scoped DerivedData cache for
+    # incremental compilation, but remove the target app product before every
+    # command and copy the newly produced bundle into attempt-local proof.
     shutil.rmtree(result_bundle, ignore_errors=True)
+    shutil.rmtree(derived_data, ignore_errors=True)
+    for stale_app in (build_cache / "Build" / "Products").glob(
+        f"*-iphonesimulator/{app_name}.app"
+    ):
+        shutil.rmtree(stale_app, ignore_errors=True)
+    manifest_path.unlink(missing_ok=True)
     extra: list[str] = [
+        "-derivedDataPath", str(build_cache),
         "-resultBundlePath", str(result_bundle),
         "test" if test else "build",
     ]
@@ -257,7 +272,7 @@ def integration_build(
         timeout=DEFAULT_TIMEOUT,
         destination=destination or DEFAULT_DESTINATION,
     )
-    return _build_result(
+    result = _build_result(
         phase="5",
         project=project,
         rc=rc,
@@ -267,6 +282,43 @@ def integration_build(
         log_path=log_path,
         result_bundle=result_bundle,
     )
+    result["derivedDataPath"] = str(derived_data)
+    result["buildCachePath"] = str(build_cache)
+    result["buildId"] = _build_id(project_root)
+    if result["status"] != "passed":
+        return result
+
+    try:
+        built_app = find_app_in_derived_data(build_cache, app_name)
+        relative_app = built_app.relative_to(build_cache.resolve())
+        app_path = derived_data / relative_app
+        app_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(built_app, app_path, symlinks=True)
+        manifest = write_app_manifest(
+            app_path,
+            manifest_path,
+            build_id=result["buildId"],
+            app_name=app_name,
+            attempt=attempt,
+            derived_data_path=derived_data,
+        )
+    except (ArtifactVerificationError, OSError) as exc:
+        result["status"] = "failed"
+        message = str(exc)
+        result["artifactError"] = (
+            "app_artifact_missing" if "app_artifact_missing" in message else message
+        )
+        return result
+
+    result.update({
+        "appPath": manifest["appPath"],
+        "artifactManifestPath": str(manifest_path),
+        "artifactDigest": manifest["artifactDigest"],
+        "bundleId": manifest["bundleId"],
+        "version": manifest["version"],
+        "build": manifest["build"],
+    })
+    return result
 
 
 # CLI surface so shell scripts (and gate runners that prefer subprocess) can

@@ -230,6 +230,9 @@ class TestFeedbackEvents(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             proj = Path(tmp)
             (proj / ".autobot").mkdir()
+            (proj / ".autobot" / "build-state.json").write_text(json.dumps({
+                "buildId": "feedback-build",
+            }))
             (proj / ".autobot" / "build-log.jsonl").write_text("")
             target = append_feedback_event(proj, "external_feedback_recorded", {
                 "themes_count": 2, "bundle_id": "com.example.demo",
@@ -237,6 +240,8 @@ class TestFeedbackEvents(unittest.TestCase):
             }, spec=_LOG_EVENTS_SPEC)
             self.assertEqual(target.name, "build-log.jsonl")
             self.assertFalse((proj / ".autobot" / "feedback-log.jsonl").exists())
+            entry = json.loads(target.read_text().splitlines()[0])
+            self.assertEqual(entry["buildId"], "feedback-build")
 
     def test_missing_required_field_fails_loud(self):
         with tempfile.TemporaryDirectory() as tmp:

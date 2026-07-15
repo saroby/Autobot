@@ -111,7 +111,9 @@ class TestApply(unittest.TestCase):
             _make_snapshot(proj, {"Workout": 'struct Workout { var title = "" }'})
             _make_models(proj, {"Workout": 'struct Workout { var name = "" }'})
             _make_downstream(proj)
-            r = apply(proj, self.spec, _state(), "1")
+            state = {**_state(), "buildId": "build-contract-freeze"}
+            (proj / ".autobot" / "build-state.json").write_text(json.dumps(state))
+            r = apply(proj, self.spec, state, "1")
             self.assertTrue(r["frozen"])
             self.assertTrue(r["restored"])
             restored = (proj / APP / "Models" / "Workout.swift").read_text()

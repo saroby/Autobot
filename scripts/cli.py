@@ -80,10 +80,21 @@ def init_state(args: argparse.Namespace) -> int:
     # PID) is reclaimed automatically; re-init of the same build is idempotent.
     import build_lock
     project_root = state_path.parent.parent
-    locked, lock_reason = build_lock.acquire(project_root, args.build_id)
+    expected_token = None
+    if args.force:
+        current_lock = build_lock.status(project_root)
+        if current_lock.get("buildId") == args.build_id and current_lock.get("holderAlive"):
+            expected_token = current_lock.get("lockToken")
+    locked, lock_reason, lock_token = build_lock.acquire_with_token(
+        project_root,
+        args.build_id,
+        takeover_same_build=bool(args.force),
+        expected_token=expected_token,
+    )
     if not locked:
         raise SystemExit(f"FATAL: cannot start build — {lock_reason}")
     print(f"OK: build lock — {lock_reason}")
+    print(f"LOCK_TOKEN={lock_token}")
 
     timestamp = args.started_at or utc_now()
     state: dict[str, Any] = {

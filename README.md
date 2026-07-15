@@ -2,7 +2,7 @@
 
 앱 아이디어 하나로 iOS 26+ 앱을 빌드하고 TestFlight에 배포하는 Claude Code 플러그인.
 
-5개의 전문 에이전트가 병렬로 협업하여, 아키텍처 설계부터 TestFlight 업로드까지 자동으로 수행합니다.
+전문 에이전트들이 병렬로 협업하여, 아키텍처 설계부터 TestFlight 업로드까지 자동으로 수행합니다.
 성공 기준은 기능 완성뿐 아니라 아이디어에 맞는 룩앤필 계약 구현까지 포함합니다.
 
 > 파이프라인 규격의 편집 단위는 `spec/parts/*.json`이고, 실행 호환 번들은 `spec/pipeline.json`입니다. `skills/autobot-orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
@@ -149,7 +149,7 @@ architect → Models/ServiceProtocols.swift (인터페이스 정의)
 
 | 요건 | 확인 명령 | 용도 |
 |------|----------|------|
-| Xcode 16+ (CLI Tools) | `xcode-select -p` | 빌드, 시뮬레이터 |
+| Xcode 26+ (CLI Tools) | `xcode-select -p` | 빌드, 시뮬레이터 |
 | iOS 26+ SDK | `xcrun --sdk iphoneos --show-sdk-version` | 타겟 SDK |
 | Python 3 | `python3 --version` | pbxproj fallback 생성 |
 | Apple Developer 계정 | — | TestFlight 배포 (선택) |

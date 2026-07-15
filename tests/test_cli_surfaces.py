@@ -11,6 +11,21 @@ from conftest import IsolatedProjectCase, PLUGIN_DIR, SCRIPTS_DIR, run_pipeline,
 
 class TestCliSurfaces(IsolatedProjectCase):
 
+    def test_resume_uses_canonical_build_lock_commands(self):
+        resume = (PLUGIN_DIR / "commands" / "resume.md").read_text(encoding="utf-8")
+        self.assertIn("build-lock acquire", resume)
+        self.assertIn("--takeover-same-build --expected-token \"$LOCK_TOKEN\"", resume)
+        self.assertIn("--format json", resume)
+        self.assertIn('--expected-token "$OWNED_LOCK_TOKEN"', resume)
+        self.assertNotIn('echo $$ > "$LOCK_FILE"', resume)
+        self.assertNotIn('rm -f ".autobot/build.lock"', resume)
+
+    def test_shipping_commands_delegate_fresh_gate_to_archive_boundary(self):
+        for name in ("testflight.md", "app-review.md"):
+            command = (PLUGIN_DIR / "commands" / name).read_text(encoding="utf-8")
+            self.assertIn("preflight-ship", command, msg=name)
+            self.assertNotIn('run-gate --gate "5->6"', command, msg=name)
+
     def test_validate_state_render_docs_is_check_only(self):
         script = (SCRIPTS_DIR / "validate-state.sh").read_text(encoding="utf-8")
         self.assertIn("render_pipeline_docs.py\" --check", script)

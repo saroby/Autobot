@@ -14,12 +14,14 @@ Dependency rule:
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from spec_loader import load_spec
-from state_store import utc_now
+from state_store import load_json, utc_now
 
 __all__ = ["validate_log_event", "append_build_log"]
 
@@ -80,8 +82,8 @@ def validate_log_event(spec: dict[str, Any], event: str, fields: dict[str, Any])
         if fields.get(required) in (None, ""):
             errors.append(f"event '{event}' requires field '{required}'")
     allowed = set(descriptor.get("required", [])) | set(descriptor.get("optional", []))
-    for present in ("phase", "agent", "detail"):
-        if fields.get(present) not in (None, "") and present not in allowed:
+    for present, value in fields.items():
+        if value not in (None, "") and present not in allowed:
             errors.append(f"event '{event}' does not allow field '{present}'")
 
     # Per-event detail structure check (only when detail is present and a
@@ -101,6 +103,8 @@ def append_build_log(
     agent: str | None = None,
     timestamp: str | None = None,
     spec: dict[str, Any] | None = None,
+    build_id: str | None = None,
+    extra_fields: dict[str, Any] | None = None,
 ) -> None:
     # Always validate against the spec — never silently downgrade. If the spec
     # is unreadable we want callers to fail loudly rather than write
@@ -109,15 +113,48 @@ def append_build_log(
         spec = load_spec()
 
     fields = {"phase": phase, "agent": agent, "detail": detail}
+    for key, value in (extra_fields or {}).items():
+        if key in {"ts", "event", "buildId"}:
+            raise SystemExit(f"FATAL: invalid build-log event: reserved envelope field '{key}'")
+        if key in fields:
+            raise SystemExit(
+                f"FATAL: invalid build-log event: field '{key}' must use its named argument"
+            )
+        fields[key] = value
     errors = validate_log_event(spec, event, fields)
     if errors:
         raise SystemExit("FATAL: invalid build-log event: " + "; ".join(errors))
+
+    project_dir = Path(project_dir)
+    state_file = project_dir / ".autobot" / "build-state.json"
+    try:
+        state = load_json(state_file)
+    except (json.JSONDecodeError, OSError) as exc:
+        raise SystemExit(
+            f"FATAL: cannot append build-log event without readable build state at {state_file}: {exc}"
+        ) from exc
+
+    current_build_id = state.get("buildId")
+    if current_build_id in (None, ""):
+        raise SystemExit(
+            f"FATAL: cannot append build-log event: current state at {state_file} has no buildId"
+        )
+    current_build_id = str(current_build_id)
+    if build_id is not None and str(build_id) != current_build_id:
+        raise SystemExit(
+            "FATAL: explicit buildId "
+            f"'{build_id}' does not match current state buildId '{current_build_id}'"
+        )
 
     log_dir = project_dir / ".autobot"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "build-log.jsonl"
 
-    entry: dict[str, Any] = {"ts": timestamp or utc_now(), "event": event}
+    entry: dict[str, Any] = {
+        "ts": timestamp or utc_now(),
+        "event": event,
+        "buildId": current_build_id,
+    }
     if phase is not None:
         # Phase ids are strings in the spec (e.g. "0", "2.5", "7"). Most existing
         # ids happen to be integer-valued so int() round-tripped, but fractional
@@ -133,7 +170,15 @@ def append_build_log(
         entry["agent"] = agent
     if detail is not None:
         entry["detail"] = detail
+    for key, value in (extra_fields or {}).items():
+        if value is not None:
+            entry[key] = value
 
     with log_file.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False))
-        handle.write("\n")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

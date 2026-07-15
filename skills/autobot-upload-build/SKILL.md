@@ -43,13 +43,17 @@ ASC 에 앱이 등록돼 있어야 한다 (`autobot-register-app` 으로 미리 
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/scripts/upload.sh" \
-  --archive-path "/path/to/AppName.xcarchive"
+  --archive-path "/path/to/AppName.xcarchive" \
+  --build-state "/path/to/.autobot/build-state.json" \
+  --archive-status "/path/to/.autobot/archive-status.json"
 ```
 
 선택 인자:
 
 | Flag | 기본값 | 설명 |
 |------|--------|------|
+| `--build-state` | 필수 | archive를 소유한 명시적 `build-state.json` |
+| `--archive-status` | 업로드 시 필수 | 같은 buildId와 archive digest를 증명하는 status JSON (`--no-upload` 시 생략 가능) |
 | `--export-path` | `<archive-dir>/export` | IPA 출력 디렉토리 |
 | `--method` | `app-store-connect` | export method (`app-store-connect` / `release-testing` / `development`) |
 | `--internal-only` | on | TestFlight 내부 테스트 전용 (외부 배포 차단) |

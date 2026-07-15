@@ -150,8 +150,8 @@ class TestCheckLogicTestsPass(unittest.TestCase):
         self.assertFalse(primary["passed"])
         self.assertFalse(primary.get("degraded", False))
 
-    # ── completeness sub-check: P0 logic acceptance with NO matching test → WARNING (non-blocking) ──
-    def test_missing_p0_test_is_nonblocking_warning(self):
+    # ── completeness sub-check: missing P0 named coverage → DEGRADED ──
+    def test_missing_p0_test_is_degraded(self):
         self._patch_build(status="passed")
         # authored tests do NOT include a test named after acceptance "addItem_increasesCount"
         self._patch_xcresult(
@@ -167,11 +167,13 @@ class TestCheckLogicTestsPass(unittest.TestCase):
         )
         primary = results[0]
         completeness = next(r for r in results if r["check"] == "logic_test_completeness")
-        # Primary still GREEN (build+tests passed); completeness is a warning, not a fail.
+        # Primary build result remains green, but the deterministic completeness
+        # subcheck blocks shipping without consuming circuit-breaker retries.
         self.assertTrue(primary["passed"])
-        self.assertTrue(completeness["passed"])        # non-blocking
-        self.assertFalse(completeness.get("degraded", False))
-        self.assertIn("WARNING", completeness["message"])
+        self.assertTrue(completeness["passed"])
+        self.assertTrue(completeness.get("skipped"))
+        self.assertTrue(completeness.get("degraded", False))
+        self.assertIn("DEGRADED", completeness["message"])
         self.assertIn("addItem_increasesCount", completeness["message"])
 
     def test_matching_p0_test_completeness_clean(self):

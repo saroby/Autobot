@@ -1,7 +1,6 @@
 ---
 name: architect
 description: Use this agent when designing iOS app architecture from an idea. Analyzes requirements, defines features, screens, data models, navigation structure, and service protocol contracts.
-model: opus
 tools: Read, Write, Grep, Glob, WebSearch, Bash
 ---
 

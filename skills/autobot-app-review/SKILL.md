@@ -7,6 +7,13 @@ description: Use when running the end-to-end App Store review submission pipelin
 
 End-to-end orchestrator that takes an Autobot project from "build ready" to "submitted for App Store review". It composes seven autonomous phases. Each phase is idempotent — re-running the orchestrator skips work that is already done.
 
+Phase ordering and completion state are enforced by
+`scripts/pipeline.sh app-review-controller`. Ask the controller for `next`,
+retain the returned `claimToken`, and pass it to `complete` or `fail`. A `busy`
+action means another session owns the phase and must not be duplicated.
+execute only that phase's instructions below, and report `complete`/`fail` back
+to it. Do not infer a skip from timestamps.
+
 **Single responsibility:** orchestrate the submission pipeline. Each step delegates to a single-responsibility skill or shell script.
 
 ## When to use
@@ -521,18 +528,9 @@ Agent(
 
 The deployer writes `.autobot/register-status.json`, `archive-status.json`, `upload-status.json` (atomic). On any halt (name_collision / bundle_id_taken / asc_session_expired / asc_permission_denied / signing failure / upload failure after bounded retries), surface the deployer's diagnostic to the user and stop the orchestrator — do not proceed to Phase G.
 
-**Skip Phase F entirely** if `.autobot/upload-status.json` exists with `result: uploaded` and its timestamp is newer than the iOS source tree's most recent mtime. Heuristic check:
-
-```bash
-SKIP_F=0
-if [ -f .autobot/upload-status.json ]; then
-  RESULT=$(python3 -c "import json; print(json.load(open('.autobot/upload-status.json')).get('result',''))" 2>/dev/null)
-  if [ "$RESULT" = "uploaded" ]; then
-    NEWER=$(find . -path ./.autobot -prune -o -path ./build -prune -o -path ./fastlane -prune -o -path ./marketing -prune -o -name "*.swift" -newer .autobot/upload-status.json -print 2>/dev/null | head -1)
-    [ -z "$NEWER" ] && SKIP_F=1
-  fi
-fi
-```
+**Skip Phase F only when the controller marks it complete.** It requires the
+upload status to match the current `buildId`, `bundleId`, and archive/artifact
+digest. Timestamp or source-mtime heuristics are not release identity.
 
 ## Phase G — Submit for review
 

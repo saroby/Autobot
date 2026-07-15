@@ -150,3 +150,65 @@
 ### 27. 레퍼런스 스니펫의 비컴파일 API 는 매 빌드 build-fix 예산을 태움
 - **실패 모드**: `references/ios-ux-style.md` 등 권위 레퍼런스가 실존하지 않는 Liquid Glass API(`.buttonStyle(.liquidGlass)`, `.glassEffect(tint:)`)를 예시로 제공 → 에이전트가 그대로 생성 → 매 빌드 컴파일 에러 → buildFixLoop 소모.
 - **방지 규칙**: 레퍼런스에 넣는 코드 스니펫은 `swiftc -typecheck` (실제 SDK 대상) 로 컴파일 검증 후 수록한다. good/bad 쌍으로 검증해 정정 방향도 확인 (0.11.3 에서 `.buttonStyle(.glass)` / `.glassEffect(.regular.tint(...))` 로 정정, 실컴파일 확인 완료).
+
+## 모델 성능 향상 대응 감사에서 발견 (2026-07-15)
+
+### 28. 같은 lock 파일에 서로 다른 포맷을 쓰면 잠금이 아니라 clobber 프로토콜이 됨
+- **실패 모드**: `build_lock.py`는 `.autobot/build.lock`에 JSON을 atomic write하지만 `resume.md`는 같은 파일을 raw PID로 읽고 썼다. 양쪽이 상대 형식을 stale로 판단해 살아 있는 잠금을 삭제할 수 있었다.
+- **검출 신호**: 하나의 상태 파일을 읽고 쓰는 구현이 둘 이상이고 serialization 형식이 다름. `transitions.py` 주석에도 우회 사유가 새어 나옴.
+- **방지 규칙**: 잠금의 acquire/status/release는 `pipeline.sh build-lock`만 사용한다. command/skill prose에서 lock 파일을 직접 `cat`, `echo`, `rm`하지 않는다.
+
+### 29. 모델 핀과 복제 프롬프트는 시간이 지나면 품질 상한과 충돌 지시가 됨
+- **실패 모드**: agent frontmatter의 `opus`/`sonnet`, 별도 dispatch 문서의 버전 고정 모델, Team/background 경로, agent 본문을 복제한 prompt template가 동시에 존재했다. 최신 host 기본 모델을 상속하지 못하고 어느 절차가 우선인지 흔들렸다.
+- **검출 신호**: 같은 agent의 모델/도구/절차가 두 파일 이상에 선언되거나, allowed-tools에 없는 orchestration primitive가 예시로 등장함.
+- **방지 규칙**: 모델은 측정된 중앙 정책이 없으면 host를 상속한다. 정적 역할은 `agents/*.md`, 실행 제약은 spec/context-pack, 학습은 learning-bootstrap 한 곳씩만 소유한다.
+
+### 30. 출하 gate는 command마다 미리 돌리지 말고 비가역 경계에서 한 번 fresh 검증
+- **실패 모드**: testflight/app-review command가 Gate 5→6을 실행한 뒤 persisted state를 다시 읽고, archive가 곧바로 `preflight-ship`으로 같은 고비용 gate를 재실행했다. 느리고 첫 판정 경로는 stale evidence 해석 위험도 있었다.
+- **검출 신호**: 동일 gate id가 하나의 출하 흐름에서 여러 진입점에 직접 호출되고, 뒤쪽 경계에 이미 더 강한 fresh-result 판정이 있음.
+- **방지 규칙**: anti-laundering은 실제 artifact 생성 직전의 archive boundary가 `preflight-ship`으로 한 번 집행한다. 상위 command는 그 실패를 전파만 한다.
+
+### 31. 짧은 CLI PID와 buildId만으로는 장기 실행 lock 소유자를 식별할 수 없음
+- **실패 모드**: one-shot CLI PID는 획득 직후 죽고, 같은 buildId를 무조건 허용하면 동시에 실행된 두 resume가 서로를 정상 재개로 오인한다.
+- **검출 신호**: acquire 직후 별도 status가 stale이거나, 살아 있는 같은-build lock을 별도 의사표시 없이 덮어쓸 수 있음.
+- **방지 규칙**: lock은 CLI 수명과 독립적인 lease를 사용하고, 같은 buildId도 기본 차단한다. resume만 명시적 takeover를 요청하며 내부 병렬 writer는 별도 state flock으로 직렬화한다.
+
+### 32. 재개 스킵과 릴리스 스킵은 timestamp가 아니라 동일 artifact identity로 판정
+- **실패 모드**: Swift 파일 mtime보다 upload-status가 최신이라는 이유로 resource/project/version이 바뀐 바이너리를 이미 업로드됐다고 오인한다.
+- **검출 신호**: status에 buildId, bundle/version/build, 입력 hash, archive/IPA digest가 없거나 producer/consumer 키 이름이 다름.
+- **방지 규칙**: build→runtime→archive→IPA→upload 전체가 canonical identity와 digest를 기록하고, controller는 모든 값이 현재 build와 일치할 때만 완료를 재사용한다.
+
+### 33. spec의 복구 정책 필드는 실행기가 각 분기를 실제로 소비해야 함
+- **실패 모드**: `saveBeforeFirstAttempt`, `saveAfterEachAttempt`, `rollbackOnSignatureRepeat`를 선언했지만 실행 코드가 없어 반복 오류에서 오래된 phase snapshot으로만 복원한다.
+- **검출 신호**: 정책 키 검색 결과가 spec과 문서에만 있고 runtime consumer/test가 없음.
+- **방지 규칙**: 선언된 각 boolean과 maxAttempts를 checkpoint save/restore 실행기가 검증하고, disabled 분기와 signature-repeat 복원을 회귀 테스트한다.
+
+### 34. 표적 unittest도 저장소의 import bootstrap을 그대로 사용해야 함
+- **실패 모드**: `python3 -m unittest tests.test_*`로 표적 검증을 실행했지만 테스트가 기대하는 `tests/conftest.py`가 import 경로에 없어 9개 모듈이 수집 단계에서 실패했다.
+- **검출 신호**: 테스트 본문 실행 전 `ModuleNotFoundError: conftest`가 반복되고 실제 assertion은 하나도 수행되지 않음.
+- **방지 규칙**: 이 저장소의 개별 unittest는 `PYTHONPATH=tests:scripts python3 -m unittest test_<name>`로 실행하고, 최종 검증은 canonical `bash tests/run_tests.sh`를 사용한다.
+
+### 35. lease 소유권은 buildId가 아니라 세대 token으로 증명
+- **실패 모드**: 같은 buildId의 이전 실행이 release하면 뒤에 takeover한 새 실행의 lock까지 지울 수 있다.
+- **검출 신호**: acquire/takeover는 가능하지만 release가 현재 lock 세대를 비교하지 않거나 buildId만 비교한다.
+- **방지 규칙**: acquire마다 불투명 token을 발급하고 takeover와 release를 CAS로 집행한다. run-summary 같은 build-scoped 파일은 세대 소유권 증명이 아니며, token 없는 release는 만료 또는 명시적 force에만 허용한다.
+
+### 36. 재개 가능한 외부 워크플로는 claim과 산출물 재검증이 함께 필요
+- **실패 모드**: 병렬 App Review 실행이 같은 phase를 동시에 수행하고, 과거 완료 status가 현재 빌드·현재 파일과 달라도 재사용된다.
+- **검출 신호**: `next`가 읽기만 하거나 완료 근거가 result 문자열뿐이고 build/artifact/content identity가 없다.
+- **방지 규칙**: controller가 원자적으로 lease+claimToken을 발급하고 command는 `next → complete|fail → next` 순서를 지키며 token을 전달한다. 완료 evidence는 재개 때마다 현재 build와 content digest에 대조한다.
+
+### 37. dotenv는 shell code가 아니라 제한된 설정 데이터
+- **실패 모드**: `source`/`eval` 기반 loader가 임의 키와 command substitution을 받아 PATH, Python startup, shell option을 바꾸거나 명령을 실행한다.
+- **검출 신호**: env 파일 한 줄이 quoting 없이 shell 평가되거나 허용 키 목록 없이 process environment에 주입된다.
+- **방지 규칙**: 공용 parser가 명시적 release credential allowlist만 읽고 literal 값으로 반환한다. shell/Python 소비자는 같은 parser를 사용하며 악성 행 회귀 테스트를 둔다.
+
+### 38. host 용량 probe는 CI 테스트의 숨은 전제면 안 됨
+- **실패 모드**: 기능과 무관한 호스트 여유 공간이 1GB 아래로 내려가자 Phase 0 fixture가 실패해 수십 개 테스트가 연쇄 실패했다.
+- **검출 신호**: 같은 assertion 이전의 공통 fixture에서 실제 디스크·장치·네트워크 probe가 실패한다.
+- **방지 규칙**: production 기본 fail-fast는 유지하되 테스트 환경은 명시적 skip flag로 host-capacity probe를 격리하고 DEGRADED evidence를 남긴다.
+
+### 39. 새 CLI 출력 분기는 성공 경로를 직접 실행해야 함
+- **실패 모드**: build-lock JSON 출력 옵션과 테스트를 함께 추가했지만 구현 모듈의 `json` import가 빠져 전체 스위트에서만 NameError가 났다.
+- **검출 신호**: parser/문자열 계약 테스트는 통과하지만 새 옵션을 실제 호출하는 최초 회귀 테스트가 빈 stdout과 traceback을 낸다.
+- **방지 규칙**: CLI 옵션 추가 시 subprocess로 그 옵션의 성공 경로를 직접 실행하고 stdout을 실제 소비자와 같은 방식으로 파싱한다.

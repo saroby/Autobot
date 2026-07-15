@@ -82,11 +82,9 @@ def validate_transition_request(
     resume_policy = spec.get("policies", {}).get("resume", {})
     # in_progress→in_progress is a stale-crash reclaim (the documented resume
     # path for a build that died mid-phase). It stays behind the explicit
-    # --allow-terminal-restart flag rather than being allowed unconditionally:
-    # the build lock cannot be trusted to prove no live run holds the phase —
-    # commands/resume.md Step 0 writes a raw-PID lock while build_lock.py
-    # writes JSON, and each side treats the other's format as stale and
-    # clobbers it.
+    # --allow-terminal-restart flag rather than being allowed unconditionally.
+    # The canonical build lock prevents concurrent builds, but it cannot prove
+    # whether an interrupted phase's external side effects completed.
     allow_explicit_restart = (
         allow_terminal_restart
         and resume_policy.get("allowExplicitRestartFromTerminal", False)

@@ -42,6 +42,8 @@ WAIT_TIMEOUT=1800   # 30 minutes
 WAIT_INTERVAL=60    # 60 seconds
 SKIP_WAIT=0
 DRY_RUN=0
+STATUS_BUILD_ID=""
+STATUS_ARTIFACT_SHA256=""
 
 usage() {
   cat <<'USAGE'
@@ -128,6 +130,30 @@ esac
 if ! command -v python3 &>/dev/null; then
   log_error "python3 not found"
   exit 1
+fi
+
+if [ -r .autobot/build-state.json ] && [ -r .autobot/upload-status.json ]; then
+  IFS=$'\t' read -r STATUS_BUILD_ID STATUS_ARTIFACT_SHA256 < <(
+    python3 - .autobot/build-state.json .autobot/upload-status.json "$BUNDLE_ID" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    state = json.load(handle)
+with open(sys.argv[2], encoding="utf-8") as handle:
+    upload = json.load(handle)
+bundle_id = sys.argv[3]
+valid = (
+    state.get("buildId")
+    and state.get("bundleId") == bundle_id
+    and upload.get("result") == "uploaded"
+    and upload.get("buildId") == state.get("buildId")
+    and upload.get("bundleId") == bundle_id
+)
+print("\t".join((
+    str(state.get("buildId") or "") if valid else "",
+    str(upload.get("artifactSha256") or "") if valid else "",
+)))
+PY
+  )
 fi
 
 # Team ID precedence
@@ -267,6 +293,9 @@ write_status() {
   local tmp="${target}.tmp.$$"
   emit_json \
     "result=$result" \
+    "buildId=$STATUS_BUILD_ID" \
+    "bundleId=$BUNDLE_ID" \
+    "artifactSha256=$STATUS_ARTIFACT_SHA256" \
     "bundle_id=$BUNDLE_ID" \
     "team_id=$TEAM_ID" \
     "platform=$PLATFORM" \

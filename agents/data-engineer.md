@@ -1,7 +1,6 @@
 ---
 name: data-engineer
 description: Use this agent when building the data persistence and networking layer for an iOS 26+ app. Implements ServiceProtocol contracts as Repository classes with SwiftData.
-model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 

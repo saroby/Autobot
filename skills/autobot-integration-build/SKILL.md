@@ -8,7 +8,7 @@ description: Use when validating and fixing an Autobot-generated iOS app build (
 
 Phase 5 스킬: Phase 4에서 병렬 생성된 코드를 통합하고, 컴파일 성공까지 반복 수정한다.
 
-이 Phase가 Autobot 빌드에서 **가장 실패율이 높다** — 별도 에이전트가 생성한 코드 간의 불일치, import 누락, 타입 시그니처 차이가 여기서 드러난다. 체계적 진단 없이 에러를 하나씩 고치면 5회 제한에 도달하므로, **에러를 먼저 분류하고 근본 원인부터 수정**하는 것이 핵심이다.
+이 Phase가 Autobot 빌드에서 **가장 실패율이 높다** — 별도 에이전트가 생성한 코드 간의 불일치, import 누락, 타입 시그니처 차이가 여기서 드러난다. 제한된 build-fix 예산을 낭비하지 않도록 **에러를 먼저 분류하고 근본 원인부터 수정**한다. 시도 한도는 `spec/pipeline.json`의 `policies.buildFixLoop.maxAttempts`가 유일한 출처다.
 
 ## 최우선 원칙: Models/ 불가침
 
@@ -34,7 +34,7 @@ Step 1: Integration Wiring (Stub → 실제 Repository 교체)
     ↓
 Step 2: Platform Requirements (Privacy, Entitlements, Permissions, SPM)
     ↓
-Step 3: Build-Fix Loop (최대 5회 반복)
+Step 3: Build-Fix Loop (spec-bounded)
     ↓            ↑ 실패
     ↓         진단 → 분류 → 수정 → 재빌드
     ↓
@@ -131,6 +131,12 @@ architecture.md의 `Dependencies` 섹션이 `N/A`가 아닐 때:
 
 이 스킬의 핵심. 빌드를 실행하고, 실패하면 에러를 진단하여 수정하는 루프.
 
+첫 빌드 전에 복구 가능한 attempt 0 체크포인트를 저장한다.
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-checkpoint save --attempt 0
+```
+
 ### 빌드 명령
 
 ```bash
@@ -162,13 +168,16 @@ echo "$SIGNATURE_RESULT"  # {"tripped":true|false,"occurrences":N,"hash":"..."}
 
 # 매 attempt 를 이벤트로도 남긴다 (run-summary 가 사용)
 HASH=$(echo "$SIGNATURE_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['hash'])")
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-checkpoint save \
+  --attempt "$ATTEMPT" --error-signature "$HASH"
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" \
   --phase 5 --event build_fix_attempt \
   --detail "{\"attempt\":${ATTEMPT},\"signature\":\"${HASH}\",\"category\":\"<A|B|C|D|E>\"}"
 
-# breaker 가 트립되면 더 고치지 말고 Phase 4 스냅샷으로 복원
+# breaker 가 트립되면 반복 signature 이전의 가장 최근 체크포인트로 복원
 if echo "$SIGNATURE_RESULT" | grep -q '"tripped":true'; then
-  bash "$CLAUDE_PLUGIN_ROOT/scripts/snapshot-contracts.sh" restore-phase --phase 4 --app-name "<AppName>"
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-checkpoint restore \
+    --exclude-signature "$HASH"
   bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event build_fix_loop_exhausted \
     --detail "{\"attempts\":${ATTEMPT},\"lastSignature\":\"${HASH}\",\"abortStrategy\":\"snapshot_restore_then_handoff\"}"
   exit 1
@@ -177,7 +186,7 @@ fi
 
 ### 에러 진단 의사결정 트리
 
-빌드 실패 시 에러 메시지를 **먼저 분류**한 다음 수정한다. 분류 없이 하나씩 고치면 5회 제한에 도달하기 쉽다.
+빌드 실패 시 에러 메시지를 **먼저 분류**한 다음 수정한다. 분류 없이 하나씩 고치면 제한된 시도 예산을 소모하기 쉽다.
 
 ```
 빌드 에러 발생
@@ -199,7 +208,7 @@ fi
     ├── 같은 카테고리 에러가 3개 이상 → 근본 원인 1개를 찾아 수정 (연쇄 해결 기대)
     ├── 다른 카테고리 에러가 혼재 → 우선순위: [E] → [A] → [D] → [B] → [C]
     │   (프로젝트 설정 → import → SwiftData → 타입 → 동시성 순서)
-    └── 3회 수정 후 같은 에러 반복 → 해당 파일을 처음부터 다시 작성
+    └── 같은 에러 시그니처 반복 → circuit breaker 정책에 따라 snapshot 복원 후 중단·인계
 ```
 
 **에러 카테고리별 상세 패턴과 수정법은 `references/build-error-catalog.md` 참조.**
@@ -235,13 +244,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 5 \
 > `metadata.build_succeeded=true`와 `metadata.peerReview`가 최종 `advance-phase` 호출에 포함되지 않으면 Gate 5→6는 실패한다. `visualJudge`(Step 9)는 스크린샷을 얻은 경우 함께 전달한다 — 없으면 `visual_judge` 체크가 green-skip 한다.
 > `advance-phase`는 metadata를 gate 평가 전에 반영한 뒤 통과 시 `completed`까지 한 번에 기록한다.
 
-| 반복 횟수 | 전략 |
-|----------|------|
-| 1회차 | 에러 전체 분류 → 근본 원인 수정 → 연쇄 해결 기대 |
-| 2회차 | 남은 에러 개별 수정 |
-| 3회차 | 남은 에러 개별 수정 + 파일 간 의존성 재확인 |
-| 4회차 | 구조적 문제 의심 → 문제 파일을 처음부터 재작성 |
-| 5회차 | 최후 시도. 실패하면 Phase 4 스냅샷 복원 또는 재생성 권고 |
+매 attempt마다 전체 에러를 다시 분류하고 가장 상위의 근본 원인만 최소 패치한다. 반복 횟수에 따라 파일 삭제나 전체 재작성을 자동 선택하지 않는다. 동일 signature 반복과 최종 소진 시의 rollback/handoff는 spec의 circuit-breaker와 snapshot 정책이 결정한다.
 
 ### 수정 범위 판단
 
@@ -286,7 +289,7 @@ docker compose down && cd ..
 
 ### 5a. P0 logic acceptance 당 1개 테스트 (이름 규칙 필수)
 
-`.autobot/feature-spec.json` 의 각 P0 feature 에서 `kind == "logic"` 인 acceptance 마다, **acceptance id 와 동일한 이름의 `@Test func`** 를 작성한다. `check_logic_tests_pass` 의 completeness 서브체크가 authored 테스트 이름을 acceptance id 와 대조한다 (`addItem_increasesCount` ↔ `func addItem_increasesCount()`). 이름이 일치하지 않으면 비차단 WARNING 이 run-summary 에 남는다.
+`.autobot/feature-spec.json` 의 각 P0 feature 에서 `kind == "logic"` 인 acceptance 마다, **acceptance id 와 동일한 이름의 `@Test func`** 를 작성한다. `check_logic_tests_pass` 의 completeness 서브체크가 authored 테스트 이름을 acceptance id 와 대조한다 (`addItem_increasesCount` ↔ `func addItem_increasesCount()`). 이름이 없거나 일치하지 않으면 DEGRADED로 기록되어 출하가 차단되므로 handoff 전에 누락된 named test를 추가한다.
 
 ```swift
 import Testing
@@ -486,12 +489,12 @@ test -f <AppName>/PrivacyInfo.xcprivacy
 
 ## Phase 4 재생성 판단 기준
 
-5회 빌드 수정으로도 해결이 안 되면 코드 자체의 품질이 너무 낮은 것이다. 이때는 무한 수정보다 재생성이 효율적이다.
+spec의 build-fix 한도를 소진하면 무한 수정을 멈추고 증거를 보존한 채 상위 phase로 인계한다.
 
 | 조건 | 액션 |
 |------|------|
-| 같은 에러 3회 반복 | 해당 파일만 삭제 후 재작성 |
-| 에러 10개 이상이 3회 연속 | Phase 4 스냅샷 복원 후 재시도, 또는 Phase 4 전체 재생성 (`/autobot:resume 4`) |
+| 동일 에러 signature가 정책 임계치에 도달 | Phase 4 snapshot 복원 후 오류 증거와 함께 중단·인계 |
+| 여러 파일의 구조적 불일치가 build-fix 한도까지 지속 | Phase 4 전체 재생성을 운영자에게 권고 (`/autobot:resume 4`) |
 | Models/의 타입과 사용 코드가 구조적 불일치 | Phase 1(architect) 재검토 권고 |
 
 **Phase 4 스냅샷 복원 (Phase 5에서만):**

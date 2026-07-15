@@ -87,6 +87,31 @@ class TestVerifySpecDocsContracts(unittest.TestCase):
 
         self.assertEqual([], errors)
 
+    def test_release_metadata_rejects_version_drift(self):
+        manifest = '{"version":"0.12.2","description":"same"}'
+        pyproject = '[project]\nversion = "0.11.0"\ndescription = "same"\n'
+
+        errors = verify_spec_docs.check_release_metadata_consistency(
+            manifest, pyproject
+        )
+
+        self.assertTrue(any("project.version" in error for error in errors), errors)
+
+    def test_release_metadata_rejects_description_drift(self):
+        manifest = '{"version":"0.12.2","description":"current"}'
+        pyproject = '[project]\nversion = "0.12.2"\ndescription = "stale"\n'
+
+        errors = verify_spec_docs.check_release_metadata_consistency(
+            manifest, pyproject
+        )
+
+        self.assertTrue(any("project.description" in error for error in errors), errors)
+
+    def test_current_release_metadata_is_consistent(self):
+        errors = verify_spec_docs.check_release_metadata_consistency()
+
+        self.assertEqual([], errors)
+
 
 if __name__ == "__main__":
     unittest.main()

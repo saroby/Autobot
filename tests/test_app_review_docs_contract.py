@@ -22,6 +22,9 @@ DEPLOYER = (PLUGIN_DIR / "agents/deployer.md").read_text(encoding="utf-8")
 UPLOAD_SH = (
     PLUGIN_DIR / "skills/autobot-upload-build/scripts/upload.sh"
 ).read_text(encoding="utf-8")
+ARCHIVE_SKILL = (
+    PLUGIN_DIR / "skills/autobot-archive-build/SKILL.md"
+).read_text(encoding="utf-8")
 
 RATING_HEREDOC = re.compile(
     r"cat > fastlane/metadata/app_store_rating_config\.json <<'JSON'\s*\n"
@@ -84,7 +87,8 @@ class TestAppReviewCommandDelegates(unittest.TestCase):
         self.assertIn("0b", REVIEW_CMD)  # register-first visible in the summary
 
     def test_command_keeps_anti_laundering_gate(self):
-        self.assertIn('run-gate --gate "5->6"', REVIEW_CMD)
+        self.assertIn("preflight-ship", REVIEW_CMD)
+        self.assertNotIn('run-gate --gate "5->6"', REVIEW_CMD)
 
     def test_command_does_not_inline_phase_scripts(self):
         # Re-inlining phase bodies is the drift class that twice regressed the
@@ -130,6 +134,16 @@ class TestTransientRetries(unittest.TestCase):
             if line.startswith("| `failed` | `asc_session_expired`")
         )
         self.assertIn("중단", session_row)
+
+
+class TestArchiveFailureContract(unittest.TestCase):
+
+    def test_preflight_exit_three_is_documented_by_both_consumers(self):
+        self.assertRegex(ARCHIVE_SKILL, r"\| 3 \|.*preflight")
+        self.assertIn("exit 3", DEPLOYER)
+        self.assertIn("missing_build_state", DEPLOYER)
+        self.assertIn("preflight_ship_gate_failed", DEPLOYER)
+        self.assertIn("/autobot:resume 5", DEPLOYER)
 
 
 if __name__ == "__main__":

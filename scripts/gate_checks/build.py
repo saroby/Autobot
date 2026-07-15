@@ -250,9 +250,11 @@ def check_runtime_smoke(proj: Path, app: str, state: dict) -> list[dict]:
         )]
     if status == "passed":
         screenshot = result.get("screenshotPath") or "no screenshot"
+        provenance = result.get("artifactDigest") or "missing"
         return [_ok(
             "runtime_smoke", True,
-            f"app launched on {result.get('udidSource')} — {result.get('processDetail')} — screenshot: {screenshot}",
+            f"app launched on {result.get('udidSource')} — {result.get('processDetail')} "
+            f"— artifact {provenance[:12]} — screenshot: {screenshot}",
         )]
     return [_ok(
         "runtime_smoke", False,

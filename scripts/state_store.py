@@ -18,8 +18,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import fcntl
 import json
+import os
 import re
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -43,11 +47,34 @@ def load_json(path: Path) -> Any:
 
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-    tmp_path.replace(path)
+    descriptor, raw_tmp_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    tmp_path = Path(raw_tmp_path)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@contextmanager
+def _state_write_lock(path: Path):
+    """Hold a per-state advisory lock across the full read/modify/write."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f".{path.name}.lock")
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def utc_now() -> str:
@@ -207,22 +234,23 @@ def mutate_state_with_validation(
     spec: dict[str, Any],
     mutator: Callable[[dict[str, Any]], None],
 ) -> dict[str, Any]:
-    state = load_state(path)
-    next_state = copy.deepcopy(state)
-    # Backfill phases the spec added after this state was written (e.g. phase
-    # "2.5" landed without a schemaVersion bump): a newly-specced, never-run
-    # phase is exactly "pending". Without this, every mutation on an older
-    # build-state was rejected and there was no migration path.
-    phases = next_state.get("phases")
-    if isinstance(phases, dict):
-        for phase_id in phase_ids(spec):
-            phases.setdefault(phase_id, {"status": "pending"})
-    mutator(next_state)
-    errors, warnings = collect_schema_issues(spec, next_state)
-    if errors:
-        joined = "; ".join(errors)
-        raise SystemExit(f"FATAL: refusing to write invalid build state: {joined}")
-    save_state(path, next_state)
+    with _state_write_lock(path):
+        state = load_state(path)
+        next_state = copy.deepcopy(state)
+        # Backfill phases the spec added after this state was written (e.g. phase
+        # "2.5" landed without a schemaVersion bump): a newly-specced, never-run
+        # phase is exactly "pending". Without this, every mutation on an older
+        # build-state was rejected and there was no migration path.
+        phases = next_state.get("phases")
+        if isinstance(phases, dict):
+            for phase_id in phase_ids(spec):
+                phases.setdefault(phase_id, {"status": "pending"})
+        mutator(next_state)
+        errors, warnings = collect_schema_issues(spec, next_state)
+        if errors:
+            joined = "; ".join(errors)
+            raise SystemExit(f"FATAL: refusing to write invalid build state: {joined}")
+        save_state(path, next_state)
     for warning in warnings:
         print(f"WARN: {warning}")
     return next_state

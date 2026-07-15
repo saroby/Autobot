@@ -8,39 +8,47 @@ This module is that implementation.
 
 Guarantees:
   - acquire() refuses to start when another *live* build (different buildId
-    whose holder PID is still alive) already holds the lock — preventing two
+    whose lease has not expired) already holds the lock — preventing two
     concurrent builds from corrupting one `.autobot/` via interleaved writes.
-  - A stale lock (holder PID is dead) is reclaimed automatically, so a crashed
-    build never wedges the directory. This is the real correctness guarantee:
-    even if release() is never called, the next build reclaims the lock.
-  - Re-acquiring for the SAME buildId (resume from another process) or from the
-    SAME process (re-init, the test suite) is idempotent.
-  - release() removes the lock on clean shutdown; an unreadable or stale lock is
-    cleared too.
+  - The lease outlives the short-lived CLI process that acquired it. A stale
+    lease is reclaimed automatically, so a crashed build does not wedge the
+    directory forever. Legacy PID-only lock files remain readable.
+  - Re-acquiring for the SAME buildId still blocks unless the resume path uses
+    an explicit takeover flag. A coincident duplicate resume cannot silently
+    masquerade as the existing owner.
+  - Live release requires the current generation token (or explicit force),
+    so a superseded session cannot unlock its successor. Run summaries are
+    reports, not ownership proof.
 
-Lock file is single-line JSON: {"pid": int, "buildId": str, "acquiredAt": iso}.
-Written atomically (tmp + os.replace) so a partial lock is never observed.
+Lock file is JSON with pid/buildId/lockToken/acquiredAt/leaseExpiresAt. Writes are
+serialized through a companion flock and atomically replaced, so concurrent
+acquirers cannot both win and a partial lock is never observed.
 
 CLI:
     build_lock.py acquire --build-id <id> [--project-dir .]
-    build_lock.py release [--build-id <id>] [--force] [--project-dir .]
+    build_lock.py release [--build-id <id>] [--expected-token <token>] [--force]
     build_lock.py status [--project-dir .]
 exit 0 → success / allow; exit 2 → blocked (a live build holds the lock).
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sys
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from state_store import utc_now  # noqa: E402
+from state_store import try_load_state, utc_now, write_json  # noqa: E402
 
 LOCK_REL = ".autobot/build.lock"
+DEFAULT_LEASE_SECONDS = 12 * 60 * 60
 
 
 def _lock_path(project_root: Path) -> Path:
@@ -64,86 +72,179 @@ def _pid_alive(pid) -> bool:
 
 
 def _read_lock(path: Path) -> dict | None:
+    return try_load_state(path)
+
+
+def _lease_seconds() -> int:
+    raw = os.environ.get("AUTOBOT_BUILD_LOCK_LEASE_SECONDS", "")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        value = int(raw) if raw else DEFAULT_LEASE_SECONDS
+    except ValueError:
+        return DEFAULT_LEASE_SECONDS
+    return value if value > 0 else DEFAULT_LEASE_SECONDS
+
+
+def _parse_timestamp(raw: object) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
         return None
-    return data if isinstance(data, dict) else None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
-def _write_lock(path: Path, build_id: str) -> None:
+def _lock_alive(data: dict) -> bool:
+    """Lease-based liveness, with PID fallback for pre-lease lock files."""
+    lease_expiry = _parse_timestamp(data.get("leaseExpiresAt"))
+    if lease_expiry is not None:
+        return lease_expiry > datetime.now(timezone.utc)
+    return _pid_alive(data.get("pid"))
+
+
+def _lock_active(project_root: Path, data: dict) -> bool:
+    return _lock_alive(data)
+
+
+@contextmanager
+def _lock_guard(path: Path):
+    """Serialize lock-file inspect/update operations across processes."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"pid": os.getpid(), "buildId": build_id, "acquiredAt": utc_now()}
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    os.replace(tmp, path)
+    guard_path = path.with_name(f".{path.name}.guard")
+    with guard_path.open("a+", encoding="utf-8") as guard:
+        fcntl.flock(guard.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(guard.fileno(), fcntl.LOCK_UN)
 
 
-def acquire(project_root: Path, build_id: str) -> tuple[bool, str]:
-    """Acquire the build lock for `build_id`. Returns (ok, reason)."""
+def _write_lock(path: Path, build_id: str, *, acquired_at: str | None = None) -> None:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "pid": os.getpid(),
+        "buildId": build_id,
+        "lockToken": uuid.uuid4().hex,
+        "acquiredAt": acquired_at or utc_now(),
+        "leaseExpiresAt": (now + timedelta(seconds=_lease_seconds()))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+    }
+    # state_store.write_json owns the unique-temp + atomic-replace primitive.
+    write_json(path, payload)
+
+
+def acquire_with_token(
+    project_root: Path,
+    build_id: str,
+    *,
+    takeover_same_build: bool = False,
+    expected_token: str | None = None,
+) -> tuple[bool, str, str | None]:
+    """Acquire and atomically return the generation token that was written."""
     path = _lock_path(project_root)
-    existing = _read_lock(path) if path.exists() else None
-    if existing is not None:
+    with _lock_guard(path):
+        existing = _read_lock(path) if path.exists() else None
+        if existing is not None:
+            holder_pid = existing.get("pid")
+            holder_build = existing.get("buildId")
+            if holder_build == build_id:
+                if _lock_active(project_root, existing) and not takeover_same_build:
+                    return False, (
+                        f"build '{build_id}' already has a live lease pid={holder_pid}; "
+                        "use explicit same-build takeover only when resuming that run"
+                    ), None
+                if _lock_active(project_root, existing) and expected_token != existing.get("lockToken"):
+                    return False, (
+                        f"same-build takeover token changed for '{build_id}'; "
+                        "another resume acquired the lease first"
+                    ), None
+                _write_lock(path, build_id, acquired_at=existing.get("acquiredAt"))
+                return True, f"explicit same-build takeover for '{build_id}'", _read_lock(path).get("lockToken")
+            if _lock_active(project_root, existing):
+                return False, (
+                    f"another build is already running: buildId='{holder_build}' "
+                    f"pid={holder_pid}. Wait for it to finish or stop it before "
+                    f"starting '{build_id}'."
+                ), None
+            _write_lock(path, build_id)
+            return True, f"reclaimed stale lock (was '{holder_build}' pid={holder_pid})", _read_lock(path).get("lockToken")
+        _write_lock(path, build_id)
+        return True, f"acquired for '{build_id}'", _read_lock(path).get("lockToken")
+
+
+def acquire(
+    project_root: Path,
+    build_id: str,
+    *,
+    takeover_same_build: bool = False,
+    expected_token: str | None = None,
+) -> tuple[bool, str]:
+    """Acquire the build lock for `build_id`. Returns (ok, reason)."""
+    ok, reason, _ = acquire_with_token(
+        project_root,
+        build_id,
+        takeover_same_build=takeover_same_build,
+        expected_token=expected_token,
+    )
+    return ok, reason
+
+
+def release(
+    project_root: Path,
+    build_id: str | None = None,
+    *,
+    force: bool = False,
+    expected_token: str | None = None,
+) -> tuple[bool, str]:
+    """Release by generation token, explicit force, or stale lease.
+
+    A buildId or run-summary alone is not ownership proof. Returns (ok, reason).
+    """
+    path = _lock_path(project_root)
+    with _lock_guard(path):
+        if not path.exists():
+            return True, "no lock to release"
+        existing = _read_lock(path)
+        if existing is None:
+            path.unlink(missing_ok=True)
+            return True, "removed unreadable lock"
         holder_pid = existing.get("pid")
         holder_build = existing.get("buildId")
-        if holder_pid == os.getpid():
-            _write_lock(path, build_id)
-            return True, "reacquired (same process)"
-        if holder_build == build_id:
-            _write_lock(path, build_id)
-            return True, f"reacquired (same build '{build_id}')"
-        if _pid_alive(holder_pid):
-            return False, (
-                f"another build is already running: buildId='{holder_build}' "
-                f"pid={holder_pid}. Wait for it to finish or stop it before "
-                f"starting '{build_id}'."
-            )
-        _write_lock(path, build_id)
-        return True, f"reclaimed stale lock (dead pid {holder_pid}, was '{holder_build}')"
-    _write_lock(path, build_id)
-    return True, f"acquired for '{build_id}'"
-
-
-def release(project_root: Path, build_id: str | None = None, *, force: bool = False) -> tuple[bool, str]:
-    """Release the build lock. Removes it when held by this process, this
-    buildId, when forced, or when stale. Refuses to remove a lock held by a
-    different *live* build unless --force. Returns (ok, reason)."""
-    path = _lock_path(project_root)
-    if not path.exists():
-        return True, "no lock to release"
-    existing = _read_lock(path)
-    if existing is None:
-        path.unlink(missing_ok=True)
-        return True, "removed unreadable lock"
-    holder_pid = existing.get("pid")
-    holder_build = existing.get("buildId")
-    if force or holder_pid == os.getpid() or (build_id is not None and holder_build == build_id):
-        path.unlink(missing_ok=True)
-        return True, "released"
-    if not _pid_alive(holder_pid):
-        path.unlink(missing_ok=True)
-        return True, f"released stale lock (dead pid {holder_pid})"
-    return False, (
-        f"lock held by another live build (buildId='{holder_build}' pid={holder_pid}); "
-        "not releasing. Use --force to override."
-    )
+        if force or (
+            build_id is not None
+            and holder_build == build_id
+            and expected_token
+            and expected_token == existing.get("lockToken")
+        ):
+            path.unlink(missing_ok=True)
+            return True, "released"
+        if not _lock_active(project_root, existing):
+            path.unlink(missing_ok=True)
+            return True, f"released stale lock (buildId='{holder_build}' pid={holder_pid})"
+        return False, (
+            f"lock held by another live build (buildId='{holder_build}' pid={holder_pid}); "
+            "not releasing. Use --force to override."
+        )
 
 
 def status(project_root: Path) -> dict:
     path = _lock_path(project_root)
-    if not path.exists():
-        return {"locked": False}
-    data = _read_lock(path) or {}
-    pid = data.get("pid")
-    alive = _pid_alive(pid)
-    return {
-        "locked": True,
-        "pid": pid,
-        "buildId": data.get("buildId"),
-        "acquiredAt": data.get("acquiredAt"),
-        "holderAlive": alive,
-        "stale": not alive,
-    }
+    with _lock_guard(path):
+        if not path.exists():
+            return {"locked": False}
+        data = _read_lock(path) or {}
+        pid = data.get("pid")
+        alive = _lock_active(project_root, data)
+        return {
+            "locked": True,
+            "pid": pid,
+            "buildId": data.get("buildId"),
+            "lockToken": data.get("lockToken"),
+            "acquiredAt": data.get("acquiredAt"),
+            "leaseExpiresAt": data.get("leaseExpiresAt"),
+            "holderAlive": alive,
+            "stale": not alive,
+        }
 
 
 def _main() -> int:
@@ -154,21 +255,38 @@ def _main() -> int:
     p_acq = sub.add_parser("acquire")
     p_acq.add_argument("--project-dir", default=".")
     p_acq.add_argument("--build-id", required=True)
+    p_acq.add_argument("--takeover-same-build", action="store_true")
+    p_acq.add_argument("--expected-token")
+    p_acq.add_argument("--format", choices=("text", "json"), default="text")
     p_rel = sub.add_parser("release")
     p_rel.add_argument("--project-dir", default=".")
     p_rel.add_argument("--build-id")
     p_rel.add_argument("--force", action="store_true")
+    p_rel.add_argument("--expected-token")
     p_st = sub.add_parser("status")
     p_st.add_argument("--project-dir", default=".")
     args = parser.parse_args()
 
     proj = Path(args.project_dir).resolve()
     if args.cmd == "acquire":
-        ok, reason = acquire(proj, args.build_id)
-        print(("OK: " if ok else "BLOCKED: ") + reason)
+        ok, reason, lock_token = acquire_with_token(
+            proj,
+            args.build_id,
+            takeover_same_build=args.takeover_same_build,
+            expected_token=args.expected_token,
+        )
+        if args.format == "json":
+            print(json.dumps({"ok": ok, "reason": reason, "lockToken": lock_token}))
+        else:
+            print(("OK: " if ok else "BLOCKED: ") + reason)
         return 0 if ok else 2
     if args.cmd == "release":
-        ok, reason = release(proj, args.build_id, force=args.force)
+        ok, reason = release(
+            proj,
+            args.build_id,
+            force=args.force,
+            expected_token=args.expected_token,
+        )
         print(("OK: " if ok else "BLOCKED: ") + reason)
         return 0 if ok else 2
     print(json.dumps(status(proj), ensure_ascii=False))

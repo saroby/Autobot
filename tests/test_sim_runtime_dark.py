@@ -44,7 +44,14 @@ class TestDarkScreenshotCapture(unittest.TestCase):
             proj = Path(tmp)
             with mock.patch.object(sim_runtime, "_simctl_available", return_value=True), \
                  mock.patch.object(sim_runtime, "_pick_simulator_udid", return_value=(UDID, "cached")), \
-                 mock.patch.object(sim_runtime, "_find_built_app", return_value=proj / "Demo.app"), \
+                 mock.patch.object(
+                     sim_runtime, "_load_built_app_provenance",
+                     return_value=(proj / "Demo.app", {
+                         "artifactDigest": "a" * 64,
+                         "buildId": "build-test",
+                         "attempt": 1,
+                     }, None),
+                 ), \
                  mock.patch.object(sim_runtime, "_resolve_bundle_id", return_value=BUNDLE), \
                  mock.patch.object(sim_runtime, "_boot", return_value=(True, "booted")), \
                  mock.patch.object(sim_runtime, "_is_process_alive", return_value=(True, "pid=5")), \

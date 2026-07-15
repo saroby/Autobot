@@ -159,7 +159,7 @@ class TestGradeBuild(unittest.TestCase):
         # Bare agent-name strings (legacy records + the gate-visible name
         # cli.py always appends, incl. first-build sources:[] records) must NOT
         # create new items — that promoted strings like "architect" into
-        # HIGH-IMPACT LEARNINGS and leaked them to the global store.
+        # active learnings and leaked them to the global store.
         with tempfile.TemporaryDirectory() as tmp:
             proj = Path(tmp)
             _seed(proj, phases={

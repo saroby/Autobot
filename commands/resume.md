@@ -43,20 +43,36 @@ Phase 0, 2, 3, 7은 phase 전용 파일 대신 `.autobot/active-learnings.md`를
 
 ## Step 0: 빌드 잠금 확인
 
-다른 빌드가 실행 중이면 중단한다:
+기존 build state의 `buildId`로 canonical JSON lock을 재획득한다. 잠금 파일을 직접 읽거나 덮어쓰지 않는다:
 
 ```bash
-LOCK_FILE=".autobot/build.lock"
-if [ -f "$LOCK_FILE" ]; then
-  LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
-  if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
-    echo "ERROR: 다른 빌드가 실행 중입니다 (PID: $LOCK_PID). 종료 후 다시 시도하세요."
-    exit 1
-  else
-    rm -f "$LOCK_FILE"
-  fi
+if [ ! -f .autobot/build-state.json ]; then
+  echo "ERROR: .autobot/build-state.json not found. Run /autobot:mvp first."
+  exit 1
 fi
-echo $$ > "$LOCK_FILE"
+BUILD_ID=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('buildId',''))")
+if [ -z "$BUILD_ID" ]; then
+  echo "ERROR: build-state.json has no buildId."
+  exit 1
+fi
+LOCK_STATUS=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-lock status)
+LOCK_TOKEN=$(printf '%s' "$LOCK_STATUS" | python3 -c "import json,sys; s=json.load(sys.stdin); print(s.get('lockToken','') if s.get('buildId') == '$BUILD_ID' and s.get('holderAlive') else '')")
+# 아래 takeover 분기는 사용자가 /autobot:resume에 --force를 명시한 경우에만 실행한다.
+# 보통 재개는 살아 있는 same-build lease를 차단해 활성 세션과 겹치지 않는다.
+if [ -n "$LOCK_TOKEN" ] && [[ " ${ARGUMENTS:-} " == *" --force "* ]]; then
+  ACQUIRE_RESULT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-lock acquire \
+    --build-id "$BUILD_ID" --takeover-same-build --expected-token "$LOCK_TOKEN" \
+    --format json) || exit $?
+else
+  ACQUIRE_RESULT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-lock acquire \
+    --build-id "$BUILD_ID" --format json) || exit $?
+fi
+OWNED_LOCK_TOKEN=$(printf '%s' "$ACQUIRE_RESULT" | \
+  python3 -c "import json,sys; print(json.load(sys.stdin).get('lockToken',''))")
+if [ -z "$OWNED_LOCK_TOKEN" ]; then
+  echo "ERROR: acquired build lock generation could not be confirmed."
+  exit 1
+fi
 ```
 
 ## Step 0.5: override 플래그 처리 (`--allow-visual-drift`)
@@ -378,7 +394,8 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" fail-phase --phase <N> \
 
 **빌드 잠금 해제:**
 ```bash
-rm -f ".autobot/build.lock"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-lock release \
+  --build-id "$BUILD_ID" --expected-token "$OWNED_LOCK_TOKEN"
 ```
 
 모든 Phase 완료 시 build 커맨드와 동일한 완료 보고를 출력한다.

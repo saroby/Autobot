@@ -68,14 +68,22 @@ def check_environment_ready(proj: Path, app: str, state: dict) -> list[dict]:
     ok, out = _run_cmd(["python3", "--version"])
     results.append(_ok("python3_available", ok, out if ok else "python3 not found"))
 
-    # Disk space > 1GB
-    try:
-        import shutil
-        usage = shutil.disk_usage(str(proj))
-        free_gb = usage.free / (1024 ** 3)
-        results.append(_ok("disk_space", free_gb > 1.0, f"{free_gb:.1f} GB free"))
-    except OSError as exc:
-        results.append(_ok("disk_space", False, f"cannot check: {exc}"))
+    # Disk space > 1GB. Hermetic CI can skip the host-capacity probe just like
+    # the Xcode/simulator probes; production keeps the fail-fast default.
+    if os.environ.get("AUTOBOT_DISABLE_DISK_CHECK") == "1":
+        results.append(_ok(
+            "disk_space", False,
+            "skipped (AUTOBOT_DISABLE_DISK_CHECK=1) — DEGRADED",
+            skipped=True, degraded=True,
+        ))
+    else:
+        try:
+            import shutil
+            usage = shutil.disk_usage(str(proj))
+            free_gb = usage.free / (1024 ** 3)
+            results.append(_ok("disk_space", free_gb > 1.0, f"{free_gb:.1f} GB free"))
+        except OSError as exc:
+            results.append(_ok("disk_space", False, f"cannot check: {exc}"))
 
     return results
 

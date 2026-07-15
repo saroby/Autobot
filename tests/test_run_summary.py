@@ -59,11 +59,45 @@ class TestPhaseDurations(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             proj = Path(tmp)
             _seed(proj, state={"buildId": "b1", "appName": "X", "phases": {}}, events=[
-                {"ts": "2026-05-26T00:00:00Z", "event": "start", "phase": 1},
-                {"ts": "2026-05-26T00:01:00Z", "event": "complete", "phase": 1},
+                {"ts": "2026-05-26T00:00:00Z", "event": "start", "phase": 1, "buildId": "b1"},
+                {"ts": "2026-05-26T00:01:00Z", "event": "complete", "phase": 1, "buildId": "b1"},
             ])
             summary = build_summary(proj)
             self.assertEqual(summary["phases"]["1"]["durationSeconds"], 60.0)
+
+    def test_events_are_scoped_to_current_build_with_bounded_legacy_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={
+                "buildId": "current", "appName": "X",
+                "startedAt": "2026-05-26T00:10:00Z",
+                "phases": {"5": {"status": "completed"}},
+            }, events=[
+                {"ts": "2026-05-26T00:00:00Z", "event": "start", "phase": 1, "buildId": "old"},
+                {"ts": "2026-05-26T00:01:00Z", "event": "gate_fail", "phase": 1,
+                 "detail": "old tagged failure", "buildId": "old"},
+                {"ts": "2026-05-26T00:05:00Z", "event": "gate_fail", "phase": 2,
+                 "detail": "legacy before current run"},
+                {"ts": "2026-05-26T00:11:00Z", "event": "start", "phase": 5},
+                {"ts": "2026-05-26T00:12:00Z", "event": "complete", "phase": 5,
+                 "buildId": "current"},
+            ])
+
+            summary = build_summary(proj)
+
+            self.assertEqual(set(summary["phases"]), {"5"})
+            self.assertEqual(summary["phases"]["5"]["durationSeconds"], 60.0)
+            self.assertEqual(summary["gateLedger"], [])
+            self.assertEqual(summary["failureFootprint"]["events"], [])
+
+    def test_legacy_events_are_excluded_without_a_parseable_run_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={"buildId": "b1", "appName": "X", "phases": {}}, events=[
+                {"ts": "2026-05-26T00:00:00Z", "event": "start", "phase": 1},
+                {"ts": "2026-05-26T00:01:00Z", "event": "complete", "phase": 1},
+            ])
+            self.assertEqual(build_summary(proj)["phases"], {})
 
 
 class TestFailureFootprint(unittest.TestCase):
@@ -74,13 +108,38 @@ class TestFailureFootprint(unittest.TestCase):
                 "buildId": "b1", "appName": "X",
                 "phases": {"5": {"status": "failed"}}
             }, events=[
-                {"ts": "2026-05-26T00:00:00Z", "event": "fail", "phase": 5, "detail": "boom"},
+                {"ts": "2026-05-26T00:00:00Z", "event": "fail", "phase": 5,
+                 "detail": "boom", "buildId": "b1"},
             ])
             summary = build_summary(proj)
             footprint = summary["failureFootprint"]
             self.assertEqual(footprint["failedPhase"], "5")
             self.assertEqual(footprint["resumeCommand"], "/autobot:resume 5")
             self.assertEqual(len(footprint["events"]), 1)
+            self.assertEqual(footprint["primaryFailure"], footprint["events"][0])
+
+    def test_latest_failure_is_primary_and_events_are_latest_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={
+                "buildId": "b1", "appName": "X",
+                "phases": {"5": {"status": "failed"}},
+            }, events=[
+                {"ts": "2026-05-26T00:01:00Z", "event": "gate_fail", "phase": 4,
+                 "detail": "first", "buildId": "b1"},
+                {"ts": "2026-05-26T00:03:00Z", "event": "fail", "phase": 5,
+                 "detail": "latest", "buildId": "b1"},
+                {"ts": "2026-05-26T00:02:00Z", "event": "circuit_breaker_triggered", "phase": 5,
+                 "detail": "middle", "buildId": "b1"},
+            ])
+
+            footprint = build_summary(proj)["failureFootprint"]
+
+            self.assertEqual(footprint["primaryFailure"]["detail"], "latest")
+            self.assertEqual(
+                [event["detail"] for event in footprint["events"]],
+                ["latest", "middle", "first"],
+            )
 
     def test_no_failure_means_default_resume_no_phase(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -89,7 +148,76 @@ class TestFailureFootprint(unittest.TestCase):
             summary = build_summary(proj)
             footprint = summary["failureFootprint"]
             self.assertIsNone(footprint["failedPhase"])
+            self.assertIsNone(footprint["primaryFailure"])
             self.assertEqual(footprint["resumeCommand"], "/autobot:resume")
+
+
+class TestOperationalLedger(unittest.TestCase):
+    def test_phase_ledger_contains_state_and_real_fix_attempt_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={
+                "buildId": "b1", "appName": "X",
+                "phases": {
+                    "5": {
+                        "status": "failed",
+                        "retryCount": 2,
+                        "error": "compile failed",
+                        "errorSignatureHistory": [
+                            {"hash": "a"}, {"hash": "b"}, {"hash": "c"},
+                        ],
+                    },
+                },
+            }, events=[])
+
+            summary = build_summary(proj)
+            phase = summary["phases"]["5"]
+
+            self.assertEqual(phase["status"], "failed")
+            self.assertEqual(phase["retryCount"], 2)
+            self.assertEqual(phase["maxRetry"], 2)
+            self.assertEqual(phase["error"], "compile failed")
+            self.assertEqual(phase["buildFixAttempts"], 3)
+            markdown = render_markdown(summary)
+            self.assertIn("| 5 | failed |", markdown)
+            self.assertIn("| 2/2 | 3 |", markdown)
+
+    def test_axiom_quality_signals_use_canonical_metadata_keys(self):
+        critical = {"ran": True, "critical_count": 0}
+        health = {"ran": True, "findings_path": ".autobot/axiom-health.json"}
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={
+                "buildId": "b1", "appName": "X",
+                "phases": {
+                    "5": {"status": "completed", "metadata": {"axiom_critical_audit": critical}},
+                    "7": {"status": "completed", "metadata": {"axiom_health_check": health}},
+                },
+            }, events=[])
+
+            signals = build_summary(proj)["qualitySignals"]
+
+            self.assertEqual(signals["axiomCriticalAudit"], critical)
+            self.assertEqual(signals["axiomAudit"], critical)
+            self.assertEqual(signals["axiomHealthCheck"], health)
+            self.assertEqual(build_summary(proj)["schemaVersion"], 1)
+
+    def test_legacy_axiom_audit_remains_available(self):
+        legacy = {"ran": True, "finding_count": 2}
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={
+                "buildId": "b1", "appName": "X",
+                "phases": {
+                    "5": {"status": "completed", "metadata": {"axiomAudit": legacy}},
+                },
+            }, events=[])
+
+            summary = build_summary(proj)
+
+            self.assertEqual(summary["schemaVersion"], 1)
+            self.assertEqual(summary["qualitySignals"]["axiomAudit"], legacy)
+            self.assertIsNone(summary["qualitySignals"]["axiomCriticalAudit"])
 
 
 class TestRenderMarkdown(unittest.TestCase):

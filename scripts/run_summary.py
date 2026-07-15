@@ -23,7 +23,7 @@ Sections in the markdown:
     - Gate ledger: every gate_pass / gate_fail in order
     - Quality signals: runtime smoke, visual contract, metadata readiness, axiom audit, peer review
     - Learnings ledger: applied this run + outcome
-    - Failure footprint (if status != completed): first 3 reasons, suggested resume command
+    - Failure footprint (if status != completed): latest primary failure, recent reasons, resume command
 """
 
 from __future__ import annotations
@@ -31,8 +31,10 @@ from __future__ import annotations
 import json
 import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+from spec_loader import load_spec
 
 
 def _load_json(path: Path) -> dict:
@@ -57,14 +59,53 @@ def _load_jsonl(path: Path) -> list[dict]:
     return out
 
 
-def _parse_ts(value: str) -> datetime | None:
-    if not value:
+def _parse_ts(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
         return None
     try:
         # ISO 8601 with trailing Z
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def _epoch_ts(value: object) -> float | None:
+    parsed = _parse_ts(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _events_for_current_build(state: dict, events: list[dict]) -> list[dict]:
+    """Return only events attributable to the current state build.
+
+    New rows are explicitly buildId-scoped. Legacy rows are accepted only when
+    both the run start and event timestamp are parseable and the row occurred on
+    or after this run started. Missing/invalid timestamps never cross the legacy
+    boundary; silently importing all unscoped history would be less compatible
+    than it is misleading.
+    """
+    build_id = state.get("buildId")
+    if build_id in (None, ""):
+        return []
+    build_id = str(build_id)
+    started_at = _epoch_ts(state.get("startedAt"))
+
+    scoped: list[dict] = []
+    for entry in events:
+        event_build_id = entry.get("buildId")
+        if event_build_id not in (None, ""):
+            if str(event_build_id) == build_id:
+                scoped.append(entry)
+            continue
+
+        event_ts = _epoch_ts(entry.get("ts"))
+        if started_at is not None and event_ts is not None and event_ts >= started_at:
+            scoped.append(entry)
+    return scoped
 
 
 def _phase_durations(events: list[dict]) -> dict[str, dict]:
@@ -92,6 +133,41 @@ def _phase_durations(events: list[dict]) -> dict[str, dict]:
             "endedAt": end.isoformat() if end else None,
             "durationSeconds": duration,
         }
+    return out
+
+
+def _phase_ledger(state: dict, events: list[dict], spec: dict) -> dict[str, dict]:
+    durations = _phase_durations(events)
+    state_phases = state.get("phases") or {}
+    spec_phases = spec.get("phases") or {}
+    event_fix_attempts: dict[str, int] = defaultdict(int)
+    for entry in events:
+        if entry.get("event") == "build_fix_attempt" and entry.get("phase") is not None:
+            event_fix_attempts[str(entry["phase"])] += 1
+
+    phase_ids = set(durations) | {
+        str(pid) for pid, block in state_phases.items() if isinstance(block, dict)
+    }
+    out: dict[str, dict] = {}
+    for phase_id in phase_ids:
+        block = state_phases.get(phase_id) or {}
+        phase_spec = spec_phases.get(phase_id) or {}
+        history = block.get("errorSignatureHistory")
+        history_attempts = len(history) if isinstance(history, list) else 0
+        fix_attempts = max(history_attempts, event_fix_attempts.get(phase_id, 0))
+        info = dict(durations.get(phase_id) or {
+            "startedAt": block.get("startedAt"),
+            "endedAt": block.get("completedAt") or block.get("failedAt"),
+            "durationSeconds": None,
+        })
+        info.update({
+            "status": block.get("status"),
+            "retryCount": int(block.get("retryCount", 0) or 0),
+            "maxRetry": phase_spec.get("maxRetry"),
+            "error": block.get("error"),
+            "buildFixAttempts": fix_attempts,
+        })
+        out[phase_id] = info
     return out
 
 
@@ -134,13 +210,34 @@ def _failure_footprint(state: dict, events: list[dict]) -> dict:
                 "phase": entry.get("phase"),
                 "detail": entry.get("detail"),
             })
+    failed = [
+        item
+        for _, item in sorted(
+            enumerate(failed),
+            key=lambda pair: (
+                _epoch_ts(pair[1].get("ts"))
+                if _epoch_ts(pair[1].get("ts")) is not None
+                else float("-inf"),
+                pair[0],
+            ),
+            reverse=True,
+        )
+    ]
+    primary_failure = failed[0] if failed else None
     failed_phase = None
     for pid, block in (state.get("phases") or {}).items():
         if isinstance(block, dict) and block.get("status") == "failed":
-            failed_phase = pid
+            failed_phase = str(pid)
             break
+    if failed_phase is None and primary_failure and primary_failure.get("phase") is not None:
+        failed_phase = str(primary_failure["phase"])
     resume_hint = f"/autobot:resume {failed_phase}" if failed_phase else "/autobot:resume"
-    return {"events": failed[:5], "resumeCommand": resume_hint, "failedPhase": failed_phase}
+    return {
+        "events": failed[:5],
+        "primaryFailure": primary_failure,
+        "resumeCommand": resume_hint,
+        "failedPhase": failed_phase,
+    }
 
 
 def _quality_signals(state: dict) -> dict:
@@ -148,14 +245,22 @@ def _quality_signals(state: dict) -> dict:
     p3 = phases.get("3") or {}
     p5 = phases.get("5") or {}
     p7 = phases.get("7") or {}
+    p5_metadata = p5.get("metadata") or {}
+    p7_metadata = p7.get("metadata") or {}
+    axiom_critical = p5_metadata.get("axiom_critical_audit")
+    legacy_axiom = p5_metadata.get("axiomAudit") or p7_metadata.get("axiomAudit")
     return {
         "scaffoldBuild": (p3.get("metadata") or {}).get("scaffoldBuild"),
-        "runtimeSmoke": (p5.get("metadata") or {}).get("runtimeSmoke"),
-        "visualContract": (p5.get("metadata") or {}).get("visualContract"),
-        "visualJudge": (p5.get("metadata") or {}).get("visualJudge"),
-        "metadataReadiness": (p5.get("metadata") or {}).get("metadataReadiness"),
-        "axiomAudit": (p5.get("metadata") or {}).get("axiomAudit") or (p7.get("metadata") or {}).get("axiomAudit"),
-        "peerReview": (p5.get("metadata") or {}).get("peerReview"),
+        "runtimeSmoke": p5_metadata.get("runtimeSmoke"),
+        "visualContract": p5_metadata.get("visualContract"),
+        "visualJudge": p5_metadata.get("visualJudge"),
+        "metadataReadiness": p5_metadata.get("metadataReadiness"),
+        "axiomCriticalAudit": axiom_critical,
+        # Compatibility alias for consumers of the pre-schema summary. New
+        # consumers should prefer the explicit critical/health fields.
+        "axiomAudit": axiom_critical or legacy_axiom,
+        "axiomHealthCheck": p7_metadata.get("axiom_health_check"),
+        "peerReview": p5_metadata.get("peerReview"),
     }
 
 
@@ -247,9 +352,14 @@ def _functional_verification(state: dict) -> dict:
 
 def build_summary(project_root: Path) -> dict:
     state = _load_json(project_root / ".autobot" / "build-state.json")
-    events = _load_jsonl(project_root / ".autobot" / "build-log.jsonl")
+    events = _events_for_current_build(
+        state,
+        _load_jsonl(project_root / ".autobot" / "build-log.jsonl"),
+    )
+    spec = load_spec()
 
     summary = {
+        "schemaVersion": 1,
         "buildId": state.get("buildId"),
         "appName": state.get("appName"),
         "displayName": state.get("displayName"),
@@ -259,7 +369,7 @@ def build_summary(project_root: Path) -> dict:
         "status": _overall_status(state),
         "functionalVerification": _functional_verification(state),
         "coverage": _coverage(project_root),
-        "phases": _phase_durations(events),
+        "phases": _phase_ledger(state, events, spec),
         "gateLedger": _gate_ledger(events),
         "buildAttempts": _build_attempts(events),
         "qualitySignals": _quality_signals(state),
@@ -345,19 +455,22 @@ def render_markdown(summary: dict) -> str:
 
     lines.append("## Phase Ledger")
     lines.append("")
-    lines.append("| Phase | Status | Duration | Retries | Build fixes |")
-    lines.append("|------:|--------|---------:|--------:|------------:|")
-    state_phases = (summary.get("environment") or {})  # placeholder, we'll use the durations below
+    lines.append("| Phase | Status | Duration | Retries | Build fixes | Error |")
+    lines.append("|------:|--------|---------:|--------:|------------:|-------|")
     phase_block = summary.get("phases") or {}
-    full_state: dict = {}  # not in summary, but enough info is in phase_block
-    # We need retry counts — re-load build-state.
-    # We avoid round-tripping by trusting that summary already saw them; phase_block has only timing.
-    # That's OK — keep the table minimal but useful.
     for pid in sorted(phase_block.keys(), key=lambda x: int(x) if x.isdigit() else 99):
         info = phase_block[pid]
         dur = info.get("durationSeconds")
         dur_str = f"{dur}s" if dur is not None else "—"
-        lines.append(f"| {pid} | (see state) | {dur_str} | — | — |")
+        status = info.get("status") or "unknown"
+        retries = info.get("retryCount", 0)
+        max_retry = info.get("maxRetry")
+        retry_str = f"{retries}/{max_retry}" if max_retry is not None else str(retries)
+        error = str(info.get("error") or "—").replace("|", "\\|").replace("\n", " ")[:120]
+        lines.append(
+            f"| {pid} | {status} | {dur_str} | {retry_str} | "
+            f"{info.get('buildFixAttempts', 0)} | {error} |"
+        )
     lines.append("")
 
     lines.append("## Gate Ledger")
@@ -445,17 +558,6 @@ def write_summary(project_root: Path) -> dict:
         latest.write_text(build_id, encoding="utf-8")
 
     summary["_paths"] = {"json": str(json_path), "md": str(md_path), "latest": str(latest)}
-
-    # The run summary is the last artifact of Phase 7 for every run (success or
-    # failure), so it is the reliable point to release the build lock on a clean
-    # shutdown. Best-effort: a missing build_lock module or a lock held by
-    # another live build must never break summary writing. (Stale locks are
-    # reclaimed at the next acquire regardless, so this is a courtesy.)
-    try:
-        import build_lock
-        build_lock.release(project_root, build_id)
-    except Exception:
-        pass
 
     return summary
 

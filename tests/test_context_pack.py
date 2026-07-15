@@ -69,6 +69,14 @@ class TestContextPackRequiredInputs(unittest.TestCase):
         self.assertIn("REQUIRED INPUTS", result["text"])
         self.assertIn(f"{self.app}/Models/ServiceProtocols.swift", result["text"])
 
+    def test_pack_does_not_duplicate_static_guidance_or_learnings(self):
+        result = context_pack.build(
+            self.proj, self.spec, {"appName": self.app},
+            phase="4", agent="ui-builder",
+        )
+        self.assertNotIn("HIGH-IMPACT LEARNINGS", result["text"])
+        self.assertNotIn("REFERENCE INDEX", result["text"])
+
 
 class TestTransitiveUpstream(unittest.TestCase):
     def test_phase4_closure_includes_phase1(self):

@@ -26,14 +26,12 @@ from conftest import (
 
 
 class TestPreflightShipStandalone(unittest.TestCase):
-    def test_no_build_state_warns_and_passes(self):
-        # archive.sh is also a manual out-of-pipeline tool — a project without
-        # build-state.json must pass with a warning, not block.
+    def test_no_build_state_is_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = run_pipeline("preflight-ship", project_dir=Path(tmp))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("WARN: preflight-ship", result.stderr)
-        self.assertIn("standalone", result.stderr)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ERROR: preflight-ship", result.stderr)
+        self.assertIn("build-state.json", result.stderr)
 
 
 class TestPreflightShipBlocks(IsolatedProjectCase):

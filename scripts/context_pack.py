@@ -8,8 +8,6 @@ warning not a hard truncation):
     PHASE             — spec slice for the phase (id, name, gate, gateChecks)
     OUTPUT CONTRACT   — fileOwnership.agents.<agent>.writes
     REQUIRED INPUTS   — owned-file paths from upstream phases
-    HIGH-IMPACT LEARNINGS — top-N active learnings by effect_score
-    REFERENCE INDEX   — per-agent reference file paths
     PROMPT TAIL       — orchestrator-supplied free text
 
 If the rendered pack exceeds the soft budget the function still returns it —
@@ -23,39 +21,9 @@ import hashlib
 import json
 from pathlib import Path
 
+from phase_inputs import transitive_upstream as _transitive_upstream
+
 DEFAULT_BUDGET_BYTES = 40 * 1024
-MAX_LEARNINGS = 8
-
-REFERENCE_FILES = {
-    "architect": [
-        "references/axiom-distilled/design.md",
-        "references/axiom-distilled/data-concurrency.md",
-        "references/ios-ux-style.md",
-        "skills/autobot-orchestrator/references/architecture-template.md",
-    ],
-    "ui-builder": [
-        "references/axiom-distilled/swiftui.md",
-        "references/axiom-distilled/design.md",
-    ],
-    "data-engineer": [
-        "references/axiom-distilled/data-concurrency.md",
-        "references/axiom-distilled/build-testing.md",
-    ],
-    "quality-engineer": [
-        "references/axiom-distilled/build-testing.md",
-        "references/axiom-distilled/data-concurrency.md",
-        "references/axiom-distilled/swiftui.md",
-    ],
-    "ux-designer": ["references/axiom-distilled/design.md"],
-    "design-system": [
-        "references/axiom-distilled/design.md",
-        "references/axiom-distilled/swiftui.md",
-    ],
-    "backend-engineer": [],
-    "deployer": [],
-}
-
-
 def _spec_slice(spec: dict, phase: str) -> dict:
     phases = spec.get("phases") or {}
     gates = spec.get("gates") or {}
@@ -78,31 +46,6 @@ def _spec_slice(spec: dict, phase: str) -> dict:
 def _writes_for(spec: dict, agent: str, app_name: str) -> list[str]:
     block = ((spec.get("fileOwnership") or {}).get("agents") or {}).get(agent) or {}
     return [raw.replace("{appName}", app_name) for raw in (block.get("writes") or [])]
-
-
-def _transitive_upstream(phases: dict, start: str) -> list[str]:
-    """All phases reachable from `start` via the `dependencies` edges
-    (TRANSITIVE, not just the immediate parents).
-
-    The pipeline is a single-edge chain (4→3→2→1→0), so the immediate
-    dependency of Phase 4 is only Phase 3 (design-system / Packages/). Walking
-    just the immediate parent omitted the Phase-1 `{appName}/Models/` +
-    ServiceProtocols.swift type contract — the very thing every phase-4 coder's
-    prompt is written against. Traversing the full closure surfaces it (and the
-    Phase-2 design-spec) as read-only inputs. Inputs are path+sha+size
-    references, not file contents, so a wider closure costs only a few lines.
-
-    Returned ascending by phase id for stable, deterministic pack output.
-    """
-    seen: set[str] = set()
-    stack = list((phases.get(start) or {}).get("dependencies") or [])
-    while stack:
-        pid = str(stack.pop())
-        if pid in seen or pid not in phases:
-            continue
-        seen.add(pid)
-        stack.extend(str(d) for d in ((phases.get(pid) or {}).get("dependencies") or []))
-    return sorted(seen, key=lambda p: (len(p), p))
 
 
 def _required_inputs(spec: dict, agent: str, app_name: str, project_root: Path) -> list[dict]:
@@ -143,16 +86,6 @@ def _required_inputs(spec: dict, agent: str, app_name: str, project_root: Path) 
     return inputs
 
 
-def _learnings(project_root: Path, limit: int = MAX_LEARNINGS) -> list[dict]:
-    try:
-        from learning_impact import active
-    except ImportError:
-        return []
-    items = [i for i in (active(project_root).get("items") or []) if isinstance(i, dict)]
-    items.sort(key=lambda i: int(i.get("effect_score", 0)), reverse=True)
-    return items[:limit]
-
-
 def build(
     project_root: Path,
     spec: dict,
@@ -167,8 +100,6 @@ def build(
     phase_info = _spec_slice(spec, phase)
     writes = _writes_for(spec, agent, app_name)
     inputs = _required_inputs(spec, agent, app_name, project_root)
-    learnings = _learnings(project_root)
-    references = REFERENCE_FILES.get(agent, [])
 
     lines: list[str] = []
     lines.append(f"# Context pack — phase={phase} agent={agent} budget={budget}")
@@ -188,21 +119,6 @@ def build(
         for entry in inputs:
             lines.append(f"  - {entry['path']:<60} [sha={entry['sha']} {entry['size']:>6}B]")
     else:
-        lines.append("  (none)")
-    lines.append("")
-    lines.append("HIGH-IMPACT LEARNINGS")
-    if learnings:
-        for item in learnings:
-            score = item.get("effect_score", 0)
-            preview = (item.get("rule_preview") or "").strip()[:140]
-            lines.append(f"  - [{'+' if score >= 0 else ''}{score}] {preview}")
-    else:
-        lines.append("  (none)")
-    lines.append("")
-    lines.append("REFERENCE INDEX")
-    for ref in references:
-        lines.append(f"  - {ref}")
-    if not references:
         lines.append("  (none)")
     if prompt_tail:
         lines.append("")

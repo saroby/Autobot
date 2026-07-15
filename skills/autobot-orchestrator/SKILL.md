@@ -46,7 +46,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
    - mvp 자율 흐름은 manual phase 를 만나면 그 다음 non-manual phase 로 점프 (Phase 2 → 3, Phase 5 → 7)
 2. 해당 Phase 의 agent 목록을 spec 의 `phases.<id>.agents` 에서 확인한다. 배열이 없으면 self 단계다.
 3. self 단계는 직접 수행한다. agent 목록이 있으면 각 항목을 `Agent(subagent_type=...)` 로 디스패치한다.
-4. **Agent 디스패치 직전에 context_pack 을 생성**해 sub-agent 프롬프트의 첫 블록으로 임베드한다 (LOOP 19). 그러면 sub-agent 는 mvp.md / orchestrator 전체 본문을 받지 않고, 자신의 phase 슬라이스 + output contract + allowed paths + top-scored learnings 만 본다:
+4. **Agent 디스패치 직전에 context_pack 을 생성**해 sub-agent 프롬프트의 첫 블록으로 임베드한다 (LOOP 19). context-pack 은 spec 에서 생성한 phase 슬라이스·output contract·required input 경로만 전달한다. 정적 작업 지침은 `agents/*.md`, 학습은 `learning-bootstrap.md` 가 각각 소유한다:
 
    ```bash
    bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" context-pack \
@@ -55,7 +55,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
      --format text
    ```
 
-   출력 (≤ 40KB) 을 그대로 Agent 프롬프트 맨 앞에 붙인다. dropped 항목이 있으면 build-log 에 정보용으로 기록한다.
+   출력 (≤ 40KB) 을 그대로 Agent 프롬프트 맨 앞에 붙인다. `--prompt-tail` 은 이전 실패 원인처럼 이번 실행에만 존재하는 동적 정보에만 사용한다.
 5. **sandbox guard 활성화 / 해제**: sub-agent dispatch 직전 `pipeline.sh sandbox set-active --agent <name> --phase <N>`, 완료 직후 `pipeline.sh sandbox clear-active`. PreToolUse hook 이 marker 를 보고 사전 차단한다 (LOOP 12).
 6. Phase 3 은 **두 단계 dispatch**: (a) `create-xcode-project.sh` 를 self 로 실행, 직후 (b) `design-system` 에이전트를 단일 dispatch. 둘 다 끝난 뒤 `advance-phase --phase 3` 으로 gate 실행.
 7. Phase 4 는 **반드시 한 메시지에서** ui-builder + data-engineer (+조건부 backend-engineer) 를 동시 디스패치한다. 세 coder 는 disjoint 트리(Views/ vs Services/ vs backend/)에 쓰므로 construction 상 충돌이 없다. 병렬 중에는 세 agent 가 하나의 marker 를 공유하므로 hook 이 개별 write 를 특정 agent 로 귀속시킬 수 없다 — 따라서 marker 의 `agent` 는 broadAccess 컨텍스트(`quality-engineer`)로 set 한다. pre-write guard 의 Phase 4 역할은 **forbidden floor**(`{appName}/Models/` + `.autobot` 제어 파일)를 세 agent 모두에게 강제하는 것이고(broadAccess 라도 floor 는 뚫지 못한다), **agent 간 디렉토리 OVERLAP 은 Gate 4→5 의 post-hoc `agent-sandbox.sh after` 가 정확히 검출**한다. 가장 제한적인 단일 agent 로 marker 를 set 하면 다른 두 coder 의 정당한 write 가 차단되므로 그렇게 하지 않는다.
@@ -83,7 +83,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" schema                    # JSON 스키마 검증
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" init-build ...             # build-state.json 생성
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" init-build ...             # build-state.json 생성 + 출력된 lockToken을 실행 컨텍스트에 보관
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" record-environment ...     # detect-* 출력 기록
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" start-phase  --phase N --detail "..."
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase N    # outgoing gate + 마킹
@@ -93,6 +93,10 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag     --key backend_requir
 ```
 
 `validate-state.sh` 는 read-only 진단. 상태 변경은 모두 `pipeline.sh`. Phase 완료는 `advance-phase`만 사용한다.
+
+`init-build` stdout의 `LOCK_TOKEN=...` 값을 `OWNED_LOCK_TOKEN`으로 실행 컨텍스트에
+보관하고 Phase 7 run-summary 생성 뒤 token release에 전달한다. status에서 token을
+다시 읽지 않는다. 그 사이 다른 resume가 takeover했다면 새 세대를 해제하면 안 된다.
 
 **진입 플래그** (mvp 호출 인자): 사용자가 `/autobot:mvp --quality=max …` 로 호출했으면 Phase 0 완료 직후 `set-flag --key qualityMax --value true --reason "operator opted into quality-max via /autobot:mvp"` 를 1회 실행한다 (`--allow-visual-drift` → `allowVisualDrift` 와 동일 패턴). 이후 Gate 5→6 의 peer/axiom sidecar 와 Gate 2→3 의 design fallback 체크가 이 플래그를 읽어 미가용 skip 을 PASS 대신 DEGRADED 로 처리한다. peer/Axiom 이 설치됐는데 누락·실패·비감사 가능 결과를 남기면 qualityMax 여부와 무관하게 DEGRADED 로 기록한다. DEGRADED 는 로컬 MVP 완료를 막지 않고 출하 경로를 차단한다.
 
@@ -108,7 +112,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag     --key backend_requir
 
 | 책임 | 스크립트 | 비고 |
 |------|----------|------|
-| Build lock | `build_lock.py` — `init-build` 가 자동 acquire, `write-run-summary`(Phase 7) 가 release | PID liveness 로 crash 후 stale lock 자동 재확보 + 동시 빌드 차단. 진단: `pipeline.sh build-lock status` |
+| Build lock | `build_lock.py` — `init-build`가 acquire, Phase 7 종료가 token으로 release | lease + compare-and-swap token으로 동시 재개를 차단하고 만료 lease만 자동 재확보. run-summary는 소유권 증명이 아니다. 진단: `pipeline.sh build-lock status` |
 | Event log | `scripts/build-log.sh` | `.autobot/build-log.jsonl` append-only |
 | Models 체크섬 / Phase 스냅샷 | `scripts/snapshot-contracts.sh` | Phase 4 산출물 복원에 사용 |
 | Agent sandbox | `scripts/agent-sandbox.sh before/after` | 위반은 `phases.<N>.sandbox.violations` 자동 기록 |
@@ -117,7 +121,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag     --key backend_requir
 | Run summary | `pipeline.sh write-run-summary` (Phase 7 마지막) | `artifacts/<buildId>/run-summary.{json,md}` + `latest` 심볼릭 링크 |
 | Learning grade | `pipeline.sh grade-learnings --build-id <id>` (Phase 7) | `learnings.json` 의 effect_score 누적 + 자동 quarantine |
 | Idempotent resume | `pipeline.sh input-hash should-skip --phase N [--force]` (resume) | input manifest 미변경 시 phase 재실행 skip |
-| Context pack | `pipeline.sh context-pack --phase N --agent <name>` (Agent dispatch 직전) | 40KB 이내 focused pack 생성, drop list 보고 |
+| Context pack | `pipeline.sh context-pack --phase N --agent <name>` (Agent dispatch 직전) | focused spec/ownership/input-path pack; 40KB 초과 시 warning |
 
 이벤트 유형 전체 목록은 `spec/pipeline.json.logEvents` 가 SSOT.
 
@@ -146,7 +150,7 @@ Phase 4 의 ui-builder/data-engineer 는 protocol 뒤 구현만 작성한다. `@
 Phase 3 는 두 단계로 실행된다 (모두 같은 phase 번호 내에서):
 
 1. **scaffold (self)** — `create-xcode-project.sh` 호출. 인자에 `--design-system-module $(jq -r .designSystemModule .autobot/architecture.json)` 를 반드시 전달. Composition seam + `Packages/<Module>/Package.swift` + project.yml wiring + Tokens stub 4개 생성.
-2. **design-system 에이전트 dispatch** — context-pack 으로 phase 슬라이스 + fileOwnership.agents.design-system.writes + design-spec.md / architecture.md 슬라이스를 전달. sandbox marker 의 `agent` 는 `design-system`.
+2. **design-system 에이전트 dispatch** — context-pack 으로 phase 슬라이스 + fileOwnership.agents.design-system.writes + design-spec.md / architecture.md 입력 경로를 전달. sandbox marker 의 `agent` 는 `design-system`.
 
 두 단계 사이에는 `advance-phase` 를 호출하지 않는다 (같은 phase). step 1 실패 시 step 2 는 생략. step 2 실패 시 retryCount 가 phase 3 의 maxRetry (1) 안이면 step 2 만 재실행.
 
@@ -155,7 +159,7 @@ Phase 3 는 두 단계로 실행된다 (모두 같은 phase 번호 내에서):
 | 실패 유형 | 대응 | 한도 |
 |----------|------|------|
 | 에이전트 산출물 누락 | 같은 에이전트 재실행 | spec `phases.<N>.maxRetry` |
-| 컴파일 에러 | Phase 5 build_fix_loop (spec 정의) | spec `phases.5.build_fix_loop.max_attempts` |
+| 컴파일 에러 | Phase 5 build-fix loop | spec `policies.buildFixLoop.maxAttempts` |
 | 동일 에러 시그니처 반복 | Circuit breaker | spec `policies.circuitBreaker.errorSignatureRepeat` |
 | Phase 5 가 Phase 4 산출물 손상 | `snapshot-contracts.sh restore-phase --phase 4` | 2회 실패 시 자동 |
 | 외부 시스템 (ASC, fastlane) 실패 | fallback 경로 또는 사용자 안내 | 1 |

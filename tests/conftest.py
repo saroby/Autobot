@@ -58,6 +58,7 @@ def _scoped_env(project_dir: Path, extra: dict | None = None) -> dict:
     # A test that needs the live probe can override via `extra`.
     env["AUTOBOT_DISABLE_SIMULATOR"] = "1"
     env["AUTOBOT_DISABLE_XCODEBUILD"] = "1"
+    env["AUTOBOT_DISABLE_DISK_CHECK"] = "1"
     env.pop("AUTOBOT_ACTIVE_AGENT", None)
     env.pop("AUTOBOT_APP_NAME", None)
     if extra:
