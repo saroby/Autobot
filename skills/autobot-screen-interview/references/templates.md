@@ -51,7 +51,7 @@ updated: <YYYY-MM-DD>
 - [ ] <이 화면 밖으로 새어나간 아이디어·다른 화면 후보>
 
 ## 구현 노트
-- 뷰: `<경로>` · mock: <위치> · 프리뷰: <상태 목록> · 렌더: `designs/previews/`
+- 뷰: `<경로>` · mock: <위치> · 프리뷰: <상태 목록> (Xcode 캔버스)
 ```
 
 status 전이: `interviewing`(R1–R5 진행 중, 라운드마다 갱신) → `confirmed`(R6 승인) → `built`(뷰코드 생성 완료).

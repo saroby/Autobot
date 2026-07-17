@@ -17,7 +17,7 @@ description: Use when the user invokes "/autobot:screen" to deep-dive on a singl
 | AGENTS.md | 프로젝트 루트 | 에이전트 작업 규칙의 **정본** — 구조, 컨벤션, SSOT 지도 | 비파괴 병합 |
 | CLAUDE.md | 프로젝트 루트 | `@AGENTS.md` 참조 + Claude Code 전용 지침만 (내용 중복 금지) | 참조 줄만 보장 |
 | SwiftUI 뷰 | 기존 Views 패턴 위치 (없으면 `Views/<ScreenName>View.swift`) | presentation-only, 상태별 `#Preview` | diff 요약 확인 후 교체 |
-| 프리뷰 PNG | `designs/previews/<NN>-<상태>.png` | 상태별 렌더 — **최종 보고에서 눈으로 보여주는 결과물** | 재생성 (덮어씀) |
+| Xcode 스캐폴드 | `<App>.xcodeproj` (+ `project.yml`, `App/<App>App.swift`) | **프리뷰 캔버스 구동용 최소 프로젝트** — 없을 때만 생성 | 유지 (xcodegen 재생성만) |
 
 슬러그는 kebab-case 영문 (예: 홈 피드 → `home-feed`, 뷰는 `HomeFeedView.swift`). 문서 템플릿은 `references/templates.md` 참조.
 
@@ -133,8 +133,6 @@ default 외 상태를 화면 유형에 맞게 **제안하고** 고르게 한다 
 **필수:**
 - R4 상태 매트릭스의 **모든 상태**에 `#Preview` 하나씩 + 다크모드 프리뷰 1개
 - 접근성: 의미 있는 라벨, Dynamic Type 에 깨지지 않는 레이아웃
-- 크로스플랫폼 SwiftUI 유지 — UIKit 전용 API(`UIColor`, `UIScreen` 등) 지양. 프리뷰 렌더 하네스가 macOS 로 컴파일한다
-- presentation-only 뷰에서는 `LazyVStack` 대신 `VStack` — lazy 컨테이너는 스냅샷 렌더에서 백지가 된다
 - 파일 위치는 기존 프로젝트 패턴을 따른다. 신규 프로젝트면 `Views/<ScreenName>View.swift`. 뷰가 커지면 같은 파일 내 서브뷰로 분리 (파일 수 최소).
 - 동일 경로에 파일이 이미 있으면 덮어쓰기 전에 diff 요약을 보여주고 확인받는다.
 
@@ -153,22 +151,23 @@ swift build 2>&1 | tail -5
 - 실패 → **산출물은 그대로 두고** 원인을 분류해 보고: 이번 뷰 코드 문제면 즉시 수정 후 재시도 (최대 2회), 기존 프로젝트의 무관한 문제면 그 사실만 명시.
 - 빌드 수단이 없으면 (스캐폴드 없는 신규) 컴파일 확인은 `xcrun swiftc -typecheck -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" -target arm64-apple-ios<SDK버전>-simulator <뷰파일>` 로 대체.
 
-## 프리뷰 렌더 — 결과를 눈으로 보여준다 (필수)
+## Xcode 프리뷰로 결과를 보여준다 (필수)
 
-"Xcode 에서 확인하세요"로 끝내지 않는다. 스킬의 결과물은 사용자가 이 대화에서 **보는** 프리뷰다.
+"Xcode 에서 확인하세요"라는 **말로 끝내지 않는다** — 스킬이 직접 Xcode 를 열어 프리뷰 캔버스까지 데려다 놓는다. 결과 표시는 이미지 렌더가 아니라 **살아있는 `#Preview` 캔버스**다 (사용자 결정 2026-07-17 — PNG 스냅샷 표시 금지).
 
-1. `scripts/render-previews-template.swift` 를 프로젝트의 `designs/render-previews.swift` 로 복사하고, cases 배열을 R4 상태 매트릭스(상태당 1개 + 다크 1개)로 채운다.
-2. 빌드·실행: `swiftc -parse-as-library Views/<ScreenName>View.swift designs/render-previews.swift -o /tmp/render-previews && /tmp/render-previews` → `designs/previews/<NN>-<상태>.png` 생성.
-3. 생성된 PNG 를 **Read 로 대화에 표시**해 눈으로 검증하고(백지·깨짐이면 수정 후 재렌더, 최대 2회 — 백지는 대개 ScrollView/Lazy/ImageRenderer 문제), `open designs/previews` 로 사용자에게도 연다.
-4. 뷰가 UIKit 전용 API 에 의존해 macOS 컴파일이 불가능하면: 의존 제거를 우선 시도하고, 정말 불가피하면 advisory — Xcode 프리뷰 안내로 대체하고 이유를 최종 보고에 명시한다.
-
-하네스 방식은 NSHostingView 스냅샷이다 — `ImageRenderer` 로 바꾸지 말 것 (ScrollView/Lazy 콘텐츠를 백지로 렌더).
+1. **Xcode 프로젝트가 없으면** 최소 스캐폴드를 만든다 (xcodegen):
+   - `project.yml` — 앱 타깃 1개, `deploymentTarget` iOS 26.0, `sources: [App, Views]`(글롭이라 이후 화면 자동 포함), 번들 id 는 `~/.autobot/config.json` 의 조직 값 또는 임시
+   - `App/<App>App.swift` — `WindowGroup` 에 이번 화면(루트 화면이 따로 있으면 그것) 배치
+   - `xcodegen generate` → `<App>.xcodeproj`. xcodegen 미설치면 `brew install xcodegen` 안내 후 중단하지 말고 advisory 로 진행
+2. **프로젝트가 이미 있으면** 새 뷰 파일이 타깃에 포함되는지만 확인 — xcodegen 프로젝트면 `xcodegen generate` 재실행, Xcode 16 synchronized-folder 프로젝트면 자동 포함. 수동 pbxproj 편집은 하지 않는다
+3. advisory 빌드: `xcodebuild -project <App>.xcodeproj -scheme <App> -destination 'generic/platform=iOS Simulator' build` (스캐폴드 덕에 이제 가능)
+4. **`xed <프로젝트> && xed <뷰파일>`** 로 Xcode 를 열어 해당 뷰 파일에 포커스 — 캔버스(⌥⌘↩)가 R4 상태별 `#Preview` 를 보여준다. 최종 보고에 확인할 프리뷰 이름 목록을 명시한다
 
 뷰 생성·검증 후 `docs/screens/<slug>.md` frontmatter 를 `status: built`, `updated: <오늘 날짜>` 로 갱신하고 `## 구현 노트`(뷰 경로·mock 위치·프리뷰 상태 목록)를 채우며, AGENTS.md 화면 목록의 상태 열도 함께 갱신한다. 검증(advisory) 컴파일이 실패해도 뷰 파일이 생성됐으면 `built` 다.
 
 ## 최종 보고
 
-- **렌더된 프리뷰 PNG 를 대화에 표시** (Read) — 최종 보고의 첫 번째 항목, 텍스트 요약보다 먼저
+- **Xcode 가 열려 있고 캔버스에 프리뷰가 떠 있는 상태**로 보고 시작 — 확인할 `#Preview` 이름 목록을 첫 항목으로
 - 화면 한 문장 정의 + 훅
 - 생성·변경 파일 목록 (SSOT 4종 상태: 생성/병합/유지)
 - 뷰 파일 경로 + 프리뷰 상태 목록 + 컴파일 확인 결과

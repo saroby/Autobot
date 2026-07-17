@@ -20,7 +20,7 @@
 - **SSOT 문서 산출**: SOUL.md(제품 정체성) + AGENTS.md(에이전트 규칙 정본) + CLAUDE.md(@AGENTS.md 참조) 생성·비파괴 병합. 템플릿은 `references/templates.md`.
 - **presentation-only SwiftUI 뷰**: 로직(네트워크·저장·ViewModel) 금지, mock 주입 + 콜백 파라미터 + R4 상태 전부 `#Preview`. 컴파일 검증은 advisory (hard fail 금지 철칙 준수).
 - Autobot 파이프라인과 무관하게 아무 앱 프로젝트에서 동작. `.autobot/architecture.md` 가 있으면 컨텍스트로 활용해 중복 질문 제거.
-- **프리뷰 렌더 필수화**: "Xcode 에서 확인하세요" 금지 — NSHostingView 스냅샷 하네스(`scripts/render-previews-template.swift`)로 상태별 PNG 를 `designs/previews/` 에 생성해 대화에 표시. ImageRenderer 는 ScrollView/Lazy 를 백지로 렌더해 금지, presentation-only 뷰는 VStack·크로스플랫폼 API 계약 (다독다독 독푸딩으로 검증).
+- **결과 표시 필수화 — Xcode 프리뷰 캔버스**: "Xcode 에서 확인하세요"라는 말로 끝내기 금지 — 프로젝트가 없으면 최소 스캐폴드(project.yml + xcodegen) 생성, advisory 빌드 후 `xed` 로 뷰 파일을 열어 살아있는 `#Preview` 캔버스가 결과 화면이 되게 한다. (1차 구현이던 NSHostingView PNG 스냅샷 표시는 사용자 결정으로 폐기 — 이미지가 아니라 실제 프리뷰. 다독다독 독푸딩 2회로 검증)
 
 ### Fixed — 배포 체인 무인 완주
 - **[HIGH] 메타데이터·스크린샷 업로드/심사 제출이 creds 를 못 읽던 결함**: 3개 스크립트가 release_env.sh 를 source 하지 않아 doctor 통과 후 실행만 실패 — upload.sh 패턴으로 통일 + grep 계약 테스트.
