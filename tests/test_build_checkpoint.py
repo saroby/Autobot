@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import tempfile
 import unittest
 import copy
@@ -105,6 +106,67 @@ class TestBuildCheckpoint(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "metadata hash mismatch"):
                 restore_checkpoint(project, load_spec(), state, attempt=0)
             self.assertEqual(outside.read_text(), "safe")
+
+    def test_interrupted_restore_converges_via_journal(self):
+        # A restore SIGKILLed between delete and copy leaves a franken-tree
+        # plus the restore journal. The next checkpoint entry point must
+        # re-apply the journaled attempt and sweep dead-pid orphan backups.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            source = project / "DemoApp" / "Views" / "Home.swift"
+            source.parent.mkdir(parents=True)
+            source.write_text("version zero")
+            state = {"appName": "DemoApp", "buildId": "build-1", "phases": {"5": {}}}
+            save_checkpoint(project, load_spec(), state, attempt=0)
+
+            root = project / ".autobot" / "build-fix" / "checkpoints"
+            (root / "restore-journal.json").write_text(json.dumps({
+                "attempt": 0, "buildId": "build-1", "startedAt": "t",
+            }))
+            shutil.rmtree(project / "DemoApp")  # crash after delete, before copy
+            orphan = root / ".restore-backup.2147483647.deadbeef"
+            orphan.mkdir()
+
+            chosen = latest_checkpoint(project)
+
+            self.assertEqual(chosen["attempt"], 0)
+            self.assertEqual(source.read_text(), "version zero")
+            self.assertFalse((root / "restore-journal.json").exists())
+            self.assertFalse(orphan.exists(), "dead-pid orphan backup must be swept")
+
+    def test_cross_build_journal_is_quarantined_not_replayed(self):
+        # A restore journal left by build-A must NEVER replay onto build-B's
+        # working tree (it would overwrite B's files with A's checkpoint). The
+        # recovery path quarantines the mismatched journal and touches nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            source = project / "DemoApp" / "Views" / "Home.swift"
+            source.parent.mkdir(parents=True)
+            source.write_text("build-B checkpoint content")
+            # Active build is build-B.
+            (project / ".autobot").mkdir(parents=True, exist_ok=True)
+            (project / ".autobot" / "build-state.json").write_text(json.dumps({
+                "appName": "DemoApp", "buildId": "build-B", "phases": {"5": {}},
+            }))
+            state = {"appName": "DemoApp", "buildId": "build-B", "phases": {"5": {}}}
+            save_checkpoint(project, load_spec(), state, attempt=0)
+
+            # Working tree diverges from the checkpoint.
+            source.write_text("build-B newer uncommitted work")
+
+            # A STALE journal from a DIFFERENT build survives into build-B's run.
+            root = project / ".autobot" / "build-fix" / "checkpoints"
+            (root / "restore-journal.json").write_text(json.dumps({
+                "attempt": 0, "buildId": "build-A", "startedAt": "t",
+            }))
+
+            latest_checkpoint(project)  # any entry point triggers recovery
+
+            self.assertFalse((root / "restore-journal.json").exists())
+            quarantined = list(root.glob("restore-journal.json.quarantined.*"))
+            self.assertEqual(len(quarantined), 1, "mismatched journal must be quarantined")
+            # Working tree untouched — the cross-build checkpoint was NOT applied.
+            self.assertEqual(source.read_text(), "build-B newer uncommitted work")
 
     def test_latest_rejects_tampered_attempt_and_signature(self):
         with tempfile.TemporaryDirectory() as tmp:

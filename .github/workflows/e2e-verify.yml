@@ -14,6 +14,10 @@ on:
     paths:
       - "scripts/flow_runner.py"
       - "scripts/gate_checks/functional.py"
+      - "scripts/gate_checks/_helpers.py"
+      - "scripts/gate_checks/__init__.py"
+      - "scripts/intent_spec.py"
+      - "scripts/spec_loader.py"
       - "scripts/sim_runtime.py"
       - "scripts/xcodebuild_runner.py"
       - "scripts/e2e_verify.py"
@@ -24,6 +28,10 @@ on:
     paths:
       - "scripts/flow_runner.py"
       - "scripts/gate_checks/functional.py"
+      - "scripts/gate_checks/_helpers.py"
+      - "scripts/gate_checks/__init__.py"
+      - "scripts/intent_spec.py"
+      - "scripts/spec_loader.py"
       - "scripts/sim_runtime.py"
       - "scripts/xcodebuild_runner.py"
       - "scripts/e2e_verify.py"

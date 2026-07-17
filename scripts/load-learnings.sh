@@ -47,8 +47,6 @@ fi
 ASC_CONFIGURED="false"
 if env_has_key "ASC_API_KEY_ID" && env_has_key "ASC_API_ISSUER_ID" && env_has_key "ASC_API_KEY_PATH"; then
   ASC_CONFIGURED="true"
-elif env_has_key "APPLE_ID" && env_has_key "APP_SPECIFIC_PASSWORD"; then
-  ASC_CONFIGURED="true"
 fi
 
 # ── Step 2: 과거 학습 데이터 로드 ──

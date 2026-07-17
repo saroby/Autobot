@@ -79,7 +79,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" app-review-controller fail \
   --phase '<PHASE>' --claim-token '<CLAIM_TOKEN>' --reason '<canonical reason>'
 ```
 
-`next`가 `action: complete`를 반환할 때까지 반복한다. controller는 **0 → 0b → A → B → C → D1 → D2 → H → E → F → G** 의존성을 강제하며, Phase F는 현재 `buildId`·`bundleId`와 digest가 모두 일치하는 upload status만 재사용한다.
+`next`가 `action: complete`를 반환할 때까지 반복한다. `action: halted` 면 종결이다 — controller 가 재시도 상한(3회) 또는 비재시도 실패(`name_collision` 등)로 해당 phase 를 정지시킨 것이므로, `reason` 과 복구 안내를 보고하고 루프를 끝낸다 (재claim 금지). controller는 **0 → 0b → A → B → C → D1 → D2 → H → E → F → G** 의존성을 강제하며, Phase F는 현재 `buildId`·`bundleId`와 digest가 모두 일치하는 upload status만 재사용한다.
 
 사용자-가시 요약 (전체 흐름 — 각 phase 의 실행 명령·분기표는 SKILL.md 참조):
 

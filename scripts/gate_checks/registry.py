@@ -33,10 +33,12 @@ from gate_checks.build import (
 from gate_checks.capability import (
     check_app_intent_declared,
     check_feature_spec_declared,
+    check_feature_spec_depth,
     check_feature_spec_quality,
     check_idea_layout_requirements_captured,
     check_intent_anchors_in_ui,
     check_ios_capability_safe,
+    check_no_legacy_theme_refs,
     check_primary_cta_visibility,
 )
 from gate_checks.deploy import check_deployment_attempt_recorded
@@ -45,8 +47,10 @@ from gate_checks.design import (
     check_design_assets_exist_or_fallback,
     check_design_spec_json_valid,
     check_design_spec_sections_complete,
+    check_design_system_components_exist,
     check_design_system_package_exists,
     check_design_system_tokens_exist,
+    check_ds_primitives_used,
 )
 from gate_checks.functional import (
     check_functional_flows_pass,
@@ -75,8 +79,11 @@ from gate_checks.setup import (
     check_design_direction_complete,
     check_environment_ready,
     check_environment_recorded,
+    check_hook_retention_present,
+    check_market_context_present,
     check_models_exist,
     check_project_name_resolved,
+    check_service_protocol_depth,
     check_service_protocols_exist,
 )
 
@@ -100,7 +107,11 @@ GATE_CHECKS: dict[str, Any] = {
     "app_intent_declared": check_app_intent_declared,
     "feature_spec_declared": check_feature_spec_declared,
     "feature_spec_quality": check_feature_spec_quality,
+    "feature_spec_depth": check_feature_spec_depth,
     "idea_layout_requirements_captured": check_idea_layout_requirements_captured,
+    "market_context_present": check_market_context_present,
+    "hook_retention_present": check_hook_retention_present,
+    "service_protocol_depth": check_service_protocol_depth,
     "intent_anchors_in_ui": check_intent_anchors_in_ui,
     # Gate 2→3
     "design_spec_sections_complete": check_design_spec_sections_complete,
@@ -116,6 +127,7 @@ GATE_CHECKS: dict[str, Any] = {
     "app_icon_applied": check_app_icon_applied,
     "design_system_package_exists": check_design_system_package_exists,
     "design_system_tokens_exist": check_design_system_tokens_exist,
+    "design_system_components_exist": check_design_system_components_exist,
     # Gate 4→5
     "views_exist": check_views_exist,
     "services_exist": check_services_exist,
@@ -126,6 +138,8 @@ GATE_CHECKS: dict[str, Any] = {
     "sandbox_clean": check_sandbox_clean,
     "no_tabbar_safearea_smells": check_no_tabbar_safearea_smells,
     "no_hardcoded_font_sizes": check_no_hardcoded_font_sizes,
+    "ds_primitives_used": check_ds_primitives_used,
+    "no_legacy_theme_refs": check_no_legacy_theme_refs,
     # Gate 5→6
     "build_succeeded": check_build_succeeded,
     "no_swallowed_errors": check_no_swallowed_errors,

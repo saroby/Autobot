@@ -143,6 +143,18 @@ class TestAxiomCriticalGate(IsolatedProjectCase):
         self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("axiom_critical_present", result.stdout + result.stderr)
 
+    def test_axiom_installed_clean_without_findings_path_degrades(self):
+        # Anti-laundering: ran=true + critical_count=0 with NO findings artifact
+        # is an unauditable self-report — must not roll up green.
+        self._prepare_phase5(
+            axiom_installed=True,
+            audit={"ran": True, "critical_count": 0},
+        )
+        result = self._run_gate()
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
+        self.assertIn("axiom_findings_path_absent", result.stdout + result.stderr)
+
     def test_axiom_installed_findings_path_missing_degrades(self):
         self._prepare_phase5(
             axiom_installed=True,
@@ -165,6 +177,51 @@ class TestAxiomCriticalGate(IsolatedProjectCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("axiom_audit_not_run", result.stdout + result.stderr)
+
+    def test_axiom_findings_path_directory_degrades(self):
+        # Anti-laundering: a DIRECTORY passes .exists() but is not an auditable
+        # artifact — is_file() is required.
+        (self.project_dir / ".autobot" / "axiom-critical.json").mkdir(
+            parents=True, exist_ok=True)
+        self._prepare_phase5(axiom_installed=True, audit={
+            "ran": True, "critical_count": 0,
+            "findings_path": ".autobot/axiom-critical.json"})
+        result = self._run_gate()
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("axiom_findings_missing", result.stdout + result.stderr)
+
+    def test_axiom_findings_path_dot_degrades(self):
+        # findings_path="." resolves to the project dir (a dir) → not a file.
+        self._prepare_phase5(axiom_installed=True, audit={
+            "ran": True, "critical_count": 0, "findings_path": "."})
+        result = self._run_gate()
+        self.assertIn("axiom_findings_missing", result.stdout + result.stderr)
+
+    def test_axiom_findings_escapes_project_degrades(self):
+        self._prepare_phase5(axiom_installed=True, audit={
+            "ran": True, "critical_count": 0,
+            "findings_path": "../../../../etc/hosts"})
+        result = self._run_gate()
+        self.assertIn("axiom_findings_escape_project", result.stdout + result.stderr)
+
+    def test_axiom_findings_corrupt_json_degrades(self):
+        (self.project_dir / ".autobot" / "axiom-critical.json").write_text("{not json")
+        self._prepare_phase5(axiom_installed=True, audit={
+            "ran": True, "critical_count": 0,
+            "findings_path": ".autobot/axiom-critical.json"})
+        result = self._run_gate()
+        self.assertIn("axiom_findings_unparseable", result.stdout + result.stderr)
+
+    def test_axiom_findings_count_mismatch_degrades(self):
+        # metadata claims 0 critical but the artifact lists criticals — the
+        # one-line-metadata laundering vector.
+        (self.project_dir / ".autobot" / "axiom-critical.json").write_text(
+            '{"critical":[{"file":"X.swift"}],"warning":[]}')
+        self._prepare_phase5(axiom_installed=True, audit={
+            "ran": True, "critical_count": 0,
+            "findings_path": ".autobot/axiom-critical.json"})
+        result = self._run_gate()
+        self.assertIn("axiom_findings_count_mismatch", result.stdout + result.stderr)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -231,12 +288,27 @@ class TestPeerReviewStrict(IsolatedProjectCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("peer_review_skipped", result.stdout)
 
-    def test_pass_without_findings_path_passes(self):
-        # PASS without findingsPath is acceptable (inline review may have no artifact).
+    def test_pass_without_findings_path_degrades(self):
+        # Anti-laundering: the bridge always writes an artifact, so a PASS with
+        # no findingsPath is a self-report a single --metadata line can forge.
         self._prepare(peer_review={"host": "codex", "peer": "claude", "verdict": "PASS"})
         result = self._run_gate()
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
+        self.assertIn("peer_review_pass_without_artifact", result.stdout + result.stderr)
+
+    def test_pass_with_findings_path_on_disk_passes(self):
+        findings = self.project_dir / ".autobot" / "peer-review"
+        findings.mkdir(parents=True, exist_ok=True)
+        (findings / "phase-5.json").write_text('{"verdict":"PASS","blockingFindings":[]}')
+        self._prepare(peer_review={
+            "host": "codex", "peer": "claude", "verdict": "PASS",
+            "findingsPath": ".autobot/peer-review/phase-5.json",
+        })
+        result = self._run_gate()
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("peer_review_pass", result.stdout)
+        self.assertNotIn("peer_review_pass_without_artifact", result.stdout)
 
     def test_pass_with_missing_findings_path_degrades(self):
         self._prepare(peer_review={
@@ -247,6 +319,53 @@ class TestPeerReviewStrict(IsolatedProjectCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("Gate 5->6: DEGRADED", result.stdout)
         self.assertIn("peer_review_findings_missing", result.stdout + result.stderr)
+
+    def _write_peer_artifact(self, text: str) -> None:
+        d = self.project_dir / ".autobot" / "peer-review"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "phase-5.json").write_text(text)
+
+    def test_pass_with_directory_findings_path_degrades(self):
+        # Anti-laundering: a directory passes .exists() but is not a file.
+        (self.project_dir / ".autobot" / "peer-review" / "phase-5.json").mkdir(
+            parents=True, exist_ok=True)
+        self._prepare(peer_review={
+            "host": "codex", "peer": "claude", "verdict": "PASS",
+            "findingsPath": ".autobot/peer-review/phase-5.json"})
+        result = self._run_gate()
+        self.assertIn("peer_review_findings_missing", result.stdout + result.stderr)
+
+    def test_pass_with_corrupt_json_artifact_degrades(self):
+        self._write_peer_artifact("not json at all, just prose")
+        self._prepare(peer_review={
+            "host": "codex", "peer": "claude", "verdict": "PASS",
+            "findingsPath": ".autobot/peer-review/phase-5.json"})
+        result = self._run_gate()
+        self.assertIn("Gate 5->6: DEGRADED", result.stdout)
+        self.assertIn("peer_review_findings_unparseable", result.stdout + result.stderr)
+
+    def test_pass_with_contradicting_verdict_artifact_degrades(self):
+        # metadata says PASS but the artifact's own verdict is FAIL — laundering.
+        self._write_peer_artifact('{"verdict":"FAIL","blockingFindings":[{"x":1}]}')
+        self._prepare(peer_review={
+            "host": "codex", "peer": "claude", "verdict": "PASS",
+            "findingsPath": ".autobot/peer-review/phase-5.json"})
+        result = self._run_gate()
+        self.assertIn("peer_review_verdict_mismatch", result.stdout + result.stderr)
+
+    def test_pass_with_fenced_json_artifact_tolerated(self):
+        # The peer artifact is a CLI last-message; a ```json fence must NOT
+        # false-DEGRADE a genuinely passing review.
+        self._write_peer_artifact(
+            'Here is my review:\n```json\n'
+            '{"verdict":"PASS","blockingFindings":[]}\n```\n')
+        self._prepare(peer_review={
+            "host": "codex", "peer": "claude", "verdict": "PASS",
+            "findingsPath": ".autobot/peer-review/phase-5.json"})
+        result = self._run_gate()
+        self.assertIn("peer_review_pass", result.stdout)
+        self.assertNotIn("peer_review_findings_unparseable", result.stdout)
+        self.assertNotIn("peer_review_verdict_mismatch", result.stdout)
 
     def test_missing_peer_review_skips_when_peer_unavailable(self):
         self._prepare(peer_review={}, peer_available=False)

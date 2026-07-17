@@ -43,6 +43,14 @@ class TestOverallStatus(unittest.TestCase):
             summary = build_summary(proj)
             self.assertEqual(summary["status"], "failed")
 
+    def test_empty_phases_is_unknown_not_completed(self):
+        # Corrupt/missing build-state loads as {} — that must never report a
+        # 'completed' run.
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={"buildId": "b4", "appName": "X", "phases": {}}, events=[])
+            self.assertEqual(build_summary(proj)["status"], "unknown")
+
     def test_in_progress_falls_through(self):
         with tempfile.TemporaryDirectory() as tmp:
             proj = Path(tmp)
@@ -52,6 +60,18 @@ class TestOverallStatus(unittest.TestCase):
             }, events=[])
             summary = build_summary(proj)
             self.assertEqual(summary["status"], "in_progress")
+
+    def test_phase_block_without_status_is_unknown_not_completed(self):
+        # A phase block present but missing its status key is indeterminate —
+        # it must NOT be laundered into a 'completed' run (the prior `or s is
+        # None` branch did exactly that).
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={
+                "buildId": "b5", "appName": "X",
+                "phases": {"0": {"status": "completed"}, "1": {"detail": "no status key"}},
+            }, events=[])
+            self.assertEqual(build_summary(proj)["status"], "unknown")
 
 
 class TestPhaseDurations(unittest.TestCase):
@@ -129,7 +149,9 @@ class TestFailureFootprint(unittest.TestCase):
                  "detail": "first", "buildId": "b1"},
                 {"ts": "2026-05-26T00:03:00Z", "event": "fail", "phase": 5,
                  "detail": "latest", "buildId": "b1"},
-                {"ts": "2026-05-26T00:02:00Z", "event": "circuit_breaker_triggered", "phase": 5,
+                # circuit_open is the event the engine actually emits on a trip
+                # (circuit_breaker_triggered was a spec-only dead name).
+                {"ts": "2026-05-26T00:02:00Z", "event": "circuit_open", "phase": 5,
                  "detail": "middle", "buildId": "b1"},
             ])
 
@@ -181,6 +203,20 @@ class TestOperationalLedger(unittest.TestCase):
             markdown = render_markdown(summary)
             self.assertIn("| 5 | failed |", markdown)
             self.assertIn("| 2/2 | 3 |", markdown)
+
+    def test_operator_overrides_surface_in_phase_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            _seed(proj, state={
+                "buildId": "b1", "appName": "X",
+                "phases": {"4": {"status": "completed", "operatorOverrides": 2}},
+            }, events=[])
+
+            summary = build_summary(proj)
+            self.assertEqual(summary["phases"]["4"]["operatorOverrides"], 2)
+            markdown = render_markdown(summary)
+            self.assertIn("Overrides", markdown)
+            self.assertIn("| 4 | completed | — | 0/2 | 0 | 2 | — |", markdown)
 
     def test_axiom_quality_signals_use_canonical_metadata_keys(self):
         critical = {"ran": True, "critical_count": 0}

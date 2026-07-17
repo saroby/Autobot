@@ -233,9 +233,23 @@ def mutate_state_with_validation(
     path: Path,
     spec: dict[str, Any],
     mutator: Callable[[dict[str, Any]], None],
-) -> dict[str, Any]:
+    *,
+    validator: Callable[[dict[str, Any]], tuple[bool, list[str]]] | None = None,
+) -> tuple[bool, list[str]]:
+    """Read → (validate) → mutate → schema-check → write, all under the lock.
+
+    `validator` re-checks transition preconditions against the FRESH state
+    inside the write lock — a pre-validation done outside the lock can be
+    invalidated by a concurrent writer between check and write (TOCTOU). On
+    validator failure nothing is written and (False, messages) is returned;
+    a successful write returns (True, []).
+    """
     with _state_write_lock(path):
         state = load_state(path)
+        if validator is not None:
+            ok, messages = validator(state)
+            if not ok:
+                return False, messages
         next_state = copy.deepcopy(state)
         # Backfill phases the spec added after this state was written (e.g. phase
         # "2.5" landed without a schemaVersion bump): a newly-specced, never-run
@@ -250,7 +264,19 @@ def mutate_state_with_validation(
         if errors:
             joined = "; ".join(errors)
             raise SystemExit(f"FATAL: refusing to write invalid build state: {joined}")
+        # Promote a legacy schemaVersion in the same write: a state that was
+        # backfilled and passed the current spec's validation is by definition
+        # valid current schema — without this every mutation re-emits the
+        # "legacy compat mode" WARN forever.
+        spec_version = spec.get("schemaVersion")
+        state_version = next_state.get("schemaVersion")
+        if (
+            isinstance(spec_version, int)
+            and isinstance(state_version, int)
+            and state_version < spec_version
+        ):
+            next_state["schemaVersion"] = spec_version
         save_state(path, next_state)
     for warning in warnings:
         print(f"WARN: {warning}")
-    return next_state
+    return True, []

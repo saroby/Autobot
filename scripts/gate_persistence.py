@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Glue between gate execution (gate_runner.py) and durable state.
 
-Two roles:
+Three roles:
   1. record a standalone gate run into state.gates + build-log (run-gate CLI)
   2. helpers used by advance-phase (auto-recovery: schedule the always-run
      phase, find it by spec)
+  3. circuit-breaker trip handling (handle_breaker_trip) shared by the
+     advance-phase hard-gate failure path and the fail-phase command
 
 advance-phase itself lives in phase_advance.py because it composes gate
 execution + transition validation + state mutation + log emission. Keeping it
@@ -24,6 +26,7 @@ from state_store import load_json, mutate_state_with_validation
 __all__ = [
     "build_gate_evidence",
     "execute_and_record_gate",
+    "handle_breaker_trip",
     "phase_id_for_alwaysrun",
     "force_phase_in_progress",
     "skip_pending_phases_except",
@@ -125,6 +128,67 @@ def force_phase_in_progress(
         phase_state.pop("error", None)
 
     mutate_state_with_validation(state_path, spec, mutate)
+
+
+def handle_breaker_trip(
+    spec: dict[str, Any],
+    state_path: Path,
+    project_dir: Path,
+    phase: str,
+    timestamp: str,
+) -> str | None:
+    """Circuit-breaker trip handling shared by every failure path.
+
+    Checks the breaker against the CURRENT persisted state; if tripped, emits
+    the `circuit_open` event and runs onTrip=skipToRetrospective auto-recovery
+    (skip remaining phases, force the always-run phase in_progress). Returns a
+    human-readable trip description, or None when the breaker is not tripped.
+
+    Extracted from the advance-phase hard-gate failure path so fail-phase
+    (the documented pre-gate failure command) trips identically — previously a
+    fail-phase trip left no circuit_open marker and no scheduled retrospective.
+    """
+    # Local import: circuit_breaker_tripped is a pure (spec, state) function and
+    # transitions depends only on state_store — no import cycle.
+    from transitions import circuit_breaker_tripped
+
+    state = load_json(state_path)
+    tripped, failures, threshold, scope = circuit_breaker_tripped(spec, state)
+    if not tripped:
+        return None
+
+    append_build_log(
+        project_dir, "circuit_open", phase=phase,
+        detail={
+            "scope": scope, "failures": failures, "threshold": threshold,
+            "trippedOnPhase": phase,
+        },
+        timestamp=timestamp, spec=spec,
+    )
+    trip_summary = f"circuit breaker tripped (failures={failures} ≥ {threshold}, scope={scope})"
+
+    on_trip = spec.get("policies", {}).get("circuitBreaker", {}).get("onTrip")
+    if on_trip == "skipToRetrospective":
+        retro_id = phase_id_for_alwaysrun(spec)
+        if retro_id is not None:
+            skip_reason = f"circuit breaker tripped on phase {phase}"
+            skipped_ids = skip_pending_phases_except(
+                spec, state_path, {retro_id, phase}, timestamp, skip_reason,
+            )
+            for sid in skipped_ids:
+                append_build_log(
+                    project_dir, "skip", phase=sid,
+                    detail=skip_reason, timestamp=timestamp, spec=spec,
+                )
+            # Force the always-run phase in_progress. Deliberately NO "skip"
+            # event for it: skipping and scheduling the SAME phase would be a
+            # contradictory audit trail. Its scheduling is recorded by the
+            # circuit_open event + the in_progress state transition + the return
+            # summary below.
+            force_phase_in_progress(spec, state_path, retro_id, timestamp)
+            skipped_msg = f", skipped phases={skipped_ids}" if skipped_ids else ""
+            return f"{trip_summary}; phase {retro_id} auto-scheduled in_progress{skipped_msg}"
+    return f"{trip_summary}; no auto-recovery configured"
 
 
 def skip_pending_phases_except(

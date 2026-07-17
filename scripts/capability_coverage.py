@@ -132,6 +132,52 @@ def _mark_acknowledged(hits: list[dict], arch_md: str) -> None:
         h["acknowledged"] = bool(oos) and any(re.search(p, oos) for p in pats)
 
 
+def _depth_caveats(root: Path) -> list[str]:
+    """Honest "what VERIFIED does NOT prove" caveats, computed from the actual
+    feature-spec instead of a hardcoded list (which went stale and reported
+    runner-supported actions like text_input as unexercised)."""
+    actions: set[str] = set()
+    multi_step = False
+    try:
+        from intent_spec import load_feature_spec
+        for f in (load_feature_spec(root) or []):
+            for a in f.acceptance:
+                if a.kind != "flow":
+                    continue
+                for s in a.steps:
+                    actions.add(str(s.get("action") or "tap"))
+                if len(a.steps) >= 2:
+                    multi_step = True
+    except Exception:
+        pass
+
+    caveats: list[str] = []
+    unexercised = [x for x in ("text_input", "swipe", "long_press") if x not in actions]
+    if not actions:
+        caveats.append("No flow steps are declared — no interaction is runtime-exercised.")
+    elif unexercised:
+        caveats.append(
+            f"Declared flows exercise only {', '.join(sorted(actions))} steps — "
+            f"{', '.join(unexercised)} interactions are unproven."
+        )
+    if actions and not multi_step:
+        caveats.append(
+            "Every declared flow is a single-step happy path — multi-step "
+            "journeys are unproven."
+        )
+    caveats.append(
+        "Only P0 flows hard-block the build; P1 flow failures degrade the "
+        "badge only when the P1 pass rate falls below 70%."
+    )
+    caveats.append(
+        "navigated_to requires a newly-appeared anchor and artifact_generated "
+        "/ setting_stored require the anchor's label/value to change — value "
+        "CORRECTNESS is still not asserted."
+    )
+    caveats.append("Each flow is checked once on a fresh launch on a single simulator.")
+    return caveats
+
+
 def _verification_prereqs(env: dict) -> list[dict]:
     """Tool availability + actionable install hint for each verification prereq."""
     environment = (env or {}).get("environment") or {}
@@ -190,15 +236,7 @@ def assess(project_root: Path) -> dict:
     gate56 = (state.get("gates", {}).get("5->6") or {}).get("status")
     badge = "VERIFIED" if gate56 == "passed" else ("DEGRADED" if gate56 == "degraded" else "UNVERIFIED")
     prereqs = _verification_prereqs(env)
-    depth_caveats = [
-        "Flows are driven by tapping anchors only — text entry, scrolling and "
-        "swipes are not exercised, so multi-input workflows are unproven.",
-        "Only P0 flows block the build; P1 flow failures are recorded as warnings "
-        "under a passing badge.",
-        "navigated_to / artifact_generated / setting_stored assert an anchor is "
-        "present after the tap, not that its underlying value changed.",
-        "Each flow is checked once on a fresh launch on a single simulator.",
-    ]
+    depth_caveats = _depth_caveats(root)
 
     # ── quality (advisory scan of generated Views) ──
     quality = _scan_views(root, app_name)

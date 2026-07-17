@@ -300,6 +300,7 @@ echo "$FREEZE"
 - ux-designer 에이전트를 다시 실행
 - 기존 `.autobot/designs/`와 `.autobot/design-spec.md`는 **덮어쓴다**
 - Stitch 프로젝트 ID가 `build-state.json.stitch.projectId`에 있으면 기존 프로젝트 재사용 시도
+- ux-designer 재실행 후 `.autobot/app-icon-1024.png`가 없으면 `autobot-app-icon` 스킬을 실행한 뒤 `advance-phase --phase 2`를 호출한다 (gate 2→3의 `app_icon_source_present`가 hard 검사).
 
 ### Phase 3 재개
 
@@ -308,7 +309,7 @@ echo "$FREEZE"
 
 ### Phase 4 재개
 
-- ui-builder와 data-engineer를 다시 병렬 실행
+- ui-builder와 data-engineer를(`backend_required == true`면 backend-engineer도 포함) 다시 병렬 실행
 - 기존 `<AppName>/Views/`, `<AppName>/ViewModels/`, `<AppName>/Services/`, `<AppName>/Utilities/` 파일은 **덮어쓴다**
 - `<AppName>/Models/`는 건드리지 않는다 (Phase 1의 타입 계약)
 - 무결성 불일치가 있으면 git이 아니라 `.autobot/contracts/phase-1-models/` snapshot으로 복원한다

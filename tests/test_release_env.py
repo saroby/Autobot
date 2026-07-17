@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,6 +51,35 @@ class TestReleaseEnvironment(unittest.TestCase):
         self.assertEqual(parsed["ASC_API_KEY_PATH"], lines[0])
         self.assertNotIn("EVIL", parsed)
         self.assertNotIn("BASH_ENV", parsed)
+
+    def test_lines_format_masks_fastlane_session_nul_keeps_raw(self):
+        # `lines` is the human/LLM diagnostic format — the ~30-day ASC web
+        # session cookie must never land in transcripts. `nul` feeds
+        # release_env.sh and must stay raw.
+        cookie = "COOKIE-SECRET-VALUE"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "project"
+            config = root / "config"
+            project.mkdir()
+            config.mkdir()
+            (project / ".env").write_text(f'FASTLANE_SESSION="{cookie}"\n', encoding="utf-8")
+            env = os.environ.copy()
+            env["AUTOBOT_CONFIG_DIR"] = str(config)
+            env.pop("FASTLANE_SESSION", None)
+            script = PLUGIN_DIR / "scripts" / "release_environment.py"
+            lines_run = subprocess.run(
+                [sys.executable, str(script), "--project-dir", str(project), "--format", "lines"],
+                env=env, capture_output=True, text=True,
+            )
+            nul_run = subprocess.run(
+                [sys.executable, str(script), "--project-dir", str(project), "--format", "nul"],
+                env=env, capture_output=True,
+            )
+        self.assertEqual(lines_run.returncode, 0, lines_run.stderr)
+        self.assertNotIn(cookie, lines_run.stdout)
+        self.assertIn("FASTLANE_SESSION=***", lines_run.stdout)
+        self.assertIn(cookie.encode(), nul_run.stdout)
 
 
 if __name__ == "__main__":

@@ -17,11 +17,14 @@ from intent_spec import (  # noqa: E402
     Acceptance,
     AppIntent,
     DEFAULT_REQUIRED_ANCHORS,
+    DEPTH_THRESHOLDS,
     FeatureSpec,
     POSTCONDITION_KINDS,
     Postcondition,
+    assess_feature_spec_depth,
     assess_feature_spec_quality,
     find_unused_anchors,
+    input_intent_signal,
     load_app_intent,
     load_feature_spec,
     validate_feature_spec,
@@ -305,6 +308,28 @@ class TestValidateFeatureSpec(unittest.TestCase):
             ok, problems = validate_feature_spec(tmp_path)
             self.assertTrue(ok, problems)
 
+    def test_invalid_priority_enum_rejected(self):
+        # A "P3" typo (or any non-enum value) silently bypasses every P0/P1/P2
+        # rule downstream — structural validation must reject it.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = _valid_feature_payload()
+            payload["features"][0]["priority"] = "P3"
+            _write_feature_spec(tmp_path, payload)
+            ok, problems = validate_feature_spec(tmp_path)
+            self.assertFalse(ok)
+            self.assertTrue(any("invalid priority" in p for p in problems), problems)
+
+    def test_empty_priority_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = _valid_feature_payload()
+            del payload["features"][0]["priority"]  # → "" after parsing
+            _write_feature_spec(tmp_path, payload)
+            ok, problems = validate_feature_spec(tmp_path)
+            self.assertFalse(ok)
+            self.assertTrue(any("invalid priority" in p for p in problems), problems)
+
 
 class TestAssessFeatureSpecQuality(unittest.TestCase):
     def test_valid_postcondition_kind_passes(self):
@@ -409,6 +434,34 @@ class TestAssessFeatureSpecQuality(unittest.TestCase):
             ok, problems = assess_feature_spec_quality(tmp_path)
             self.assertTrue(ok, problems)
 
+    def test_p2_empty_screen_is_depth_problem_not_quality_hardfail(self):
+        # P2 grounding moved from feature_spec_quality (hard) to
+        # feature_spec_depth (DEGRADED-default): a screen-less P2 is grounding
+        # debt, not a Gate 1->2 hard fail (which would pressure the architect to
+        # drop P2s entirely — a Goodhart trap).
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = _valid_feature_payload()
+            payload["features"][1]["screen"] = ""
+            _write_feature_spec(tmp_path, payload)
+            d = assess_feature_spec_depth(tmp_path)
+            self.assertTrue(
+                any("about-screen" in p and "screen" in p for p in d["problems"]),
+                d["problems"])
+            ok, _ = assess_feature_spec_quality(tmp_path)
+            self.assertTrue(ok)  # no longer a quality hard-fail
+
+    def test_p2_empty_title_is_depth_problem_not_quality_hardfail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = _valid_feature_payload()
+            payload["features"][1]["title"] = ""
+            _write_feature_spec(tmp_path, payload)
+            d = assess_feature_spec_depth(tmp_path)
+            self.assertTrue(any("title" in p for p in d["problems"]), d["problems"])
+            ok, _ = assess_feature_spec_quality(tmp_path)
+            self.assertTrue(ok)
+
     def test_zero_p0_spec_rejected(self):
         # All-P1/P2 spec: every flow could fail and the suite would still pass
         # (P1 failures only warn) — the zero-P0 VERIFIED-badge laundering hole.
@@ -422,6 +475,211 @@ class TestAssessFeatureSpecQuality(unittest.TestCase):
             ok, problems = assess_feature_spec_quality(tmp_path)
             self.assertFalse(ok)
             self.assertTrue(any("no P0 feature" in p for p in problems), problems)
+
+
+def _deep_feature(fid, priority, screen, role, post_kind, steps=1):
+    return {
+        "id": fid,
+        "title": fid.replace("-", " "),
+        "priority": priority,
+        "screen": screen,
+        "anchor": f"autobot.{fid}",
+        "role": role,
+        "acceptance": [{
+            "id": f"{fid}.a1",
+            "kind": "flow",
+            "steps": [{"action": "tap", "anchor": f"autobot.{fid}"}] * steps,
+            "postcondition": {"kind": post_kind, "params": {"anchor": f"autobot.{fid}.out"}},
+        }],
+    }
+
+
+def _deep_payload() -> dict:
+    """Meets every DEPTH_THRESHOLDS floor: P0+P1=5, P0=2, screens=4, kinds=3,
+    hook+retention roles, one multi-step journey."""
+    return {"version": 1, "features": [
+        _deep_feature("log-entry", "P0", "Home", "hook", "count_increased", steps=2),
+        _deep_feature("weekly-stats", "P0", "Stats", "insight", "navigated_to"),
+        _deep_feature("history", "P1", "History", "retention", "value_persisted_after_relaunch"),
+        _deep_feature("edit-entry", "P1", "Home", "table-stakes", "count_increased"),
+        _deep_feature("open-settings", "P1", "Settings", "table-stakes", "navigated_to"),
+    ]}
+
+
+class TestFeatureSpecRoleParsing(unittest.TestCase):
+    def test_role_parsed_and_defaults_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = _valid_feature_payload()
+            payload["features"][0]["role"] = "hook"
+            _write_feature_spec(tmp_path, payload)
+            features = load_feature_spec(tmp_path)
+            self.assertEqual(features[0].role, "hook")
+            self.assertEqual(features[1].role, "")  # absent → legacy default
+
+
+class TestAssessFeatureSpecDepth(unittest.TestCase):
+    def _assess(self, payload, *, quality_max=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            _write_feature_spec(tmp_path, payload)
+            return assess_feature_spec_depth(tmp_path, quality_max=quality_max)
+
+    def test_deep_spec_has_no_findings(self):
+        d = self._assess(_deep_payload())
+        self.assertEqual(d["hard_problems"], [])
+        self.assertEqual(d["problems"], [])
+        self.assertEqual(d["advisories"], [])
+        self.assertEqual(d["metrics"]["p0_p1"], 5)
+
+    def test_shallow_spec_reports_threshold_problems(self):
+        # One P0 + one P2, one screen, one kind — every floor is missed. The
+        # single P0 has a multi-step acceptance so it is NOT the one-tap
+        # degenerate case (that is a separate hard bucket).
+        payload = {"version": 1, "features": [
+            _deep_feature("log-entry", "P0", "Home", "table-stakes", "count_increased", steps=3),
+            {"id": "share", "title": "Share", "priority": "P2", "screen": "Home",
+             "anchor": "autobot.share", "acceptance": []},
+        ]}
+        d = self._assess(payload)
+        self.assertEqual(d["hard_problems"], [])
+        joined = " ".join(d["problems"])
+        self.assertIn(f"< {DEPTH_THRESHOLDS['min_p0_p1_features']}", joined)
+        self.assertIn(f"P0 features 1 < {DEPTH_THRESHOLDS['min_p0_features']}", joined)
+        self.assertIn("screens", joined)
+        self.assertIn("postcondition kinds", joined)
+
+    def test_missing_hook_retention_roles_are_problems(self):
+        payload = _deep_payload()
+        for f in payload["features"]:
+            f["role"] = "table-stakes"  # roles declared, but no hook/retention
+        d = self._assess(payload)
+        joined = " ".join(d["problems"])
+        self.assertIn("hook", joined)
+        self.assertIn("retention", joined)
+
+    def test_legacy_spec_without_roles_warns_not_fails(self):
+        payload = _deep_payload()
+        for f in payload["features"]:
+            del f["role"]
+        d = self._assess(payload)
+        self.assertEqual(d["problems"], [])
+        self.assertTrue(any("legacy" in a for a in d["advisories"]), d["advisories"])
+
+    def test_invalid_role_value_is_problem(self):
+        payload = _deep_payload()
+        payload["features"][0]["role"] = "banana"
+        d = self._assess(payload)
+        self.assertTrue(any("banana" in p for p in d["problems"]), d["problems"])
+
+    def test_one_tap_degenerate_spec_is_hard(self):
+        payload = {"version": 1, "features": [
+            _deep_feature("tap-count", "P0", "Home", "hook", "count_increased", steps=1),
+        ]}
+        d = self._assess(payload)
+        self.assertTrue(any("demo" in p for p in d["hard_problems"]), d)
+
+    def test_quality_max_raises_p0_p1_floor(self):
+        d = self._assess(_deep_payload(), quality_max=True)  # 5 < 7
+        self.assertTrue(
+            any(f"< {DEPTH_THRESHOLDS['min_p0_p1_features_quality_max']}" in p
+                for p in d["problems"]), d["problems"])
+
+    def test_single_step_flows_only_is_advisory(self):
+        payload = _deep_payload()
+        for f in payload["features"]:
+            f["acceptance"][0]["steps"] = f["acceptance"][0]["steps"][:1]
+        d = self._assess(payload)
+        self.assertTrue(any("multi-step" in a for a in d["advisories"]), d["advisories"])
+
+    def test_setting_stored_without_persistence_pair_is_advisory(self):
+        payload = _deep_payload()
+        # replace the persistence feature so setting_stored has no pair
+        payload["features"][2]["acceptance"][0]["postcondition"]["kind"] = "setting_stored"
+        d = self._assess(payload)
+        self.assertTrue(
+            any("value_persisted_after_relaunch" in a for a in d["advisories"]),
+            d["advisories"])
+
+    def test_input_intent_idea_without_text_input_is_advisory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / ".autobot").mkdir(parents=True)
+            (tmp_path / ".autobot" / "build-state.json").write_text(
+                json.dumps({"idea": "A quick notes app to search my memos"}),
+                encoding="utf-8",
+            )
+            _write_feature_spec(tmp_path, _deep_payload())
+            d = assess_feature_spec_depth(tmp_path)
+            self.assertTrue(any("text_input" in a for a in d["advisories"]), d["advisories"])
+
+    def test_p2_majority_is_advisory_and_p2_listed(self):
+        payload = _deep_payload()
+        for f in payload["features"][2:]:
+            f["priority"] = "P2"
+        payload["features"].append({
+            "id": "extra-stub", "title": "Extra", "priority": "P2",
+            "screen": "Home", "anchor": "autobot.extra", "acceptance": [],
+        })
+        d = self._assess(payload)  # P2=4 > P0+P1=2
+        self.assertTrue(any("outnumber" in a for a in d["advisories"]), d["advisories"])
+        self.assertEqual(len(d["p2_features"]), 4)
+
+    def test_partial_role_coverage_flags_missing_role_advisory(self):
+        # Some P0/P1 declare a role, one does not. The old "any role ⇒ whole spec
+        # migrated" heuristic let the role-less feature pass silently; now it is
+        # an advisory (warn-default, DEGRADED under quality-max).
+        payload = _deep_payload()
+        del payload["features"][3]["role"]  # a P1 loses its role; hook+retention remain
+        d = self._assess(payload)
+        self.assertTrue(
+            any("declare no role" in a for a in d["advisories"]), d["advisories"])
+        self.assertEqual(d["problems"], [])  # hook+retention still present
+
+    def test_persistence_pair_only_on_p2_does_not_satisfy(self):
+        # setting_stored lives on a P0/P1 flow, but the value_persisted pair is
+        # parked on a P2 feature — never driven at Gate 5->6, so the pairing is
+        # unproven and the advisory must still fire.
+        payload = _deep_payload()
+        payload["features"][2]["acceptance"][0]["postcondition"]["kind"] = "setting_stored"
+        payload["features"].append({
+            "id": "p2-persist", "title": "P2 persist", "priority": "P2",
+            "screen": "Home", "anchor": "autobot.p2",
+            "acceptance": [{
+                "id": "a", "kind": "flow",
+                "steps": [{"action": "tap", "anchor": "autobot.p2"}],
+                "postcondition": {"kind": "value_persisted_after_relaunch", "params": {}},
+            }],
+        })
+        d = self._assess(payload)
+        self.assertTrue(
+            any("value_persisted_after_relaunch" in a for a in d["advisories"]),
+            d["advisories"])
+
+    def test_allow_preexisting_on_p0_flow_is_advisory(self):
+        # allow_preexisting waives navigated_to's novelty proof — auditable as an
+        # advisory when used on a P0 flow.
+        payload = _deep_payload()
+        payload["features"][1]["acceptance"][0]["postcondition"]["params"] = {
+            "anchor": "autobot.weekly.out", "allow_preexisting": True,
+        }
+        d = self._assess(payload)
+        self.assertTrue(
+            any("allow_preexisting" in a for a in d["advisories"]), d["advisories"])
+
+    def test_absent_spec_is_problem_not_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = assess_feature_spec_depth(Path(tmp))
+            self.assertTrue(any("absent" in p for p in d["problems"]), d)
+
+
+class TestInputIntentSignal(unittest.TestCase):
+    def test_matches_search_and_korean_memo(self):
+        self.assertIsNotNone(input_intent_signal("an app to search recipes"))
+        self.assertIsNotNone(input_intent_signal("간단한 메모 앱"))
+
+    def test_no_match_for_plain_viewer_idea(self):
+        self.assertIsNone(input_intent_signal("a timer with preset intervals"))
 
 
 if __name__ == "__main__":

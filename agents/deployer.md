@@ -107,9 +107,10 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/scripts/upload.sh" \
   --archive-status .autobot/archive-status.json
 ```
 
-- exit 0 → `result: uploaded`, `upload_success: true` → Step 4 진행
+- exit 0 → `result: uploaded`(또는 재시도 중 중복 판정 시 `already_uploaded`), `upload_success: true` → Step 4 진행
 - exit 5 → export 성공 + upload 실패. upload.sh 가 이미 transient 실패를 자동 재시도(`--retries`, 기본 2회 백오프)한 뒤의 결과다. `ipa_path` 를 사용자에게 보고하고 수동 업로드 안내 (Xcode Organizer / Transporter) — 자동 복구 소진 후의 최후 수단. Step 4 건너뜀.
 - exit 4 → export 실패. Step 1 의 register 가 성공했으므로 등록 문제일 가능성은 낮음 (race condition 가능). signing/provisioning 점검 안내, 빌드 중단.
+- exit 6 → `result: build_number_conflict`. 첫 시도부터 ASC 가 "이미 업로드된 빌드 번호"로 거절 — ASC 에 있는 것은 **이전 실행의 옛 바이너리**다. 재시도 금지(비재시도 reason): 빌드 번호를 올려 재아카이브해야 한다고 안내하고 Step 4 건너뜀.
 
 ## Step 4: Invite testers (ASC_UPLOAD=true && upload 성공만)
 
@@ -157,5 +158,11 @@ PY
 - API 인증 실패: 환경변수/`.p8` 경로 확인 안내
 
 **Output:**
-`.autobot/deploy-status.json` 에 집계 결과를 기록. 각 skill 의 개별 status 도 그대로 보존된다.
+`.autobot/deploy-status.json` 에 4개 status 파일(register/archive/upload/invite)을 집계한 결과를 기록. 각 skill 의 개별 status 파일도 그대로 보존된다:
+- `.autobot/register-status.json`
+- `.autobot/archive-status.json`
+- `.autobot/upload-status.json`
+- `.autobot/invite-status.json`
+- `.autobot/deploy-status.json` — 위 4개의 집계
+
 Do NOT ask any questions. Handle all deployment decisions autonomously.

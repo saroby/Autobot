@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Safe, shared release dotenv parsing for shell producers and doctor."""
+"""Safe, shared release dotenv parsing for shell producers and doctor.
+
+CLI formats: ``nul`` (shell consumers, raw values) and ``lines`` (diagnostics
+only — sensitive values are masked so a casual run never dumps an ASC web
+session cookie into transcripts/logs).
+"""
 
 from __future__ import annotations
 
@@ -18,6 +23,9 @@ ALLOWED_KEYS = {
     "DEVELOPMENT_TEAM",
     "TESTER_EMAIL",
 }
+
+# FASTLANE_SESSION is a 2FA-backed Apple ID web session cookie (~30 days).
+SENSITIVE_KEYS = {"FASTLANE_SESSION"}
 
 
 def parse_dotenv(path: Path, *, home: str) -> dict[str, str]:
@@ -70,7 +78,8 @@ def _main() -> int:
             sys.stdout.buffer.write(key.encode() + b"\0" + values[key].encode() + b"\0")
     else:
         for key in sorted(values):
-            print(f"{key}={values[key]}")
+            value = "***" if key in SENSITIVE_KEYS else values[key]
+            print(f"{key}={value}")
     return 0
 
 

@@ -99,7 +99,28 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
         self.assertFalse(r.get("degraded", False))
         self.assertIn("flow", r["message"].lower())
 
-    def test_p1_warning_does_not_fail(self):
+    def test_p1_flake_above_floor_is_warning_not_fail(self):
+        # 3/4 P1 flows pass (75% >= 70% floor): a stray flake stays a warning
+        # so autonomous completion is not held hostage.
+        p1_pass = [
+            {"featureId": f"f{i}", "acceptanceId": "a1", "priority": "P1",
+             "passed": True, "message": "ok"} for i in range(3)
+        ]
+        out = self._run(
+            features=[_P0Feature()],
+            run_result={"status": "passed", "results": p1_pass + [
+                {"featureId": "f9", "acceptanceId": "a1", "priority": "P1",
+                 "passed": False, "message": "WARNING (P1): not navigated"}]},
+        )
+        r = out[0]
+        self.assertTrue(r["passed"])      # suite passed; P1 fail is a warning
+        self.assertFalse(r.get("degraded", False))
+        self.assertIn("warning", r["message"].lower())
+
+    def test_p1_pass_rate_below_floor_is_degraded(self):
+        # A mostly-broken P1 tier (here 0/1 = 0% < 70%) must not hide under a
+        # green badge even in default mode — DEGRADED (shipping-blocked), but
+        # never a hard fail (no circuit-breaker retry).
         out = self._run(
             features=[_P0Feature()],
             run_result={"status": "passed", "results": [
@@ -107,8 +128,10 @@ class TestCheckFunctionalFlowsPass(unittest.TestCase):
                  "passed": False, "message": "WARNING (P1): not navigated"}]},
         )
         r = out[0]
-        self.assertTrue(r["passed"])      # suite passed; P1 fail is a warning
-        self.assertIn("warning", r["message"].lower())
+        self.assertTrue(r["passed"])       # not a hard fail
+        self.assertTrue(r["skipped"])
+        self.assertTrue(r["degraded"])     # shipping-blocked
+        self.assertIn("70%", r["message"])
 
     def test_p1_failure_degraded_in_quality_max(self):
         # quality-max (#4 P1 hard mode): a P1 flow failure is no longer a warning
@@ -159,6 +182,22 @@ class TestLogicTestCompleteness(unittest.TestCase):
         r = functional._completeness_subcheck(self._P("/tmp"), None, [], quality_max=True)
         self.assertTrue(r["passed"])
         self.assertFalse(r.get("degraded", False))
+
+    def test_p1_missing_is_warning_not_degraded(self):
+        # P1 logic gaps mirror P1 flow semantics: recorded, never blocking.
+        p1 = functional._FeatureLite(
+            feature_id="search", priority="P1", logic_acceptance_ids=["rank-results"]
+        )
+        r = functional._completeness_subcheck(self._P("/tmp"), None, [p1], quality_max=False)
+        self.assertTrue(r["passed"])
+        self.assertFalse(r.get("degraded", False))
+        self.assertIn("warning", r["message"].lower())
+        self.assertIn("coverage 0%", r["message"])
+
+    def test_coverage_percent_in_message(self):
+        # run-summary consumes gate messages — the coverage % must ride along.
+        r = functional._completeness_subcheck(self._P("/tmp"), None, [self._feat()], quality_max=False)
+        self.assertIn("coverage 0% (0/1)", r["message"])
 
 
 if __name__ == "__main__":

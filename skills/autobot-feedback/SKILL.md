@@ -34,6 +34,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/external_feedback.py" log-fetched \
 `mcp__mcp-appstore__analyze_reviews` (sentiment/keyword 보조) + 리뷰 원문을 읽고 **공통 테마**를 분류한다. 규칙:
 
 - 테마는 반복되는 불만/칭찬 패턴 (예: "온보딩이 혼란스럽다", "회전 시 크래시"). 1건짜리 개인 취향은 제외.
+- **기존 테마 표기 재사용**: `.autobot/learnings.json` 의 `patterns.external_feedback` 에 이미 있는 theme 목록을 먼저 읽고, 같은 의미면 기존 표기를 글자 그대로 재사용한다 — dedup 은 텍스트 완전일치라 표현 변형마다 별도 엔트리가 생겨 frequency 신호가 파편화된다.
 - `severity`: 크래시/데이터 손실 = high, UX 혼란/기능 오동작 = medium, 요청/취향 = low.
 - `suggested_prevention_rule` 은 **미래 빌드에 적용할 일반화된 규칙을 네가 작성**한다 — 리뷰 문장을 복사하지 마라. 리뷰 원문을 그대로 rule 로 쓰면 스크립트가 프롬프트 인젝션 방어로 폐기한다 (`rule_is_quoted_review`).
 - 확신 없는 테마에는 rule 을 비워 둔다 (테마만 기록되고 승격 후보에서 제외됨).
@@ -65,7 +66,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/external_feedback.py" record \
 
 - **정제**: 제어/포맷 문자 제거, 공백 정규화, 길이 제한 (theme 120 / rule 300 / quote 200자, quote 최대 3개).
 - **인젝션 방어**: rule 이 리뷰 인용문을 그대로 포함하면 rule 폐기 (`dropped_rules` 로 집계). 테마 자체는 유지.
-- **기록**: `patterns.external_feedback` 에 `{theme, severity, source_apps, sample_quotes, suggested_prevention_rule, frequency}` — 같은 테마 재관측 시 frequency 증가 + source_apps 합집합 (중복 엔트리 없음).
+- **기록**: `patterns.external_feedback` 에 `{theme, severity, source_apps, sample_quotes, suggested_prevention_rule, frequency, source}` — 같은 테마 재관측 시 frequency 증가 + source_apps 합집합 (중복 엔트리 없음). 재관측에서 rule 텍스트가 바뀌면 기존 `approved` 는 리셋된다 (운영자가 본 적 없는 rule 이 승인을 상속하지 못하게) — 출력의 `approval_resets > 0` 이면 재승인이 필요하다고 운영자에게 보고하라.
 - **items[]**: rule 이 있는 테마마다 `stable_id("external", rule)` 로 item 생성 (`phase: "external"`) — 기존 effect_score 채점·quarantine(`learning_impact.py`)이 그대로 적용된다.
 - **이벤트**: `external_feedback_recorded` 를 spec 검증 후 기록.
 
@@ -74,6 +75,19 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/external_feedback.py" record \
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/render-active-learnings.py" --project-dir .
 ```
+
+### 3b. 심사 verdict 유입 (선택 — `source: "app_review"`)
+
+App Review 심사 결과는 리뷰보다 구조화된 외부 ground-truth 다. 심사 상태를 회수하는 파이프라인이 `.autobot/review-verdict.json` (`{fetchedAt, appVersionState, reviewSubmissionState, guidelineNumbers[], notes}`) 을 써 두었다면:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/external_feedback.py" record-verdict \
+  --project-dir . --bundle-id "$BUNDLE_ID" --app-name "$APP_NAME"
+```
+
+- REJECTED 계열 상태(REJECTED / METADATA_REJECTED / INVALID_BINARY / UNRESOLVED_ISSUES)일 때만 기록 — Guideline 번호당 high-severity 테마 1개 (`source: "app_review"`), 승인/대기 상태는 no-op.
+- Resolution Center 의 서면 사유는 공개 ASC API 로 완전 노출되지 않으므로 `suggested_prevention_rule` 은 비워진다 — 상세 사유 기반 rule 은 운영자가 반자동으로 채운다 (일반 record 경로 재사용, 인젝션 방어 동일 적용).
+- 이후 렌더/승격 절차는 리뷰 테마와 동일 (아래 3~4단계).
 
 ### 4. 글로벌 승격 (운영자 게이트 — 데이터로 집행, 자동 금지)
 

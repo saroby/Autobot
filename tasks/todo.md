@@ -1,3 +1,35 @@
+# 전수 약점 수정 (감사 56건) — 2026-07-17
+
+목표: `tasks/weakness-audit-2026-07-17.md` 확정 finding 56건 전부 수정. 간단 건은 Sonnet 에이전트, 완료 후 codex 검수.
+
+## 수용 조건
+- [x] 기획 깊이 15건: market-brief 입력, 기능 구성 요건(훅·리텐션·인사이트), 비-CRUD 계약, depth/heading 게이트(DEGRADED), flow postcondition 강화
+- [x] 일반 41건: 배포 creds 로드, CI 상시 적색, 게이트 세탁 5종, 엔진 상태머신 7종, 학습 루프 6종, 계약 드리프트, 관측성/보안
+- [x] spec/parts ↔ pipeline.json 번들 정합 + verify_spec_docs PASS
+- [x] 전체 pytest green (기존 667 + 신규 회귀)
+- [x] codex 검수 통과 — A/B/D 3영역 반영 완료, C(문서 드리프트)는 잡 재시작 후 결과 대기 중 (후속 커밋)
+
+## 체크리스트
+- [x] Wave 1 (병렬·파일격리): 기획-프롬프트 / 엔진 상태머신 / 배포 체인 / 학습 루프 / 유지보수(Sonnet)
+- [x] Wave 2: 기획-엔진(게이트) / 문서 계약(Sonnet) / 테스트 인프라(Sonnet)
+- [x] Wave 3: 게이트 신뢰성 + spec 배선
+- [x] 통합 검증: spec_bundle check + verify_spec_docs + 전체 pytest + bash -n
+- [x] codex 검수 → 지적 반영 → 재검증 (A: 15 수정/4 유지, B/D: 15 수정/3 기록, C: 대기)
+- [x] CHANGELOG [Unreleased] 기록 + Results
+
+## Results (2026-07-17)
+- 감사 확정 56건 전부 수정 + codex 교차검수 A/B/D 지적 30건 반영(Critical 인젝션 1 포함), 4건은 근거를 들어 유지.
+- 테스트 667 → 962 전부 green, 드리프트 검사 9 → 12종 전부 PASS, spec 번들 정합, 전체 셸 bash -n OK.
+- 상세: CHANGELOG [Unreleased], 감사 원문 tasks/weakness-audit-2026-07-17.md.
+- 잔여: codex C(문서 드리프트) 검수 결과 도착 시 후속 반영.
+
+## Working Notes
+- 크로스 계약: market-brief.json / architecture.md 헤딩(Market Context, Hook & Retention, First-Run Experience) / feature-spec role 필드 / review-verdict.json / phases.<id>.operatorOverrides — 이름 고정.
+- detect-plugins.sh 는 삭제로 결정 (finding 35·37 충돌 해소 — 호출자 0).
+- 새 게이트는 전부 DEGRADED 기본, quality-max 승격 (철칙).
+
+---
+
 # 플러그인 평가 후 릴리스 드리프트 수정 — 2026-07-15
 
 목표: 평가에서 확인된 릴리스 메타데이터, README 요구사항, CI 기본 검증 드리프트를 수정하고 재발을 방지한다.

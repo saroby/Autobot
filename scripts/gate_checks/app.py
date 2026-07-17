@@ -284,7 +284,13 @@ def check_composition_seam_intact(proj: Path, app: str, state: dict) -> list[dic
 
 
 def check_sandbox_clean(proj: Path, app: str, state: dict) -> list[dict]:
-    """Verify Phase 4 finished with zero sandbox violations across all agents."""
+    """Verify Phase 4 finished with zero sandbox violations across all agents.
+
+    Completeness matters: agentsVerified must cover the FULL spec Phase-4
+    agent set (backend-engineer only when backend_required), otherwise one
+    agent skipping ``agent-sandbox.sh after`` leaves its cross-writes
+    unverified while the gate still claims "all agents".
+    """
     phase_state = state.get("phases", {}).get("4", {})
     sandbox = phase_state.get("sandbox", {})
     violations = sandbox.get("violations", [])
@@ -298,10 +304,21 @@ def check_sandbox_clean(proj: Path, app: str, state: dict) -> list[dict]:
         ))
         return results
 
-    results.append(_ok(
-        "sandbox_recorded", True,
-        f"agents verified: {', '.join(sorted(agents_seen))}",
-    ))
+    expected = set(load_spec().get("phases", {}).get("4", {}).get("agents", []))
+    if not state.get("backend_required"):
+        expected.discard("backend-engineer")
+    missing = sorted(expected - set(agents_seen))
+    if missing:
+        results.append(_ok(
+            "sandbox_recorded", False,
+            f"missing agent-sandbox.sh after for: {', '.join(missing)} "
+            f"(verified: {', '.join(sorted(agents_seen))})",
+        ))
+    else:
+        results.append(_ok(
+            "sandbox_recorded", True,
+            f"agents verified: {', '.join(sorted(agents_seen))}",
+        ))
     if violations:
         sample = violations[0] if isinstance(violations[0], str) else json.dumps(violations[0], ensure_ascii=False)
         results.append(_ok(

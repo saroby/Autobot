@@ -109,6 +109,44 @@ class TestCapabilityCoverage(unittest.TestCase):
         self._state(appName="Demo", gates={"5->6": {"status": "degraded"}})
         self.assertEqual(cc.assess(self.proj)["verification"]["badge"], "DEGRADED")
 
+    # ── depth caveats computed from the actual spec (not hardcoded) ──
+
+    def test_caveats_reflect_declared_step_actions(self):
+        self._state(appName="Demo")
+        self._feature_spec([{
+            "id": "note", "title": "Write note", "priority": "P0",
+            "screen": "Home", "anchor": "autobot.cta",
+            "acceptance": [{
+                "id": "note.a1", "kind": "flow",
+                "steps": [
+                    {"action": "tap", "anchor": "autobot.cta"},
+                    {"action": "text_input", "anchor": "autobot.field", "text": "hi"},
+                ],
+                "postcondition": {"kind": "count_increased", "params": {}},
+            }],
+        }])
+        caveats = " ".join(cc.assess(self.proj)["verification"]["depthCaveats"])
+        # text_input IS exercised → it must not be reported as unproven,
+        # and the multi-step flow kills the single-step caveat.
+        self.assertNotIn("text_input", caveats.split("exercise only")[0])
+        self.assertIn("swipe", caveats)          # still unexercised
+        self.assertNotIn("single-step happy path", caveats)
+
+    def test_caveats_tap_only_spec_reports_unexercised_inputs(self):
+        self._state(appName="Demo")
+        self._feature_spec([{
+            "id": "log", "title": "Log", "priority": "P0",
+            "screen": "Home", "anchor": "autobot.cta",
+            "acceptance": [{
+                "id": "log.a1", "kind": "flow",
+                "steps": [{"action": "tap", "anchor": "autobot.cta"}],
+                "postcondition": {"kind": "count_increased", "params": {}},
+            }],
+        }])
+        caveats = " ".join(cc.assess(self.proj)["verification"]["depthCaveats"])
+        self.assertIn("text_input", caveats)
+        self.assertIn("single-step happy path", caveats)
+
     # ── advisory Views scan ──
 
     def test_views_scan_counts_hardcoded_colors_and_modern_api(self):

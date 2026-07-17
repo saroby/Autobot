@@ -25,7 +25,7 @@
 #   bash pipeline.sh doctor               --profile local|ship --format text|json
 #   bash pipeline.sh design-spec          validate|synthesize|ensure ...
 #   bash pipeline.sh sandbox              check|set-active|clear-active ...
-#   bash pipeline.sh build-lock           acquire --build-id <id> | release --build-id <id> [--expected-token <token>|--force] | status
+#   bash pipeline.sh build-lock           acquire --build-id <id> | renew --build-id <id> | release --build-id <id> [--expected-token <token>|--force] | status
 set -euo pipefail
 
 MODE="${1:-}"
@@ -77,6 +77,32 @@ EOF
       echo "ERROR: preflight-ship: no .autobot/build-state.json in $PROJECT_DIR — refusing to ship without verified build state" >&2
       exit 1
     fi
+    # Anti-laundering (upstream): a DEGRADED gate passed only via graceful
+    # degradation (circuit breaker). An unresolved DEGRADED gate upstream of
+    # 5->6 must block shipping — ship is the hard boundary where degradation
+    # cannot ride along silently. 5->6 itself is excluded here because it is
+    # re-judged FRESH below.
+    python3 - "$PROJECT_DIR/.autobot/build-state.json" <<'PY'
+import json, sys
+from pathlib import Path
+try:
+    state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception as exc:
+    sys.stderr.write(f"ERROR: preflight-ship: unreadable build-state.json ({exc}) -- refusing to ship\n")
+    raise SystemExit(1)
+gates = state.get("gates") or {}
+degraded = sorted(
+    gid for gid, ev in gates.items()
+    if gid != "5->6" and isinstance(ev, dict) and ev.get("status") == "degraded"
+)
+if degraded:
+    sys.stderr.write(
+        "ERROR: preflight-ship: unresolved DEGRADED upstream gate(s) block shipping: "
+        + ", ".join(degraded) + "\n"
+        "  Re-run each with quality inputs until it records a clean pass before shipping.\n"
+    )
+    raise SystemExit(1)
+PY
     GATE_JSON="$(python3 "$RUNTIME" run-gate --project-dir "$PROJECT_DIR" --gate "5->6" --format json "$@" || true)"
     printf '%s' "$GATE_JSON" | python3 -c '
 import json, sys

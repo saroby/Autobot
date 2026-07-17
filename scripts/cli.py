@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from event_log import append_build_log, validate_log_event
-from gate_persistence import execute_and_record_gate
+from gate_persistence import execute_and_record_gate, handle_breaker_trip
 from gate_runner import format_text as format_gate_text
 from phase_advance import advance_phase
 from spec_loader import load_spec
@@ -75,27 +75,9 @@ def init_state(args: argparse.Namespace) -> int:
     if state_path.exists() and not args.force:
         raise SystemExit(f"FATAL: build-state.json already exists at {state_path}")
 
-    # Acquire the build lock BEFORE writing any state, so a second concurrent
-    # build cannot clobber an in-flight `.autobot/`. A stale lock (dead holder
-    # PID) is reclaimed automatically; re-init of the same build is idempotent.
-    import build_lock
-    project_root = state_path.parent.parent
-    expected_token = None
-    if args.force:
-        current_lock = build_lock.status(project_root)
-        if current_lock.get("buildId") == args.build_id and current_lock.get("holderAlive"):
-            expected_token = current_lock.get("lockToken")
-    locked, lock_reason, lock_token = build_lock.acquire_with_token(
-        project_root,
-        args.build_id,
-        takeover_same_build=bool(args.force),
-        expected_token=expected_token,
-    )
-    if not locked:
-        raise SystemExit(f"FATAL: cannot start build — {lock_reason}")
-    print(f"OK: build lock — {lock_reason}")
-    print(f"LOCK_TOKEN={lock_token}")
-
+    # Build + validate the state BEFORE acquiring the lock: a schema failure
+    # here (e.g. bad app-name) must not exit while holding the lock, or the
+    # corrected retry with the same build-id stays BLOCKED for the whole lease.
     timestamp = args.started_at or utc_now()
     state: dict[str, Any] = {
         "schemaVersion": spec.get("schemaVersion"),
@@ -121,6 +103,27 @@ def init_state(args: argparse.Namespace) -> int:
     errors, warnings = collect_schema_issues(spec, state)
     if errors:
         raise SystemExit("FATAL: refusing to initialize invalid build state: " + "; ".join(errors))
+
+    # Acquire the build lock BEFORE writing any state, so a second concurrent
+    # build cannot clobber an in-flight `.autobot/`. A stale lock (dead holder
+    # PID) is reclaimed automatically; re-init of the same build is idempotent.
+    import build_lock
+    project_root = state_path.parent.parent
+    expected_token = None
+    if args.force:
+        current_lock = build_lock.status(project_root)
+        if current_lock.get("buildId") == args.build_id and current_lock.get("holderAlive"):
+            expected_token = current_lock.get("lockToken")
+    locked, lock_reason, lock_token = build_lock.acquire_with_token(
+        project_root,
+        args.build_id,
+        takeover_same_build=bool(args.force),
+        expected_token=expected_token,
+    )
+    if not locked:
+        raise SystemExit(f"FATAL: cannot start build — {lock_reason}")
+    print(f"OK: build lock — {lock_reason}")
+    print(f"LOCK_TOKEN={lock_token}")
 
     save_state(state_path, state)
     for warning in warnings:
@@ -196,13 +199,35 @@ def _run_lifecycle_command(
     if not ok:
         return 1
 
+    project_dir = Path(args.project_dir).resolve()
     detail = detail_builder(args) if detail_builder else getattr(args, "detail", None)
+    if target_status == "in_progress" and getattr(args, "allow_terminal_restart", False):
+        resume_policy = spec.get("policies", {}).get("resume", {})
+        if resume_policy.get("allowExplicitRestartFromTerminal", False):
+            # Operator override must be visible in build-log forensics too,
+            # not only in state (transitions records phases.<N>.operatorOverrides).
+            detail = (
+                {"operatorOverride": True, "context": detail}
+                if detail is not None else {"operatorOverride": True}
+            )
     append_build_log(
-        Path(args.project_dir).resolve(),
+        project_dir,
         _STATUS_TO_EVENT[target_status],
         phase=phase, detail=detail, timestamp=timestamp, spec=spec,
     )
+    if target_status == "in_progress":
+        # Lease heartbeat: a long build must not outlive its build.lock lease.
+        import build_lock
+        build_lock.renew_from_state(project_dir)
     print(success_message.format(phase=phase) if success_message else f"OK: phase {phase}")
+    if target_status == "failed":
+        # fail-phase is the documented pre-gate failure path — it must trip the
+        # breaker identically to advance-phase's hard-gate failure path.
+        trip_message = handle_breaker_trip(
+            spec, state_file_from_args(args), project_dir, phase, timestamp,
+        )
+        if trip_message is not None:
+            print(f"WARN: {trip_message}")
     return 0
 
 

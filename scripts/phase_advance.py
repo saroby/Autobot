@@ -9,8 +9,10 @@ Atomicity guarantee:
   pre-validate the transition BEFORE running mutate_state_with_validation. If
   the transition is rejected (terminal-state restart not allowed, retries
   exhausted, circuit-breaker tripped, etc.), no state or log row is written.
-  Once the mutation function executes, the write is final — gate evidence
-  and phase status land in the same atomic step.
+  The same validation re-runs against the fresh state inside the write lock
+  (TOCTOU guard against concurrent fail-phase/advance callers). Once the
+  mutation function executes, the write is final — gate evidence and phase
+  status land in the same atomic step.
 
 Soft-gate semantics:
   Gate 6→7 is soft. When a soft gate fails, the phase still advances (so
@@ -32,15 +34,12 @@ from typing import Any
 from event_log import append_build_log
 from gate_persistence import (
     build_gate_evidence,
-    force_phase_in_progress,
-    phase_id_for_alwaysrun,
-    skip_pending_phases_except,
+    handle_breaker_trip,
 )
 from gate_runner import format_text as format_gate_text
 from gate_runner import run_gate as execute_gate
 from spec_loader import load_spec
 from state_store import (
-    load_json,
     load_state,
     mutate_state_with_validation,
     parse_key_value,
@@ -48,7 +47,6 @@ from state_store import (
     utc_now,
 )
 from transitions import (
-    circuit_breaker_tripped,
     update_phase_status,
     validate_transition_request,
 )
@@ -82,6 +80,10 @@ def render_advance_result(result: AdvanceResult, *, output_format: str = "text")
 def advance_phase(args: argparse.Namespace) -> int:
     """CLI entrypoint — runs the core logic and renders + returns its result."""
     result = _advance_phase_core(args)
+    if result.return_code == 0:
+        # Lease heartbeat: a long build must not outlive its build.lock lease.
+        import build_lock
+        build_lock.renew_from_state(Path(args.project_dir).resolve())
     render_advance_result(result, output_format=getattr(args, "format", "text"))
     return result.return_code
 
@@ -228,7 +230,21 @@ def _advance_phase_core(args: argparse.Namespace) -> AdvanceResult:
                 key, value = parse_key_value(raw)
                 metadata[key] = value
 
-    mutate_state_with_validation(state_path, spec, mutate)
+    def validator(fresh_state: dict[str, Any]) -> tuple[bool, list[str]]:
+        # Re-validate inside the write lock: input-hash computation above can
+        # take seconds and a concurrent fail-phase may have exhausted retries
+        # or tripped the breaker after the pre-validation.
+        return validate_transition_request(
+            spec, fresh_state, phase, next_target, allow_terminal_restart=False,
+        )
+
+    lock_ok, lock_msgs = mutate_state_with_validation(
+        state_path, spec, mutate, validator=validator,
+    )
+    if not lock_ok:
+        out.messages.extend(lock_msgs)
+        out.return_code = 1
+        return out
     out.messages.extend(pre_msgs)
 
     append_build_log(
@@ -256,49 +272,10 @@ def _advance_phase_core(args: argparse.Namespace) -> AdvanceResult:
         timestamp=timestamp, spec=spec,
     )
 
-    refreshed_state = load_json(state_path)
-    tripped, failures, threshold, scope = circuit_breaker_tripped(spec, refreshed_state)
-    if tripped:
-        breaker_detail = {
-            "scope": scope, "failures": failures, "threshold": threshold,
-            "trippedOnPhase": phase,
-        }
-        append_build_log(
-            project_dir, "circuit_open", phase=phase,
-            detail=breaker_detail, timestamp=timestamp, spec=spec,
-        )
-        on_trip = spec.get("policies", {}).get("circuitBreaker", {}).get("onTrip")
-        if on_trip == "skipToRetrospective":
-            retro_id = phase_id_for_alwaysrun(spec)
-            if retro_id is not None:
-                skip_reason = f"circuit breaker tripped on phase {phase}"
-                exempt = {retro_id, phase}
-                skipped_ids = skip_pending_phases_except(
-                    spec, state_path, exempt, timestamp, skip_reason,
-                )
-                for sid in skipped_ids:
-                    append_build_log(
-                        project_dir, "skip", phase=sid,
-                        detail=skip_reason, timestamp=timestamp, spec=spec,
-                    )
-                force_phase_in_progress(spec, state_path, retro_id, timestamp)
-                append_build_log(
-                    project_dir, "skip", phase=retro_id,
-                    detail=f"circuit breaker tripped on phase {phase}; auto-scheduled retrospective",
-                    timestamp=timestamp, spec=spec,
-                )
-                skipped_msg = f", skipped phases={skipped_ids}" if skipped_ids else ""
-                out.messages.append(
-                    f"FAIL: phase {phase} marked failed (gate {gate_id}); "
-                    f"circuit breaker tripped (failures={failures} ≥ {threshold}, scope={scope}); "
-                    f"phase {retro_id} auto-scheduled in_progress{skipped_msg}"
-                )
-                out.return_code = 2
-                return out
+    trip_message = handle_breaker_trip(spec, state_path, project_dir, phase, timestamp)
+    if trip_message is not None:
         out.messages.append(
-            f"FAIL: phase {phase} marked failed (gate {gate_id}); "
-            f"circuit breaker tripped (failures={failures} ≥ {threshold}, scope={scope}); "
-            f"no auto-recovery configured"
+            f"FAIL: phase {phase} marked failed (gate {gate_id}); {trip_message}"
         )
         out.return_code = 2
         return out

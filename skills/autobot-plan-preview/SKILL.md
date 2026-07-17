@@ -53,6 +53,10 @@ architecture.md 의 Overview, Features, Screens, Navigation 을 사용자 아이
 - Navigation 구조가 화면 수에 비해 부적절 (TabView 가 1탭 / NavigationStack 무한 push 등)
 - Feature 우선순위가 아이디어와 어긋남 (P0 가 핵심이 아님)
 - API/백엔드 필요 여부 판단이 틀림 (로컬 가능한데 backend_required=true 등)
+- **차별점이 말뿐 (HIGH)** — Overview / `### Hook & Retention` 의 차별점이 P0 기능 목록에 구현체로 존재하지 않음
+- **훅 부재 (HIGH)** — P0 전부가 카테고리 기본 CRUD (목록+상세+추가/삭제) 뿐이고 다운로드 이유가 되는 기능이 없음
+- **재방문 이유 부재 (MEDIUM)** — 히스토리 축적·streak·주기적 가치 등 리텐션 메커니즘이 기능 셋에 없음
+- **첫 실행 흐름** — 권한 다이얼로그가 맥락 없이 첫 실행 즉시 뜨는 설계인가 (`firstRunPolicy` / `## First-Run Experience` 와 대조)
 
 **critique 축 2 — 디자인 (시각 / HIG)**
 

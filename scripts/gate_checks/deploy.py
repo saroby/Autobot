@@ -34,13 +34,30 @@ from ._helpers import (
 
 
 def check_deployment_attempt_recorded(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 6→7 — a deployment attempt left a readable result.
+
+    The only writer is deployer.md Step 5, whose aggregate schema is
+    ``{timestamp, register, archive, upload, invite, status}`` with
+    ``status ∈ {uploaded, archived, failed}``. Top-level ``archive_path`` /
+    ``upload_success`` are accepted for backward compat with legacy flat
+    files (tests/test_deploy_gate_contract.py pins the writer↔reader
+    round-trip).
+    """
     deploy = proj / ".autobot" / "deploy-status.json"
     results = [_file_exists(deploy, "deploy_status_file")]
     if deploy.is_file():
         try:
             data = load_json(deploy)
-            has_result = "archive_path" in data or "upload_success" in data
-            results.append(_ok("deploy_has_result", has_result, "has archive_path or upload_success" if has_result else "missing result fields"))
+            has_result = (
+                data.get("status") in ("uploaded", "archived")
+                or "archive_path" in data
+                or "upload_success" in data
+            )
+            results.append(_ok(
+                "deploy_has_result", has_result,
+                f"status={data.get('status')!r}" if has_result
+                else "missing result fields (status not uploaded/archived, no flat archive_path/upload_success)",
+            ))
         except (json.JSONDecodeError, OSError):
             results.append(_ok("deploy_has_result", False, "deploy-status.json parse error"))
     return results

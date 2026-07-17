@@ -166,6 +166,7 @@ def _phase_ledger(state: dict, events: list[dict], spec: dict) -> dict[str, dict
             "maxRetry": phase_spec.get("maxRetry"),
             "error": block.get("error"),
             "buildFixAttempts": fix_attempts,
+            "operatorOverrides": int(block.get("operatorOverrides", 0) or 0),
         })
         out[phase_id] = info
     return out
@@ -203,7 +204,7 @@ def _build_attempts(events: list[dict]) -> list[dict]:
 def _failure_footprint(state: dict, events: list[dict]) -> dict:
     failed: list[dict] = []
     for entry in events:
-        if entry.get("event") in {"fail", "gate_fail", "circuit_breaker_triggered"}:
+        if entry.get("event") in {"fail", "gate_fail", "circuit_open"}:
             failed.append({
                 "ts": entry.get("ts"),
                 "event": entry.get("event"),
@@ -289,9 +290,18 @@ def _coverage(project_root: Path) -> dict:
 def _overall_status(state: dict) -> str:
     phases = state.get("phases") or {}
     statuses = [b.get("status") for b in phases.values() if isinstance(b, dict)]
+    if not statuses:
+        # Missing/corrupt build-state must not report as a completed run.
+        return "unknown"
     if any(s == "failed" for s in statuses):
         return "failed"
-    if all(s in {"completed", "fallback", "skipped"} or s is None for s in statuses):
+    if any(s is None for s in statuses):
+        # A phase block present but carrying no status is indeterminate — the
+        # same "not enough info to call it done" case as an empty phases dict.
+        # Report unknown rather than laundering a missing status into
+        # "completed" (the prior `or s is None` did exactly that).
+        return "unknown"
+    if all(s in {"completed", "fallback", "skipped"} for s in statuses):
         return "completed"
     return "in_progress"
 
@@ -455,8 +465,8 @@ def render_markdown(summary: dict) -> str:
 
     lines.append("## Phase Ledger")
     lines.append("")
-    lines.append("| Phase | Status | Duration | Retries | Build fixes | Error |")
-    lines.append("|------:|--------|---------:|--------:|------------:|-------|")
+    lines.append("| Phase | Status | Duration | Retries | Build fixes | Overrides | Error |")
+    lines.append("|------:|--------|---------:|--------:|------------:|----------:|-------|")
     phase_block = summary.get("phases") or {}
     for pid in sorted(phase_block.keys(), key=lambda x: int(x) if x.isdigit() else 99):
         info = phase_block[pid]
@@ -469,7 +479,7 @@ def render_markdown(summary: dict) -> str:
         error = str(info.get("error") or "—").replace("|", "\\|").replace("\n", " ")[:120]
         lines.append(
             f"| {pid} | {status} | {dur_str} | {retry_str} | "
-            f"{info.get('buildFixAttempts', 0)} | {error} |"
+            f"{info.get('buildFixAttempts', 0)} | {info.get('operatorOverrides', 0)} | {error} |"
         )
     lines.append("")
 

@@ -101,8 +101,14 @@ class TestAppReviewCommandDelegates(unittest.TestCase):
             "submit-for-review.sh",
             "capture-marketing.sh",
             "register-app.sh",
+            "check-review-status.sh",
         ):
             self.assertNotIn(script, REVIEW_CMD, msg=script)
+
+    def test_command_terminates_on_controller_halted(self):
+        # The controller's retry ceiling / non-retryable halt only works if the
+        # command loop stops re-claiming when `next` answers action: halted.
+        self.assertIn("action: halted", REVIEW_CMD)
 
     def test_command_recovery_is_automated_first(self):
         self.assertNotIn("ASC 웹에서 등급 답변 수동 입력", REVIEW_CMD)
@@ -124,6 +130,30 @@ class TestTransientRetries(unittest.TestCase):
     def test_upload_sh_has_bounded_retries(self):
         self.assertIn("--retries", UPLOAD_SH)
         self.assertIn("RETRIES=2", UPLOAD_SH)
+
+
+class TestAlreadyUploadedContract(unittest.TestCase):
+    """ASC duplicate-binary rejections are idempotent success, chain-wide.
+
+    upload.sh maps the redundant class to already_uploaded/exit 0; the SKILL
+    skip gate and the deployer prompt must recognize it, or Phase F re-archives
+    forever on a binary that is already on ASC.
+    """
+
+    def test_upload_sh_classifies_redundant_before_transient(self):
+        self.assertIn(
+            "redundant binary|already been used|bundle version must be higher|previously uploaded",
+            UPLOAD_SH,
+        )
+        self.assertIn('write_status "already_uploaded" "true"', UPLOAD_SH)
+        # ordering: the redundant classifier must run before the transient one
+        redundant = UPLOAD_SH.index("redundant binary|already been used")
+        transient = UPLOAD_SH.index("TRANSIENT_UPLOAD_FAILURE=0")
+        self.assertLess(redundant, transient)
+
+    def test_skill_skip_gate_accepts_already_uploaded(self):
+        self.assertIn("`result: uploaded` or `already_uploaded`", SKILL)
+        self.assertIn("result=already_uploaded", SKILL)
 
     def test_deployer_retries_transient_register_only(self):
         self.assertNotIn("단일 시도", DEPLOYER)

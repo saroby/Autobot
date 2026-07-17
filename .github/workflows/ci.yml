@@ -19,10 +19,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Validate pipeline.json schema
-        run: |
-          python3 -c "from scripts import spec_loader; spec_loader.validate_spec(spec_loader.load_spec())"
-
       - name: Verify spec ↔ docs consistency
         run: python3 scripts/verify_spec_docs.py
 

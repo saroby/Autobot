@@ -26,6 +26,7 @@ acquirers cannot both win and a partial lock is never observed.
 
 CLI:
     build_lock.py acquire --build-id <id> [--project-dir .]
+    build_lock.py renew --build-id <id> [--project-dir .]
     build_lock.py release [--build-id <id>] [--expected-token <token>] [--force]
     build_lock.py status [--project-dir .]
 exit 0 → success / allow; exit 2 → blocked (a live build holds the lock).
@@ -189,6 +190,51 @@ def acquire(
     return ok, reason
 
 
+def renew(project_root: Path, build_id: str) -> tuple[bool, str]:
+    """Extend the lease for the SAME buildId (heartbeat).
+
+    A lease extension is not an ownership transfer, so a buildId match is
+    sufficient — no lockToken required. pid/lockToken/acquiredAt are preserved;
+    only leaseExpiresAt moves forward.
+
+    Known limitation: renew cannot distinguish a replaced runner for the same
+    buildId (no stable orchestrator PID/token is carried) — single active runner
+    per buildId is assumed.
+    """
+    path = _lock_path(project_root)
+    with _lock_guard(path):
+        existing = _read_lock(path) if path.exists() else None
+        if existing is None:
+            return False, "no lock to renew"
+        if existing.get("buildId") != build_id:
+            return False, (
+                f"lock held by buildId='{existing.get('buildId')}', not '{build_id}'"
+            )
+        payload = dict(existing)
+        payload["leaseExpiresAt"] = (
+            (datetime.now(timezone.utc) + timedelta(seconds=_lease_seconds()))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+        write_json(path, payload)
+        return True, f"lease renewed for '{build_id}'"
+
+
+def renew_from_state(project_root: Path) -> None:
+    """Best-effort heartbeat for phase-boundary callers (start/advance).
+
+    Reads buildId from build-state.json so callers never carry LOCK_TOKEN.
+    Swallows every failure — a missed renewal must not block phase progress.
+    """
+    try:
+        state = try_load_state(project_root / ".autobot" / "build-state.json")
+        build_id = (state or {}).get("buildId")
+        if build_id:
+            renew(project_root, str(build_id))
+    except Exception:  # noqa: BLE001 — heartbeat only, never fatal
+        pass
+
+
 def release(
     project_root: Path,
     build_id: str | None = None,
@@ -258,6 +304,9 @@ def _main() -> int:
     p_acq.add_argument("--takeover-same-build", action="store_true")
     p_acq.add_argument("--expected-token")
     p_acq.add_argument("--format", choices=("text", "json"), default="text")
+    p_ren = sub.add_parser("renew")
+    p_ren.add_argument("--project-dir", default=".")
+    p_ren.add_argument("--build-id", required=True)
     p_rel = sub.add_parser("release")
     p_rel.add_argument("--project-dir", default=".")
     p_rel.add_argument("--build-id")
@@ -279,6 +328,10 @@ def _main() -> int:
             print(json.dumps({"ok": ok, "reason": reason, "lockToken": lock_token}))
         else:
             print(("OK: " if ok else "BLOCKED: ") + reason)
+        return 0 if ok else 2
+    if args.cmd == "renew":
+        ok, reason = renew(proj, args.build_id)
+        print(("OK: " if ok else "BLOCKED: ") + reason)
         return 0 if ok else 2
     if args.cmd == "release":
         ok, reason = release(

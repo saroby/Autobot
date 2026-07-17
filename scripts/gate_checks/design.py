@@ -29,7 +29,8 @@ from ._helpers import (
     _file_grep,
     _run_cmd,
     _markdown_heading_present,
-    _agent_writes_dirs
+    _agent_writes_dirs,
+    strip_swift_noncode,
 )
 
 
@@ -208,3 +209,96 @@ def check_design_system_tokens_exist(proj: Path, app: str, state: dict) -> list[
             f"token files are empty: {', '.join(empty)}",
         )]
     return [_ok("design_system_tokens_exist", True, f"all {len(required)} token files present")]
+
+
+_DS_COMPONENTS = ("PrimaryButton", "Card", "SectionHeader", "EmptyStateView", "ListRow")
+
+
+def check_design_system_components_exist(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 3→4 — the 5 fixed-name DS component files must exist and declare
+    ``public struct <Module><Name>``.
+
+    ui-builder imports these EXACT names (design-system.md contract); until
+    now the contract lived only in prose, so a missing/renamed component
+    surfaced first as a Phase 5 xcodebuild failure — the most expensive
+    detection point (hard-fail, burns the circuit breaker). Hard check, same
+    level as design_system_tokens_exist: it verifies the producer's own
+    mandatory output, not a new quality bar.
+    """
+    module, err = _resolve_design_system_module(proj, state)
+    if err is not None:
+        return [_ok("design_system_components_module", False, err)]
+
+    comp_dir = proj / "Packages" / module / "Sources" / module / "Components"
+    problems: list[str] = []
+    for name in _DS_COMPONENTS:
+        f = comp_dir / f"{name}.swift"
+        if not f.is_file():
+            problems.append(f"{name}.swift missing")
+            continue
+        content = f.read_text(encoding="utf-8", errors="replace")
+        if not content.strip():
+            problems.append(f"{name}.swift empty")
+            continue
+        # Strip comments/strings so a `// public struct <Module><Name>` mention
+        # cannot satisfy this HARD contract — only a real declaration counts.
+        if not re.search(
+            rf"public\s+struct\s+{re.escape(module)}{name}\b",
+            strip_swift_noncode(content),
+        ):
+            problems.append(f"{name}.swift lacks `public struct {module}{name}`")
+    if problems:
+        return [_ok(
+            "design_system_components_exist", False,
+            f"DS component contract broken: {'; '.join(problems[:5])}",
+        )]
+    return [_ok(
+        "design_system_components_exist", True,
+        f"all {len(_DS_COMPONENTS)} components declare public struct {module}* primitives",
+    )]
+
+
+def check_ds_primitives_used(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 4→5 — Views/ should import the DS module and use ≥1 of the 5
+    shared primitives.
+
+    Otherwise the whole DS component layer is invisible dead code (happened
+    once — CHANGELOG records ui-builder importing only tokens and
+    re-implementing every primitive; the fix was prose-only). DEGRADED-only,
+    NEVER a hard fail: primitive usage is a quality signal, and a false
+    positive must not consume the circuit breaker.
+    """
+    module, err = _resolve_design_system_module(proj, state)
+    if err is not None:
+        # Legacy builds without designSystemModule must not degrade forever.
+        return [_ok("ds_primitives_used", True, f"skipped: {err}", skipped=True)]
+    views = proj / app / "Views"
+    if not views.is_dir():
+        return [_ok("ds_primitives_used", True, "no Views/ dir", skipped=True)]
+
+    sources: list[str] = []
+    for swift in sorted(views.rglob("*.swift")):
+        try:
+            sources.append(swift.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    combined = "\n".join(sources)
+    has_import = bool(re.search(rf"\bimport\s+{re.escape(module)}\b", combined))
+    used = [n for n in _DS_COMPONENTS if re.search(rf"\b{re.escape(module)}{n}\b", combined)]
+    if has_import and used:
+        return [_ok(
+            "ds_primitives_used", True,
+            f"Views/ imports {module} and uses {len(used)} primitive(s): {', '.join(used)}",
+        )]
+    reason = []
+    if not has_import:
+        reason.append(f"no `import {module}` in Views/")
+    if not used:
+        reason.append(f"none of the 5 {module}* primitives referenced")
+    return [_ok(
+        "ds_primitives_used", False,
+        f"{'; '.join(reason)} — DS component layer is dead code "
+        f"(re-implemented primitives lose the app-wide style lever). "
+        f"DEGRADED (not a hard fail).",
+        skipped=True, degraded=True,
+    )]

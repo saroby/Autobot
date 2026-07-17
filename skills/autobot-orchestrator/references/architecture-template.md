@@ -16,15 +16,63 @@ architect 에이전트가 생성하는 `.autobot/architecture.md`의 정형화�
 
 [1-2 문단. 앱의 핵심 가치, 대상 사용자, 주요 차별점]
 
+## Market Context
+
+> Category Expectation Research 산출 (사다리: `.autobot/market-brief.json` → WebSearch → model-knowledge).
+> model-knowledge 로 작성했으면 이 섹션 첫 줄에 `(model-knowledge only, no live research)` 를 표기한다.
+
+| Table-stakes 기능 | 근거 앱 (실제 앱 이름) | 출처 |
+|-------------------|------------------------|------|
+| [기능 1] | [앱 이름] | [URL / market-brief / model-knowledge] |
+| [기능 2] | [앱 이름] | [출처] |
+| [기능 3] | [앱 이름] | [출처] |
+
+> 최소 3행. **연결 규칙**: 이 표의 table-stakes 는 반드시 아래 `## Features` 의 P0/P1 로 반영된다 —
+> Features 에 닿지 않는 Market Context 는 장식이다.
+
 ## Features
 
-| # | Feature | Priority | Description |
-|---|---------|----------|-------------|
-| 1 | [기능명] | P0 | [설명] |
-| 3 | [기능명] | P0 | [설명] |
-| 4 | [기능명] | P1 | [설명] |
+| # | Feature | Priority | Role | Description |
+|---|---------|----------|------|-------------|
+| 1 | [기능명] | P0 | table-stakes | [카테고리 기본 기대 — Market Context 행과 대응] |
+| 2 | [기능명] | P0 | hook | [다운로드 이유 — 경쟁앱에 없는 차별 기능] |
+| 3 | [기능명] | P0 | insight | [집계·추세·달성률 등 계산형 파생 가치] |
+| 4 | [기능명] | P1 | retention | [재방문 메커니즘 — 히스토리 축적·streak·주기적 가치] |
+| 5 | [기능명] | P1 | table-stakes | [설명] |
+| 6 | [기능명] | P1 | retention | [delight 슬롯 — 햅틱/전환 애니메이션/위트 있는 empty state 중 1개] |
 
-> P0 = Must have, P1 = Should have, P2 = Nice to have (초기 빌드에서 스킵)
+> P0 = Must have, P1 = Should have, P2 = Nice to have — delight P1 1개(햅틱/전환 애니메이션/위트
+> 있는 empty state 중 하나)는 필수 포함하고, 나머지 polish 만 P2 로 스킵한다.
+> Role 은 feature-spec.json 의 `role` 필드와 동일한 enum (`table-stakes`/`hook`/`retention`/`insight`).
+> 최소 구성: table-stakes ≥3 · hook P0 ≥1 · retention ≥1 · insight ≥1 — 예시처럼 4–6행이 정상 범위다.
+
+### Hook & Retention
+
+기획 동질성 방지의 1급 출력 — *Signature Layout 의 기능판*. 아래 3행을 구체적으로 적는다
+(추상어 금지 — "편리한, 직관적인, 스마트한" 같은 말은 무효):
+
+| 항목 | 설명 | 예 (습관 트래커) |
+|------|------|------------------|
+| **훅 (다운로드 이유)** | 경쟁앱에 없는 차별 기능 1줄 | 완료 체크 즉시 주간 히트맵 타일이 점등 — 기록 자체가 보상 |
+| **리텐션 (재방문 이유)** | 히스토리 축적·streak·주기적 가치 | streak 카운터가 화면 최상단 — 하루 놓치면 잃는 것이 보인다 |
+| **aha (첫 성공 경험)** | 설치 → 첫 가치 체감까지의 경로 | 첫 실행 → 습관 1개 추가 → 첫 체크 → 히트맵 첫 타일 점등 (4탭 이내) |
+
+> **연결 규칙**: 훅 칸의 기능은 반드시 위 `## Features` 표에 **P0 로 존재**해야 한다 —
+> 표에 없으면 차별점은 말뿐이고, P0 로 있으면 feature-spec 의 flow acceptance 를 거쳐
+> 런타임 검증까지 이어진다.
+>
+> **제네릭 무효 판별 (작성 직후 자가 점검 — 필수)**: 표를 다 채운 뒤 **앱 이름·도메인 명사를
+> 가려도** 표만 보고 어떤 앱인지 식별되면 유효, 아니면 그 칸은 무효 — 다시 써라.
+>
+> | 칸 | ❌ 무효 (어떤 앱이든 해당) | ✅ 유효 (이 앱만 식별됨) |
+> |----|--------------------------|--------------------------|
+> | 훅 | "간편하고 직관적인 기록" | "완료 체크 즉시 주간 히트맵 타일 점등 — 기록 자체가 보상" |
+> | 리텐션 | "유저가 계속 쓰고 싶은 앱" | "streak 카운터 — 하루 놓치면 잃는 것이 화면 최상단에 보임" |
+> | aha | "쉬운 온보딩" | "설치 후 4탭 안에 첫 히트맵 타일 점등" |
+>
+> Gate 1→2 `hook_retention_present` 는 이 heading 의 *존재만* 검사한다(기본 DEGRADED) — 품질은
+> 위 자가 점검이 1차(자율 빌드 `/mvp` 에선 유일한 장치)이고, Phase 2.5 critique(기획 축)가
+> `/plan` 경로에서 2차로 점검한다.
 
 ## Screens
 
@@ -50,6 +98,15 @@ TabView
 └── Tab 3: Settings
     └── SettingsView
 ```
+
+## First-Run Experience (조건부)
+
+> `architecture.json` 의 `firstRunPolicy == "primer"` 이거나 `## Required Permissions` 가
+> "N/A" 가 아닐 때만 작성. 그 외에는 섹션 전체를 생략한다 (기본 `"direct"` = 즉시 콘텐츠 진입).
+
+- **정책**: [direct / primer] — [한 줄 근거]
+- **권한 priming**: [권한] 다이얼로그는 [화면]의 [액션] 직전에 요청 — 맥락 없이 첫 실행 즉시 띄우지 않는다.
+- **primer 구성** (primer 일 때만): 1 화면 — 가치 문장 + 권한 맥락 + 단일 CTA.
 
 ## Design Direction
 
@@ -159,8 +216,13 @@ Layout Personality: [data-driven / content-forward / utility / social]
 
 | ViewModel | Service Protocol | Screen | 주요 동작 |
 |-----------|-----------------|--------|----------|
-| HomeViewModel | ItemServiceProtocol | HomeView | fetchAll, add, delete |
+| HomeViewModel | ItemServiceProtocol | HomeView | fetchAll, add, delete, weeklySummary |
 | DetailViewModel | ItemServiceProtocol | DetailView | fetch by id, update |
+| StatsViewModel | ItemServiceProtocol | StatsView | weeklySummary, currentStreak |
+
+> 주요 동작에 CRUD 동사만 나열하지 않는다 — P0 도메인마다 비-CRUD 파생 동사(weeklySummary,
+> currentStreak 같은 계산형) ≥1 이 프로토콜 계약에 존재해야 하고(반환 struct 는 `Models/` 정의),
+> 그 동사를 소비하는 ViewModel 행이 여기 드러나야 한다.
 
 ## API Endpoints (if applicable)
 
@@ -330,7 +392,6 @@ ProjectRoot/                      ← 프로젝트 루트
 │   │   ├── ItemRepository.swift
 │   │   └── Networking/ (if applicable)
 │   ├── Utilities/
-│   │   ├── Theme.swift
 │   │   └── SampleData.swift
 │   ├── Assets.xcassets/
 │   ├── PrivacyInfo.xcprivacy

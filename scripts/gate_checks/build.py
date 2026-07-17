@@ -30,7 +30,8 @@ from ._helpers import (
     _file_grep,
     _run_cmd,
     _markdown_heading_present,
-    _agent_writes_dirs
+    _agent_writes_dirs,
+    strip_swift_noncode,
 )
 
 
@@ -67,9 +68,21 @@ def check_visual_contract(proj: Path, app: str, state: dict) -> list[dict]:
     result = evaluate(proj)
     status = result.get("status")
     if status == "skipped":
+        reason = result.get("skipReason", "unknown")
+        if reason == "visual_contract_disabled":
+            # Env kill-switch is standing + unaudited (unlike the buildId-scoped
+            # --allow-visual-drift waiver) — surface it as DEGRADED, never a
+            # benign skip, so preflight-ship refuses to launder it.
+            return [_ok(
+                "visual_contract", False,
+                "AUTOBOT_DISABLE_VISUAL_CONTRACT=1 — visual contract disabled by "
+                "env kill-switch. DEGRADED (not shippable); use the audited "
+                "--allow-visual-drift build-scoped waiver instead.",
+                skipped=True, degraded=True,
+            )]
         return [_ok(
             "visual_contract", True,
-            f"skipped: {result.get('skipReason', 'unknown')}",
+            f"skipped: {reason}",
             skipped=True,
         )]
     if status == "passed":
@@ -178,6 +191,44 @@ def check_visual_judge(proj: Path, app: str, state: dict) -> list[dict]:
         )]
 
     if verdict == "pass":
+        # Anti-laundering: integration-build Step 9 always writes the judge
+        # artifact before recording the metadata verdict, so a metadata-only
+        # 'pass' (one --metadata line) must not roll up green.
+        artifact = proj / ".autobot" / "artifacts" / "visual-judge.json"
+        if not artifact.is_file():
+            return [_ok(
+                "visual_judge", False,
+                "metadata verdict=pass but .autobot/artifacts/visual-judge.json "
+                "is absent — PASS self-report without the judge artifact is not "
+                "auditable. DEGRADED (not shippable).",
+                skipped=True, degraded=True,
+            )]
+        try:
+            disk = load_json(artifact)
+            disk_verdict = str(disk.get("verdict", "")).lower() if isinstance(disk, dict) else ""
+            disk_build = str(disk.get("buildId", "")) if isinstance(disk, dict) else ""
+        except (json.JSONDecodeError, OSError):
+            disk_verdict = ""
+            disk_build = ""
+        if disk_verdict != "pass":
+            return [_ok(
+                "visual_judge", False,
+                f"metadata verdict=pass but visual-judge.json verdict={disk_verdict!r} "
+                "— artifact missing/garbled/contradicting the self-report. "
+                "DEGRADED (not shippable).",
+                skipped=True, degraded=True,
+            )]
+        # Build-scope the artifact: a pass verdict left over from a PREVIOUS build
+        # must not roll up green for this one. The judge writes buildId alongside
+        # the verdict (integration-build Step 9c); absent or mismatched → DEGRADED.
+        if disk_build != build_id:
+            return [_ok(
+                "visual_judge", False,
+                f"metadata verdict=pass but visual-judge.json buildId={disk_build!r} "
+                f"!= state buildId={build_id!r} — stale/unscoped judge artifact is "
+                "not auditable for this build. DEGRADED (not shippable).",
+                skipped=True, degraded=True,
+            )]
         return [_ok(
             "visual_judge", True,
             f"design fidelity confirmed{f': {summary}' if summary else ''}",
@@ -274,9 +325,20 @@ def check_metadata_readiness(proj: Path, app: str, state: dict) -> list[dict]:
     result = evaluate(proj, asc_configured=bool(env.get("ascConfigured")))
     status = result.get("status")
     if status == "skipped":
+        reason = result.get("skipReason", "unknown")
+        if reason == "metadata_gate_disabled":
+            # Env kill-switch (e.g. left in a shell profile) must not roll up
+            # as a benign skip with zero audit trail — DEGRADED blocks shipping.
+            return [_ok(
+                "metadata_readiness", False,
+                "AUTOBOT_DISABLE_METADATA_GATE=1 — metadata validation disabled "
+                "by env kill-switch. DEGRADED (not shippable); unset the env var "
+                "or fix the metadata instead.",
+                skipped=True, degraded=True,
+            )]
         return [_ok(
             "metadata_readiness", True,
-            f"skipped: {result.get('skipReason', 'unknown')}",
+            f"skipped: {reason}",
             skipped=True,
         )]
     if status == "passed":
@@ -300,14 +362,22 @@ def check_app_uses_real_repositories(proj: Path, app: str, state: dict) -> list[
     Scans ALL of ``{app}/App/*.swift`` (entry point AND CompositionRoot — stub
     wiring moved to another composition file must not slip through), except
     ``ServiceStubs.swift`` itself (that file legitimately defines the preview
-    stubs). Comment lines are ignored and only an INSTANTIATION pattern
-    (``StubFoo(``) is a violation, so a `// previews use ServiceStubs` comment
-    can no longer hard-fail the gate (false-positive breaker risk).
+    stubs). Comments AND string literals are stripped first (strip_swift_noncode),
+    so a `// previews use ServiceStubs` comment or a `"MockRepo()"` string can no
+    longer hard-fail the gate (false-positive breaker risk). The denylist covers
+    the common stub-naming conventions, not just ``Stub`` — an in-memory store
+    renamed ``InMemoryRepository()`` must not ship as production wiring.
+
+    ``has_real_services`` requires an INSTANTIATION (``FooRepository(``), not a
+    bare type annotation (``var repo: ItemRepository?``); ``has_model_container``
+    runs on the SAME comment/string-stripped App/*.swift union (documented
+    contract puts production wiring in CompositionRoot.swift, not only the entry
+    file), so a `// TODO: wire FooRepository` comment cannot satisfy them.
     """
-    entry = proj / app / "App" / f"{app}App.swift"
     app_dir = proj / app / "App"
-    stub_call = re.compile(r"\bStub[A-Z]\w*\s*\(")
+    stub_call = re.compile(r"\b(Stub|Mock|Fake|InMemory|Dummy|Preview)[A-Z]\w*\s*\(")
     violations: list[str] = []
+    stripped_sources: list[str] = []
     swift_files = sorted(app_dir.glob("*.swift")) if app_dir.is_dir() else []
     for swift in swift_files:
         if swift.name == "ServiceStubs.swift":
@@ -316,37 +386,41 @@ def check_app_uses_real_repositories(proj: Path, app: str, state: dict) -> list[
             source = swift.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        # Strip /* block comments */ (incl. multi-line) before scanning —
-        # this is a HARD-FAIL check, so a commented-out Stub call must never
-        # trip it. Newlines are preserved to keep line numbers accurate.
-        source = re.sub(
-            r"/\*.*?\*/",
-            lambda m: "".join(ch if ch == "\n" else " " for ch in m.group(0)),
-            source,
-            flags=re.DOTALL,
-        )
+        # Strip comments AND string literals before scanning — this is a
+        # HARD-FAIL check, so a commented-out or stringified Stub call must
+        # never trip it. Newlines are preserved to keep line numbers accurate.
+        source = strip_swift_noncode(source)
         for lineno, line in enumerate(source.splitlines(), 1):
-            if line.strip().startswith("//"):
-                continue
             if stub_call.search(line):
                 violations.append(f"{swift.name}:{lineno}")
+        stripped_sources.append(source)
     if violations:
         detail = ", ".join(violations[:5])
         no_stubs = _ok(
             "no_stubs_in_app", False,
-            f"Stub instantiation in production composition: {detail}",
+            f"Stub/Mock/Fake/InMemory instantiation in production composition: {detail}",
         )
     elif not swift_files:
         no_stubs = _ok("no_stubs_in_app", False, f"MISSING: {app_dir}/*.swift")
     else:
         no_stubs = _ok(
             "no_stubs_in_app", True,
-            f"no Stub instantiations in {len(swift_files)} App/*.swift file(s)",
+            f"no stub-family instantiations in {len(swift_files)} App/*.swift file(s)",
         )
+    combined = "\n".join(stripped_sources)
+    # Require instantiation `\bXxxRepository(` / `\bXxxService(`, not a bare
+    # `var repo: ItemRepository?` type annotation — the composition root MUST
+    # construct the real service, so a type reference alone is not production wiring.
+    has_services = bool(re.search(r"\b[A-Z]\w*(?:Repository|Service)\s*\(", combined))
+    has_container = bool(re.search(r"ModelContainer", combined, re.IGNORECASE))
+    scope = "App/*.swift (comments+strings stripped, ServiceStubs excluded)"
     return [
         no_stubs,
-        _file_grep(entry, r"Repository|Service\(", "has_real_services"),
-        _file_grep(entry, r"ModelContainer", "has_model_container"),
+        _ok("has_real_services", has_services,
+            f"{'matched' if has_services else 'no match'} instantiation "
+            f"/[A-Z]\\w*(Repository|Service)\\(/ in {scope}"),
+        _ok("has_model_container", has_container,
+            f"{'matched' if has_container else 'no match'} /ModelContainer/ in {scope}"),
     ]
 
 

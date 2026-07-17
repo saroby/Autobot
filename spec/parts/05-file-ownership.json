@@ -46,7 +46,11 @@
       "deployer": {
         "writes": [
           "build/",
-          ".autobot/deploy-status.json"
+          ".autobot/deploy-status.json",
+          ".autobot/register-status.json",
+          ".autobot/archive-status.json",
+          ".autobot/upload-status.json",
+          ".autobot/invite-status.json"
         ]
       },
       "design-system": {
@@ -78,7 +82,9 @@
     "forbiddenPerAgent": {
       "ui-builder": [
         "{appName}/Services/",
-        "Packages/"
+        "Packages/",
+        "{appName}/App/CompositionRoot.swift",
+        "{appName}/App/{appName}App.swift"
       ],
       "design-system": [
         "{appName}/"

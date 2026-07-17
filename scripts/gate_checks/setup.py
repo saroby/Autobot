@@ -30,7 +30,8 @@ from ._helpers import (
     _file_grep,
     _run_cmd,
     _markdown_heading_present,
-    _agent_writes_dirs
+    _agent_writes_dirs,
+    strip_swift_noncode,
 )
 
 
@@ -165,6 +166,194 @@ def check_design_direction_complete(proj: Path, app: str, state: dict) -> list[d
     ]
 
 
+def _section_table_rows(content: str, heading_pattern: str) -> int:
+    """Markdown table BODY rows inside the section under *heading_pattern*
+    (header + separator rows excluded). 0 when the section/table is absent."""
+    m = re.search(rf"(?im)^(#+)\s+{heading_pattern}\s*$", content)
+    if not m:
+        return 0
+    level = len(m.group(1))
+    rest = content[m.end():]
+    stop = re.search(rf"(?m)^#{{1,{level}}}\s+", rest)
+    section = rest[:stop.start()] if stop else rest
+    pipe_rows = [
+        line for line in section.splitlines() if line.strip().startswith("|")
+    ]
+    body = [
+        line for line in pipe_rows
+        if not re.match(r"^\|[\s:\-|]+\|?$", line.strip())
+    ]
+    return max(0, len(body) - 1)  # first non-separator row is the header
+
+
+def check_market_context_present(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 1→2 — the plan must be grounded in category expectations.
+
+    DEGRADED-only (never hard): requires the `## Market Context` heading plus
+    either >=3 table body rows or noDirectCompetitors=true in
+    .autobot/market-brief.json. Existence/structure is the enforceable part;
+    research truth is owned by the architect self-check + /plan critique.
+    """
+    arch = proj / ".autobot" / "architecture.md"
+    if not arch.is_file():
+        return [_ok(
+            "market_context_present", False,
+            "architecture.md absent — market context unverifiable",
+            skipped=True, degraded=True,
+        )]
+    try:
+        content = arch.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return [_ok(
+            "market_context_present", False,
+            f"architecture.md unreadable ({exc}) — market context unverifiable",
+            skipped=True, degraded=True,
+        )]
+    if not _markdown_heading_present(content, r"Market Context"):
+        return [_ok(
+            "market_context_present", False,
+            "'## Market Context' heading missing — category table-stakes were "
+            "never researched/recorded (DEGRADED)",
+            skipped=True, degraded=True,
+        )]
+
+    no_competitors = False
+    brief_path = proj / ".autobot" / "market-brief.json"
+    if brief_path.is_file():
+        try:
+            brief = load_json(brief_path)
+            # Strict bool: the string "false" is truthy in Python, so a
+            # `"noDirectCompetitors":"false"` config must NOT waive the row.
+            no_competitors = isinstance(brief, dict) and (
+                brief.get("noDirectCompetitors") is True
+            )
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    rows = _section_table_rows(content, r"Market Context")
+    if rows >= 3 or no_competitors:
+        return [_ok(
+            "market_context_present", True,
+            f"Market Context present ({rows} table row(s)"
+            + (", noDirectCompetitors" if no_competitors else "") + ")",
+        )]
+    return [_ok(
+        "market_context_present", False,
+        f"Market Context has only {rows} table row(s) (<3) and market-brief "
+        f"does not declare noDirectCompetitors — DEGRADED",
+        skipped=True, degraded=True,
+    )]
+
+
+def check_hook_retention_present(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 1→2 — planning-side siblings of design_direction_complete.
+
+    DEGRADED-only heading checks: `### Hook & Retention` under Features, and —
+    only when architecture.json declares firstRunPolicy == "primer" — the
+    `## First-Run Experience` section. Heading presence is the enforceable
+    part; content quality is the architect self-check + /plan critique.
+    """
+    arch = proj / ".autobot" / "architecture.md"
+    try:
+        content = arch.read_text(encoding="utf-8", errors="replace") if arch.is_file() else ""
+    except OSError:
+        content = ""  # unreadable → treated as missing headings (DEGRADED below)
+
+    results: list[dict] = []
+    if _markdown_heading_present(content, r"Hook\s*(?:&|and)\s*Retention"):
+        results.append(_ok(
+            "hook_retention_present", True, "'### Hook & Retention' present",
+        ))
+    else:
+        results.append(_ok(
+            "hook_retention_present", False,
+            "'### Hook & Retention' heading missing — no declared "
+            "download-reason / return-reason (DEGRADED)",
+            skipped=True, degraded=True,
+        ))
+
+    policy = "direct"
+    arch_json = proj / ".autobot" / "architecture.json"
+    if arch_json.is_file():
+        try:
+            data = load_json(arch_json)
+            if isinstance(data, dict) and data.get("firstRunPolicy"):
+                policy = str(data["firstRunPolicy"])
+        except (json.JSONDecodeError, OSError):
+            pass
+    if policy != "primer":
+        results.append(_ok(
+            "first_run_experience_present", True,
+            f"firstRunPolicy={policy!r} — First-Run section not required",
+            skipped=True,
+        ))
+    elif _markdown_heading_present(content, r"First[- ]Run Experience"):
+        results.append(_ok(
+            "first_run_experience_present", True,
+            "'## First-Run Experience' present (firstRunPolicy=primer)",
+        ))
+    else:
+        results.append(_ok(
+            "first_run_experience_present", False,
+            "firstRunPolicy='primer' but '## First-Run Experience' section "
+            "missing — the primer was never designed (DEGRADED)",
+            skipped=True, degraded=True,
+        ))
+    return results
+
+
+_CRUD_METHOD_PREFIXES = ("fetch", "add", "delete", "update", "save", "get")
+
+
+def check_service_protocol_depth(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 1→2 — the service contract must own >=1 derived/insight method.
+
+    A protocol that only mirrors CRUD (fetch/add/delete/update/save/get)
+    leaves nobody downstream owning computation, so the app can never show
+    more than "store data, list data". Verb-prefix grep has known two-way
+    error (a stub weeklySummary() passes; fetchWeeklyStats is misclassified
+    as CRUD) — DEGRADED-only, never hard; quality is owned by the architect
+    self-check.
+    """
+    sp = proj / app / "Models" / "ServiceProtocols.swift"
+    if not sp.is_file():
+        return [_ok(
+            "service_protocol_depth", True,
+            "ServiceProtocols.swift absent — existence is "
+            "service_protocols_exist's call",
+            skipped=True,
+        )]
+    try:
+        text = sp.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return [_ok(
+            "service_protocol_depth", False,
+            f"ServiceProtocols.swift unreadable ({exc}) — depth unverifiable",
+            skipped=True, degraded=True,
+        )]
+    # Strip comments/strings so a `// func weeklySummary()` mention cannot pose
+    # as a real derived method.
+    funcs = re.findall(r"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)", strip_swift_noncode(text))
+    non_crud = [n for n in funcs if not n.lower().startswith(_CRUD_METHOD_PREFIXES)]
+    if non_crud:
+        sample = ", ".join(sorted(set(non_crud))[:4])
+        return [_ok(
+            "service_protocol_depth", True,
+            f"{len(non_crud)} non-CRUD method(s): {sample}",
+        )]
+    detail = (
+        f"{len(funcs)} method(s), all CRUD verbs "
+        f"({'/'.join(_CRUD_METHOD_PREFIXES)})"
+        if funcs else "no protocol methods found"
+    )
+    return [_ok(
+        "service_protocol_depth", False,
+        f"{detail} — no derived/insight method (e.g. weeklySummary(), "
+        f"currentStreak()) so no one owns computation; DEGRADED",
+        skipped=True, degraded=True,
+    )]
+
+
 def check_models_exist(proj: Path, app: str, state: dict) -> list[dict]:
     # Models/ path is derived from the architect's writes in spec.fileOwnership,
     # so changing the spec moves this check automatically.
@@ -197,7 +386,19 @@ def check_contracts_snapshot_saved(proj: Path, app: str, state: dict) -> list[di
 
 def check_backend_required_consistent(proj: Path, app: str, state: dict) -> list[dict]:
     if not state.get("backend_required"):
-        return [_ok("backend_skip", True, "backend_required=false", skipped=True)]
+        results = [_ok("backend_skip", True, "backend_required=false", skipped=True)]
+        if (proj / "backend").is_dir():
+            # Reverse-direction guard: a backend/ tree on a backend_required=false
+            # build means backend-engineer was misdispatched — surface it instead
+            # of silently shipping dead artifacts. DEGRADED, never hard.
+            results.append(_ok(
+                "backend_not_required_but_present", False,
+                "backend_required=false but backend/ exists — misdispatched "
+                "backend-engineer output; DEGRADED (delete backend/ or set "
+                "backend_required=true)",
+                skipped=True, degraded=True,
+            ))
+        return results
     results = [_file_exists(proj / app / "Models" / "APIContracts.swift", "api_contracts")]
     try:
         subprocess.run(["docker", "--version"], capture_output=True, timeout=5, check=True)

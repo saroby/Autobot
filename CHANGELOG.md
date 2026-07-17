@@ -4,6 +4,43 @@
 
 ## [Unreleased]
 
+전수 감사(일반 8렌즈 + 기획깊이 3렌즈, finding별 적대적 반증 검증 — 확정 56 / 기각 9, `tasks/weakness-audit-2026-07-17.md`) 후 9-워크스트림 일괄 수정 + codex 교차 검수(A/B/D 3영역 지적 30건 반영, 4건 근거 유지). 테스트 667 → 962 전부 green.
+
+### Added — 기획 깊이 층 (소유자 목표: "화면 나열이 아닌, 유저를 끌어들이는 회사급 첫 버전")
+- **시장 조사 입력**: orchestrator Phase 1 직전 market-brief self-step(mcp-appstore 유사앱/리뷰 → `.autobot/market-brief.json`), architect 에 Category Expectation Research 사다리(market-brief → WebSearch → model-knowledge 표기) + `## Market Context` 섹션. Gate 1→2 `market_context_present`(DEGRADED).
+- **기능 구성 요건**: table-stakes ≥3 · 훅 P0 ≥1 · 리텐션 ≥1 · 인사이트 ≥1 을 architect 계약에 명문화, feature-spec 에 `role` 필드 신설. `### Hook & Retention` 섹션(Signature Layout 동형 무효/유효 자가점검) + `hook_retention_present` 게이트(DEGRADED).
+- **기획 깊이 게이트**: `feature_spec_depth`(P0+P1 수·distinct screens·postcondition 종류·steps 하한 — DEGRADED 기본, quality-max hard; 단 "P0 1개 & steps ≤2" 원탭 퇴화만 기본 hard) + P2 접지·P1 pass-rate(70%)·다단계 여정 하한.
+- **도메인 로직 깊이**: P0 도메인당 비-CRUD 파생 메서드 ≥1 계약(앵커링 삼중화) + `service_protocol_depth` 게이트(DEGRADED).
+- **첫 실행 설계**: `firstRunPolicy: direct|primer` + 조건부 `## First-Run Experience` 섹션. delight P1 1개 필수(구 "P2=polish 스킵" 대체) + ui-builder 햅틱/모션 지침.
+- **기획 검토 배선**: codex 아키텍처 리뷰에 planningViolations 축(경고-only), Phase 2.5 critique 에 매력도 4항목.
+- **flow 검증 강화**: postcondition 이 존재 검사에서 상태 변화 검증으로 — navigated_to 신규성(entry 스냅샷 대비), artifact/setting 은 AXLabel/AXValue delta, unknown kind 관대 통과 폐지, delta 기준선을 flow-entry 로 통일(다단계 오탐 해소).
+
+### Fixed — 배포 체인 무인 완주
+- **[HIGH] 메타데이터·스크린샷 업로드/심사 제출이 creds 를 못 읽던 결함**: 3개 스크립트가 release_env.sh 를 source 하지 않아 doctor 통과 후 실행만 실패 — upload.sh 패턴으로 통일 + grep 계약 테스트.
+- redundant binary 를 성공으로 오분류하던 재시도: attempt-1 redundant = `build_number_conflict`(exit 6, 비재시도 halted — ASC 의 옛 바이너리로 심사 직행 차단), attempt≥2 만 `already_uploaded`.
+- submit 폴링이 미지 상태값에서 pipefail 로 조기 사망 → awk 상태 추출로 교체. app_review_controller 에 attempts ≥3 halted + 비재시도 reason(`auth_failed`/`build_number_conflict` 포함) 즉시 종결.
+- 심사 verdict 회수: `check-review-status.sh` 신설(API Key, 온디맨드) → `.autobot/review-verdict.json` → `/autobot:feedback` 이 REJECTED 를 학습 테마로 흡수(source=app_review).
+- 시크릿: .p8 PEM argv 노출 제거(heredoc), FASTLANE_SESSION lines 출력 마스킹, JWT 는 mode-600 curl config 로.
+
+### Fixed — 엔진 상태머신 복원력
+- fail-phase 경로 circuit breaker 트립 시 회고 데드락(alwaysRun 예외 + handle_breaker_trip 대칭 배선), 상태 전이 TOCTOU(락 안 재검증), build.lock lease heartbeat(renew), init-state 락 누수, checkpoint restore 저널링(+cross-build 격리·원자 기록), operator_override 감사(state `operatorOverrides` + run-summary 컬럼 + 채점 강등), schemaVersion 자동 승격.
+- preflight-ship 이 상류 게이트(1→2 THIN-SPEC 등)의 미해소 DEGRADED 를 못 보던 갭 → 전 게이트 degraded 집계 후 출하 거부.
+
+### Fixed — 게이트 세탁 차단
+- peer/axiom/visual-judge PASS 자기보고: 아티팩트 실파일·JSON·메타데이터 일치 검증(+visual-judge 는 buildId 스코프) — `--metadata` 한 줄 세탁 불가.
+- no-stub 게이트 denylist 확장(Mock/Fake/InMemory/Dummy/Preview) + 주석·문자열 리터럴 제거 스캔(공용 `strip_swift_noncode`), 배선 검사는 인스턴스화 패턴 요구, sandbox_clean 완전성(스펙 에이전트 집합 대조), DS 컴포넌트 5종 존재 게이트(hard) + 사용 게이트(DEGRADED), kill-switch env 를 DEGRADED 로, Gate 6→7 deploy-status 집계 스키마 인정(+round-trip 계약 테스트), ux-designer 의 죽은 `Theme.*`/`Color.accentColor` 템플릿 정정 + `no_legacy_theme_refs` 게이트.
+- codex-architecture-review.sh 의 모델 출력 Python 보간 인젝션(Critical) 제거 — argv+json.load, 파싱 실패는 감사 가능한 skipped.
+
+### Fixed — 학습 루프 무결성
+- 외부 피드백 write-only 3단선 배선(적용 프로토콜·grade 재키잉·quarantine 전파), rule 교체 시 approved 리셋, grade_build 멱등화(+self-mint 규칙은 score 0 + provenance), 리뷰 인용문 프롬프트 렌더 제거(인젝션 반쪽 방어 해소), 글로벌 스토어 캡(500), 재폴링 frequency 인플레 차단.
+
+### Fixed — CI·드리프트·관측성
+- **[HIGH] CI 가 첫 스텝에서 항상 실패해 GitHub 에서 검증이 강제된 적 없던 구조** 해소(중복 스텝 제거) + ci.yml 인라인 명령 회귀 테스트. e2e-verify paths 의존 4개 보강.
+- verify_spec_docs 확장: AUTOBOT_* env 45종 드리프트, phase-learning 매핑, 게이트 구조(빈 checks=error), retry/phase-count error 승격, docs/ 스캔 편입. smoke-e2e crash-on-launch 통과 버그 + 실패 아티팩트 삭제 trap 수정. run-summary stale 배지(소비 시점 재생성) + unknown 상태 가드. detect-plugins.sh 삭제, 죽은 인증 경로(APP_SPECIFIC_PASSWORD) 제거, spec dead 이벤트 `circuit_breaker_triggered` 정리, phase-gates.md Gate 5→6 를 spec 15개 체크와 동기화.
+
+### Tests
+- fake-fastlane PATH 스텁 실행 테스트(deliver 3종 끝까지 실행 + 셸 확장 증명), 게이트 체크 전수 스모크(registry 동적 순회), Swift 주석/문자열 스크러버 단위 테스트 등 — 667 → 962.
+
 ## [0.12.2] — 2026-07-12
 
 ### Fixed — fastlane deliver 인증이 항상 실패 (API 키 JSON 에 `key` 누락)

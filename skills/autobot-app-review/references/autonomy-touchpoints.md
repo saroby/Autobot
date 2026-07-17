@@ -2,7 +2,7 @@
 
 `/autobot:app-review`(= `autobot-app-review` 스킬)가 "빌드 완료된 앱 → App Store 첫 심사 제출"을 **인간 도움 없이 끝까지** 수행하는지에 대한 정직한 답. 파이프라인이 멈출 수 있는 모든 지점을 `CLOSED`(완전 자동) / `IRREDUCIBLE`(불가피한 인간 단계, API 우회 없음) / `CONDITIONAL`(앱 성격에 따라 조건부)로 분류한다.
 
-**한 줄 결론:** per-app 자율성은 완전하다. 앱마다 반복되는 작업(메타·스크린샷·연령등급·빌드·제출)에 인간 손이 필요한 곳은 없다. 인간이 필요한 건 **계정 레벨 1회 부트스트랩**, **Apple이 주기적으로 강제하는 약관 수락**, **신규 앱 등록용 ASC 웹 세션 갱신(~30일 주기 2FA)** 세 부류뿐이며, 이는 어떤 자동화도 우회할 수 없다.
+**한 줄 결론:** per-app 자율성은 완전하다. 앱마다 반복되는 작업(메타·스크린샷·연령등급·빌드·제출)에 인간 손이 필요한 곳은 없다. 인간이 필요한 건 **계정 레벨 1회 부트스트랩**, **Apple이 주기적으로 강제하는 약관 수락**, **신규 앱 등록용 ASC 웹 세션 갱신(~30일 주기 2FA)**, 그리고 제출 이후 **심사 리젝 상세 사유 읽기(Resolution Center)** 네 부류뿐이며, 이는 어떤 자동화도 우회할 수 없다.
 
 ---
 
@@ -40,7 +40,7 @@
 
 ## IRREDUCIBLE — 불가피한 인간 단계 (API 우회 없음)
 
-이 넷은 자동화가 **원천적으로 불가능**하다. Apple이 신뢰의 뿌리(root of trust)와 법적 동의를 인간에게 묶어놨기 때문. "자율 실행이 갑자기 멈췄다"의 대부분은 여기서 온다.
+이 다섯은 자동화가 **원천적으로 불가능**하다. Apple이 신뢰의 뿌리(root of trust)와 법적 동의를 인간에게 묶어놨기 때문. "자율 실행이 갑자기 멈췄다"의 대부분은 여기서 온다.
 
 1. **ASC API 키 발급 + Apple Developer Program 가입** — 계정당 1회. 인간이 ASC 웹에서 App Manager 이상 role의 `.p8` 키를 만들어 `ASC_API_KEY_ID` / `ASC_API_ISSUER_ID` / `ASC_API_KEY_PATH` 3종을 심어야 한다. 이 키가 이후 모든 자동화의 신뢰 뿌리이므로 자동화로 부트스트랩할 수 없다. (`/autobot:setup`이 한 번 안내)
 
@@ -48,7 +48,9 @@
 
 3. **머신의 서명 아이덴티티 최초 설치 (부분)** — archive는 `-allowProvisioningUpdates`로 프로비저닝을 자동 생성하지만, 키체인에 유효한 서명 인증서(Apple Development/Distribution)가 있어야 한다. Xcode → Settings → Accounts에서 1회 생성. 이후는 자율.
 
-4. **신규 앱 등록용 ASC 웹 세션 갱신 (~30일 주기)** — 앱 레코드 생성(`autobot-register-app` / `fastlane produce`)은 공개 ASC API에 endpoint가 없어 **API 키로 우회 불가** — Apple ID 웹 세션(비공개 iris API)만 통한다. `fastlane spaceauth -u <apple-id>` 를 인간이 실행(2FA 는 설계상 사람 전용)하면 세션이 ~30일 유효하고, 그동안 등록은 완전 무인. 만료 시 register 가 `asc_session_expired` 로 명확히 중단하며 갱신 명령을 안내한다. **기존 앱 재제출에는 불필요** — 앱이 이미 ASC 에 있으면 이 단계 자체가 안 돈다(2026-07-12 발견: 그전까지 이 경로는 `--api_key_path` 허구 플래그로 항상 깨져 있었고, 성공 사례는 전부 사람 세션의 잔광이었다).
+4. **심사 리젝 상세 사유 (Resolution Center 서면) 읽기** — 심사 verdict의 **상태**(승인/리젝)는 `scripts/check-review-status.sh`가 ASC API로 자동 회수해 `.autobot/review-verdict.json`에 기록한다(온디맨드). 그러나 **리젝의 서면 사유·Guideline 상세는 공개 ASC API에 노출되지 않는다** — Resolution Center(ASC 웹) 또는 이메일을 인간이 읽어야 한다. API 우회 없음.
+
+5. **신규 앱 등록용 ASC 웹 세션 갱신 (~30일 주기)** — 앱 레코드 생성(`autobot-register-app` / `fastlane produce`)은 공개 ASC API에 endpoint가 없어 **API 키로 우회 불가** — Apple ID 웹 세션(비공개 iris API)만 통한다. `fastlane spaceauth -u <apple-id>` 를 인간이 실행(2FA 는 설계상 사람 전용)하면 세션이 ~30일 유효하고, 그동안 등록은 완전 무인. 만료 시 register 가 `asc_session_expired` 로 명확히 중단하며 갱신 명령을 안내한다. **기존 앱 재제출에는 불필요** — 앱이 이미 ASC 에 있으면 이 단계 자체가 안 돈다(2026-07-12 발견: 그전까지 이 경로는 `--api_key_path` 허구 플래그로 항상 깨져 있었고, 성공 사례는 전부 사람 세션의 잔광이었다).
 
 ---
 

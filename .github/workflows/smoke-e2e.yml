@@ -21,7 +21,7 @@ jobs:
       - name: Select Xcode
         run: |
           ls /Applications | grep -E "^Xcode" || true
-          # macos-15 runner 의 최신 Xcode 사용. 26 미만이면 즉시 실패.
+          # macos-26 runner 의 최신 Xcode 사용. 26 미만이면 즉시 실패.
           sudo xcode-select -s /Applications/Xcode_26.app/Contents/Developer || \
             sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version

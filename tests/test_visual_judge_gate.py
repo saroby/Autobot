@@ -9,7 +9,10 @@ disk, so each test runs in a tmp project dir and opts a screenshot in/out.
 
 Policy under test (DEGRADED-only, never a hard fail):
   allowVisualDrift == buildId       → pass (release-scoped waiver for THIS build)
-  verdict=pass                      → pass
+  verdict=pass + matching artifact  → pass
+  verdict=pass, artifact absent/
+    garbled/mismatching             → DEGRADED (anti-laundering: a metadata-only
+                                      'pass' is a forgeable self-report)
   verdict=fail                      → DEGRADED (skipped+degraded)
   no/garbled verdict + screenshot   → DEGRADED (anti-laundering)
   no/garbled verdict + no shot      → benign skip (not verifiable here)
@@ -17,6 +20,7 @@ Policy under test (DEGRADED-only, never a hard fail):
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,14 +62,29 @@ class TestCheckVisualJudge(unittest.TestCase):
         shot.parent.mkdir(parents=True, exist_ok=True)
         shot.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 2048)
 
+    def _add_judge_artifact(self, payload="default"):
+        artifact = self.proj / ".autobot" / "artifacts" / "visual-judge.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        if payload == "default":
+            payload = {"verdict": "pass", "highCount": 0, "summary": "ok"}
+        if isinstance(payload, str):
+            artifact.write_text(payload)
+        else:
+            # Build-scope the artifact to THIS build unless the test set buildId
+            # itself (used to exercise stale/mismatched build ids).
+            if "buildId" not in payload:
+                payload = {**payload, "buildId": BUILD_ID}
+            artifact.write_text(json.dumps(payload))
+
     def _run(self, state: dict) -> dict:
         results = check_visual_judge(self.proj, self.APP, state)
         self.assertEqual(len(results), 1, "check returns exactly one sub-check")
         return results[0]
 
-    # ── pass ──
+    # ── pass (requires the judge artifact on disk — anti-laundering) ──
 
-    def test_pass_verdict_is_green(self):
+    def test_pass_verdict_with_artifact_is_green(self):
+        self._add_judge_artifact()
         r = self._run(_state(visual_judge={"verdict": "pass", "summary": "matches design"}))
         self.assertTrue(r["passed"])
         self.assertFalse(r.get("skipped", False))
@@ -73,9 +92,47 @@ class TestCheckVisualJudge(unittest.TestCase):
         self.assertIn("matches design", r["message"])
 
     def test_pass_verdict_case_insensitive(self):
+        self._add_judge_artifact({"verdict": "PASS"})
         r = self._run(_state(visual_judge={"verdict": "PASS"}))
         self.assertTrue(r["passed"])
         self.assertFalse(r.get("degraded", False))
+
+    def test_pass_verdict_without_artifact_degrades(self):
+        # A metadata-only 'pass' (one --metadata line) must not roll up green.
+        r = self._run(_state(visual_judge={"verdict": "pass"}))
+        self.assertFalse(r["passed"])
+        self.assertTrue(r.get("skipped"))
+        self.assertTrue(r.get("degraded"))
+        self.assertIn("visual-judge.json", r["message"])
+
+    def test_pass_verdict_stale_buildid_degrades(self):
+        # A pass artifact left over from a PREVIOUS build must not roll up green
+        # for this build — buildId-scoping is the anti-reuse guard.
+        self._add_judge_artifact({"verdict": "pass", "buildId": "old-build"})
+        r = self._run(_state(visual_judge={"verdict": "pass"}))
+        self.assertFalse(r["passed"])
+        self.assertTrue(r.get("degraded"))
+        self.assertIn("buildId", r["message"])
+
+    def test_pass_verdict_missing_buildid_degrades(self):
+        # An unscoped pass artifact (no buildId) is not auditable for this build.
+        self._add_judge_artifact('{"verdict":"pass"}')
+        r = self._run(_state(visual_judge={"verdict": "pass"}))
+        self.assertFalse(r["passed"])
+        self.assertTrue(r.get("degraded"))
+        self.assertIn("buildId", r["message"])
+
+    def test_pass_verdict_with_mismatching_artifact_degrades(self):
+        self._add_judge_artifact({"verdict": "fail", "highCount": 3})
+        r = self._run(_state(visual_judge={"verdict": "pass"}))
+        self.assertFalse(r["passed"])
+        self.assertTrue(r.get("degraded"))
+
+    def test_pass_verdict_with_garbled_artifact_degrades(self):
+        self._add_judge_artifact("{not json")
+        r = self._run(_state(visual_judge={"verdict": "pass"}))
+        self.assertFalse(r["passed"])
+        self.assertTrue(r.get("degraded"))
 
     # ── fail → DEGRADED (never hard fail) ──
 

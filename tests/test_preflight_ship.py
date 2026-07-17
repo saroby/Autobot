@@ -42,6 +42,24 @@ class TestPreflightShipBlocks(IsolatedProjectCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ERROR: preflight-ship", result.stderr)
 
+    def test_unresolved_upstream_degraded_gate_blocks_ship(self):
+        # An upstream gate (e.g. Gate 1->2 THIN-SPEC) that only passed DEGRADED
+        # must block shipping — ship is the hard boundary where unresolved
+        # degradation cannot ride along. The pre-scan refuses before the fresh
+        # 5->6 re-run, naming the offending gate.
+        state_path = self.project_dir / ".autobot" / "build-state.json"
+        state = self.state()
+        state["gates"] = {"1->2": {
+            "status": "degraded", "checkedAt": "2026-07-17T00:00:00Z",
+            "fromPhase": "1", "toPhase": "2", "soft": False, "checks": {},
+        }}
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2))
+
+        result = run_pipeline("preflight-ship", project_dir=self.project_dir)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unresolved DEGRADED", result.stderr)
+        self.assertIn("1->2", result.stderr)
+
     def test_stale_passed_evidence_cannot_launder(self):
         # Plant a stale 'passed' 5->6 evidence blob (e.g. from a previous
         # build). The preflight judges the FRESH re-run, not persisted state,

@@ -54,6 +54,16 @@ class TestBackendDockerDegrade(unittest.TestCase):
         self.assertTrue(results[0]["passed"])
         self.assertTrue(results[0].get("skipped"))
 
+    def test_backend_not_required_but_present_degrades(self):
+        # Reverse-direction guard: backend/ on a backend_required=false build
+        # is misdispatched backend-engineer output — DEGRADED, never hard.
+        (self.proj / "backend").mkdir()
+        results = setup.check_backend_required_consistent(self.proj, "Demo", {"backend_required": False})
+        row = next(r for r in results if r["check"] == "backend_not_required_but_present")
+        self.assertFalse(row["passed"])
+        self.assertTrue(row.get("skipped"), row)
+        self.assertTrue(row.get("degraded"), row)
+
 
 if __name__ == "__main__":
     unittest.main()

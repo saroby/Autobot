@@ -143,6 +143,79 @@ def check_feature_spec_quality(proj: Path, app: str, state: dict) -> list[dict]:
     )]
 
 
+def check_feature_spec_depth(proj: Path, app: str, state: dict) -> list[dict]:
+    """Phase 1→2 — depth/composition floor for the feature spec.
+
+    Sets the floor of "enough plan" (counts + hook/retention roles), not the
+    ceiling of "attractive plan": counts are deterministic and satisfiable
+    with filler, so real depth is owned by the architect prompt self-checks
+    and the /plan critique. Verdict mapping:
+
+      default mode : shortfalls → DEGRADED (THIN-SPEC; build continues,
+                     shipping blocked), advisories → message warning only.
+                     Exception: the one-tap degenerate spec (P0 == 1 and
+                     total steps <= 2) hard-fails — it is a demo, not a plan
+                     (same deterministic class as the zero-P0 rule).
+      quality-max  : shortfalls → hard fail, advisories → DEGRADED, and any
+                     P2 stub features → DEGRADED downgrade-pressure row.
+                     (Never a P2-ratio hard fail — that would push features
+                     from "downgraded to P2" to "omitted from the spec",
+                     killing the only visibility channel.)
+    """
+    from intent_spec import assess_feature_spec_depth
+
+    qmax = bool(state.get("qualityMax"))
+    depth = assess_feature_spec_depth(proj, quality_max=qmax)
+    metrics = depth.get("metrics") or {}
+    summary = (
+        "P0+P1={p0_p1} P0={p0} screens={screens} kinds={postcondition_kinds} "
+        "steps={total_steps}".format(**metrics) if metrics else "no metrics"
+    )
+
+    problems = depth["problems"]
+    advisories = depth["advisories"]
+    results: list[dict] = []
+
+    if depth["hard_problems"]:
+        results.append(_ok(
+            "feature_spec_depth", False, "; ".join(depth["hard_problems"][:2]),
+        ))
+    elif problems:
+        more = f" (+{len(problems) - 3} more)" if len(problems) > 3 else ""
+        msg = f"THIN-SPEC ({summary}): {'; '.join(problems[:3])}{more}"
+        if qmax:
+            results.append(_ok("feature_spec_depth", False, f"quality-max: {msg}"))
+        else:
+            results.append(_ok(
+                "feature_spec_depth", False, f"{msg} — DEGRADED",
+                skipped=True, degraded=True,
+            ))
+    elif advisories and qmax:
+        results.append(_ok(
+            "feature_spec_depth", True,
+            f"quality-max ({summary}); advisories → DEGRADED: "
+            + "; ".join(advisories[:3]),
+            skipped=True, degraded=True,
+        ))
+    elif advisories:
+        results.append(_ok(
+            "feature_spec_depth", True,
+            f"{summary} | warnings: " + "; ".join(advisories[:3]),
+        ))
+    else:
+        results.append(_ok("feature_spec_depth", True, summary))
+
+    p2 = depth.get("p2_features") or []
+    if qmax and p2:
+        results.append(_ok(
+            "feature_spec_p2_downgrade", True,
+            f"quality-max: {len(p2)} P2 stub feature(s) "
+            f"({', '.join(p2[:5])}) → DEGRADED (implement or drop before shipping)",
+            skipped=True, degraded=True,
+        ))
+    return results
+
+
 def check_idea_layout_requirements_captured(proj: Path, app: str, state: dict) -> list[dict]:
     """Phase 1→2 INTAKE — catch requirement-capture loss at the source.
 
@@ -354,4 +427,53 @@ def check_ios_capability_safe(proj: Path, app: str, state: dict) -> list[dict]:
     return [_ok(
         "ios_capability_safe", True,
         f"all iOS 26+ symbol usages are #available-guarded (target=iOS {deployment_major})",
+    )]
+
+
+def check_no_legacy_theme_refs(proj: Path, app: str, state: dict) -> list[dict]:
+    """Gate 4→5 — Views/ must not reference the deleted ``Theme.*`` API or the
+    system-default accent color.
+
+    The design-system package replaced ``Theme.swift`` with ``<Module>Color/
+    Font/Spacing/Radius`` tokens, and ui-builder.md forbids ``Color.accentColor``
+    (system default bypasses the app palette) — until now prose-only. Same scan
+    shape as check_no_tabbar_safearea_smells: Views/**/*.swift, comment lines
+    excluded.
+
+    DEGRADED-only, NEVER a hard fail (heuristic grep — a false positive must
+    not consume the circuit breaker).
+    """
+    views = proj / app / "Views"
+    if not views.is_dir():
+        return [_ok("no_legacy_theme_refs", True, "no Views/ dir", skipped=True)]
+
+    # `\bTheme\.` does not match `<Module>Theme.` (no word boundary inside an
+    # identifier); `\.accentColor\b` catches both Color.accentColor and
+    # .tint(.accentColor).
+    pattern = re.compile(r"\.accentColor\b|\bTheme\.")
+    violations: list[str] = []
+    for swift in sorted(views.rglob("*.swift")):
+        try:
+            lines = swift.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for lineno, line in enumerate(lines, 1):
+            if line.strip().startswith("//"):
+                continue
+            if pattern.search(line):
+                violations.append(f"{swift.relative_to(proj)}:{lineno}")
+    if not violations:
+        return [_ok(
+            "no_legacy_theme_refs", True,
+            "no Theme.* / .accentColor references in Views/ (DS tokens only)",
+        )]
+    detail = ", ".join(violations[:5])
+    if len(violations) > 5:
+        detail += f" (+{len(violations) - 5} more)"
+    return [_ok(
+        "no_legacy_theme_refs", False,
+        f"{len(violations)} legacy Theme.*/.accentColor reference(s) bypass the "
+        f"DS tokens: {detail} — use <Module>Color/Font/Spacing/Radius instead. "
+        f"DEGRADED (not a hard fail).",
+        skipped=True, degraded=True,
     )]

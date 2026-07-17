@@ -94,6 +94,31 @@ def _run_cmd(cmd: list[str], *, timeout: int = 10) -> tuple[bool, str]:
         return False, f"timeout after {timeout}s"
 
 
+def strip_swift_noncode(source: str) -> str:
+    """Return *source* with comments and string literals blanked out.
+
+    Removes ``/* block */`` and ``// line`` comments plus ``"..."`` and
+    ``\"\"\"...\"\"\"`` string literals so a scanner sees executable code only — a
+    ``Mock()`` or ``public struct`` living in a comment or string can no longer
+    match. Blanked spans collapse to spaces with newlines preserved, so a caller
+    that reports ``file:lineno`` keeps accurate line numbers.
+
+    ponytail: regex-based, not a real lexer — a ``/*`` inside a string literal or
+    a ``"`` inside a block comment can mis-slice. Covers the common
+    comment/string false-positive vectors; upgrade to a tokenizer only if a real
+    build trips one.
+    """
+    def _blank(m: "re.Match[str]") -> str:
+        return "".join(ch if ch == "\n" else " " for ch in m.group(0))
+
+    # 1) block comments  2) multi-line strings  3) single-line strings.
+    source = re.sub(r"/\*.*?\*/", _blank, source, flags=re.DOTALL)
+    source = re.sub(r'"""(?:.|\n)*?"""', _blank, source)
+    source = re.sub(r'"(?:\\.|[^"\\\n])*"', _blank, source)
+    # 4) line comments — strings are gone, so // is unambiguously a comment.
+    return "\n".join(line.split("//", 1)[0] for line in source.splitlines())
+
+
 def _markdown_heading_present(content: str, title_pattern: str) -> bool:
     return bool(re.search(rf"(?im)^#+\s+{title_pattern}\s*$", content))
 

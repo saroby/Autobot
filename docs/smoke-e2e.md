@@ -25,7 +25,7 @@ bash scripts/smoke-e2e.sh --workdir DIR   # 임시 dir 지정
 
 ## CI
 
-`.github/workflows/smoke-e2e.yml` 가 nightly 09:00 UTC (18:00 KST) 와 `workflow_dispatch` 로 실행. macos-15 runner + Xcode 26 사용. 실패 시 `/tmp/autobot-smoke-*/` 로그를 artifact 로 업로드 (7일 보존).
+`.github/workflows/smoke-e2e.yml` 가 nightly 09:00 UTC (18:00 KST) 와 `workflow_dispatch` 로 실행. macos-26 runner + Xcode 26 사용. 실패 시 `/tmp/autobot-smoke-*/` 로그를 artifact 로 업로드 (7일 보존).
 
 ## 종료 코드
 
@@ -35,8 +35,10 @@ bash scripts/smoke-e2e.sh --workdir DIR   # 임시 dir 지정
 | 1 | 환경 부족 (Xcode/simulator/SDK 26+) |
 | 2 | scaffold 실패 |
 | 3 | build 실패 |
-| 4 | simulator/install/launch 실패 |
+| 4 | simulator/install/launch 실패 (launch 직후 2초 내 종료하는 crash-on-launch 포함) |
 | 5 | env_snapshot 실패 |
+
+실패(비0 종료) 시 `--keep` 없이도 workdir 를 삭제하지 않고 유지한다 — CI 의 실패 아티팩트 업로드와 로컬 진단이 이 로그를 읽는다.
 
 ## 미커버 영역
 

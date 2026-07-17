@@ -80,8 +80,12 @@ fi
 log "Workdir: $WORKDIR"
 
 cleanup() {
+  local exit_code=$?
   if [[ "$KEEP" == "true" ]]; then
     log "유지: $WORKDIR"
+  elif [[ $exit_code -ne 0 ]]; then
+    # 실패 시 로그 보존 — CI 의 실패 아티팩트 업로드가 이 디렉토리를 읽는다
+    log "실패(exit $exit_code) — 진단용으로 유지: $WORKDIR"
   else
     log "정리: $WORKDIR"
     rm -rf "$WORKDIR"
@@ -173,7 +177,8 @@ sleep 2
 if xcrun simctl spawn "$DEVICE_UDID" launchctl list 2>/dev/null | grep -q "$BUNDLE_ID"; then
   log "  → 프로세스 생존 확인"
 else
-  log "  → 프로세스 단명 — 즉시 종료 가능 (앱이 background-only 가 아닌 한 의심)"
+  err "프로세스 단명 — launch 2초 내 종료 (crash-on-launch). smoke 실패"
+  exit 4
 fi
 
 # ---- 6. cleanup launch (정리 후 trap 에서 work dir 삭제) --------------------

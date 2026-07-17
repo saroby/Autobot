@@ -15,6 +15,7 @@ from app_review_controller import (  # noqa: E402
     _build_state,
     claim_next_phase,
     complete_phase,
+    fail_phase,
     initialize,
     next_phase,
     reconcile,
@@ -153,6 +154,68 @@ class TestAppReviewController(unittest.TestCase):
             review["artifactSha256"] = "artifact-new"
             (autobot / "review-submit-status.json").write_text(json.dumps(review))
             self.assertIsNotNone(_artifact_evidence(project, "G", _build_state(project)))
+
+    def test_already_uploaded_binary_counts_as_phase_f_evidence(self):
+        # ASC's "Redundant Binary Upload" rejection means the binary is already
+        # on ASC; upload.sh records result=already_uploaded and the controller
+        # must accept it as Phase F success under the same identity checks.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            _seed(project)
+            autobot = project / ".autobot"
+            (autobot / "archive-status.json").write_text(json.dumps({
+                "buildId": "build-1",
+                "bundleId": "com.example.demo",
+                "archiveSha256": "archive-digest",
+            }))
+            upload = {
+                "result": "already_uploaded",
+                "buildId": "build-1",
+                "bundleId": "com.example.demo",
+                "inputManifestHash": "phase5-hash",
+                "archiveSha256": "archive-digest",
+            }
+            (autobot / "upload-status.json").write_text(json.dumps(upload))
+            self.assertIsNotNone(_artifact_evidence(project, "F", _build_state(project)))
+
+            upload["result"] = "upload_failed"
+            (autobot / "upload-status.json").write_text(json.dumps(upload))
+            self.assertIsNone(_artifact_evidence(project, "F", _build_state(project)))
+
+    def test_next_returns_halted_after_three_failed_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            _seed(project)
+            state = initialize(project)
+            for attempt in range(3):
+                claim = claim_next_phase(project, state)
+                self.assertIn("claimToken", claim, f"attempt {attempt} not claimable")
+                state = fail_phase(
+                    project, state, "0",
+                    reason="fastlane_exit_1", claim_token=claim["claimToken"],
+                )
+            selected = next_phase(state)
+            self.assertEqual(selected["action"], "halted")
+            self.assertEqual(selected["phase"], "0")
+            self.assertEqual(state["phases"]["0"]["attempts"], 3)
+            # halted phases must not hand out a new claim token
+            self.assertNotIn("claimToken", claim_next_phase(project, state))
+
+    def test_non_retryable_reason_halts_immediately(self):
+        for reason in ("name_collision", "auth_failed", "build_number_conflict"):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp)
+                _seed(project)
+                state = initialize(project)
+                claim = claim_next_phase(project, state)
+                state = fail_phase(
+                    project, state, "0",
+                    reason=reason, claim_token=claim["claimToken"],
+                )
+                selected = next_phase(state)
+                self.assertEqual(selected["action"], "halted")
+                self.assertEqual(selected["reason"], reason)
+                self.assertNotIn("claimToken", claim_next_phase(project, state))
 
 
 if __name__ == "__main__":

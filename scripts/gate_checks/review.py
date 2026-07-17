@@ -33,6 +33,65 @@ from ._helpers import (
 )
 
 
+def _extract_json(text: str) -> Any:
+    """Best-effort parse of a JSON object out of artifact text.
+
+    The peer-review artifact is a CLI ``--output-last-message`` that can arrive
+    fence-wrapped or prose-prefixed, so a strict ``json.loads`` would DEGRADE a
+    genuinely-passing review. Try a direct parse, then a ```json fence, then the
+    outermost ``{...}`` slice. Returns the parsed value, or None if none parse.
+    """
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    fence = re.search(r"```(?:json)?\s*(.+?)```", text, re.DOTALL)
+    if fence:
+        try:
+            return json.loads(fence.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+    start, end = text.find("{"), text.rfind("}")
+    if 0 <= start < end:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _load_findings_artifact(proj: Path, rel_path: str) -> tuple[Any, str | None]:
+    """Validate + parse a gate findings artifact referenced by metadata.
+
+    Anti-laundering: a path that passes only ``.exists()`` lets ``"."`` or any
+    stray file launder a self-report (verdict/count trusted from metadata alone).
+    Require a regular FILE, resolving UNDER the project directory, whose contents
+    parse as JSON. Returns ``(parsed, None)`` on success or ``(None, reason)``
+    with reason in {"escapes_project", "not_a_file", "unparseable"} so each
+    caller maps it to its own check name + message.
+    """
+    try:
+        resolved = (proj / rel_path).resolve()
+        proj_resolved = proj.resolve()
+    except OSError:
+        return None, "unparseable"
+    if not (resolved == proj_resolved or proj_resolved in resolved.parents):
+        return None, "escapes_project"
+    if not resolved.is_file():
+        return None, "not_a_file"
+    try:
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None, "unparseable"
+    parsed = _extract_json(text)
+    if parsed is None:
+        return None, "unparseable"
+    return parsed, None
+
+
 def check_architecture_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict]:
     """Verify a Phase-1 peer architecture review has been performed (or explicitly skipped).
 
@@ -148,13 +207,32 @@ def check_axiom_critical_audit_acceptable(proj: Path, app: str, state: dict) -> 
         )
 
     findings_path_str = audit.get("findings_path") or audit.get("findingsPath")
-    if findings_path_str:
-        findings_path = proj / findings_path_str
-        if not findings_path.exists():
-            return _degraded(
-                "axiom_findings_missing",
-                f"axiom_critical_audit.findings_path={findings_path_str} does not exist on disk",
-            )
+    if not findings_path_str:
+        # Anti-laundering: a clean self-report without the findings artifact is
+        # not auditable — the honest bridge flow always records findings_path.
+        return _degraded(
+            "axiom_findings_path_absent",
+            "axiom_critical_audit.findings_path absent — self-reported result "
+            "without a findings artifact is not auditable",
+        )
+    disk, reason = _load_findings_artifact(proj, findings_path_str)
+    if reason == "escapes_project":
+        return _degraded(
+            "axiom_findings_escape_project",
+            f"axiom_critical_audit.findings_path={findings_path_str} resolves "
+            "outside the project directory — not auditable",
+        )
+    if reason == "not_a_file":
+        return _degraded(
+            "axiom_findings_missing",
+            f"axiom_critical_audit.findings_path={findings_path_str} is not a file on disk",
+        )
+    if reason == "unparseable":
+        return _degraded(
+            "axiom_findings_unparseable",
+            f"axiom findings artifact {findings_path_str} is not parseable JSON — "
+            "the metadata count is not auditable against it",
+        )
 
     critical = audit.get("critical_count")
     if critical is None:
@@ -171,6 +249,17 @@ def check_axiom_critical_audit_acceptable(proj: Path, app: str, state: dict) -> 
         return _degraded(
             "axiom_critical_present",
             f"axiom critical findings count={critical_int}; return to build-fix loop",
+        )
+
+    # Consistency: metadata claims 0 critical — the artifact must agree. A
+    # findings file listing criticals while metadata reports clean is exactly the
+    # one-line-metadata laundering this guards against.
+    if isinstance(disk, dict) and isinstance(disk.get("critical"), list) and disk["critical"]:
+        return _degraded(
+            "axiom_findings_count_mismatch",
+            f"metadata critical_count=0 but findings artifact lists "
+            f"{len(disk['critical'])} critical finding(s) — self-report "
+            "contradicts the artifact",
         )
 
     return [_ok("axiom_critical_clean", True,
@@ -235,14 +324,44 @@ def check_peer_review_acceptable(proj: Path, app: str, state: dict) -> list[dict
 
     if verdict == "PASS":
         findings_path_str = review.get("findingsPath") or review.get("findings_path")
-        if findings_path_str:
-            findings_path = proj / findings_path_str
-            if not findings_path.exists():
-                return _degraded(
-                    "peer_review_findings_missing",
-                    f"peerReview.findingsPath={findings_path_str} does not exist on disk — "
-                    "PASS verdict without artifact is not auditable",
-                )
+        if not findings_path_str:
+            # Anti-laundering: the bridge always writes .autobot/peer-review/
+            # phase-5.json, so a PASS with no findingsPath is a self-report a
+            # single --metadata line can forge — refuse to launder it to green.
+            return _degraded(
+                "peer_review_pass_without_artifact",
+                f"{host}->{peer} verdict=PASS but peerReview.findingsPath is absent — "
+                "PASS verdict without artifact is not auditable",
+            )
+        disk, reason = _load_findings_artifact(proj, findings_path_str)
+        if reason == "escapes_project":
+            return _degraded(
+                "peer_review_findings_escape_project",
+                f"peerReview.findingsPath={findings_path_str} resolves outside the "
+                "project directory — not auditable",
+            )
+        if reason == "not_a_file":
+            return _degraded(
+                "peer_review_findings_missing",
+                f"peerReview.findingsPath={findings_path_str} does not exist on disk — "
+                "PASS verdict without artifact is not auditable",
+            )
+        if reason == "unparseable":
+            return _degraded(
+                "peer_review_findings_unparseable",
+                f"peer-review artifact {findings_path_str} is not parseable JSON — "
+                "PASS verdict without an auditable artifact",
+            )
+        # Consistency: the artifact's own verdict must not contradict metadata PASS.
+        disk_verdict = (
+            str(disk.get("verdict", "")).strip().lower() if isinstance(disk, dict) else ""
+        )
+        if disk_verdict and disk_verdict != "pass":
+            return _degraded(
+                "peer_review_verdict_mismatch",
+                f"metadata verdict=PASS but peer-review artifact verdict={disk_verdict!r} "
+                "— self-report contradicts the artifact",
+            )
         return [_ok("peer_review_pass", True, f"{host}->{peer} verdict=PASS")]
 
     if verdict == "skipped":

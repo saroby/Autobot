@@ -28,15 +28,21 @@ When analyzing an app idea, extract these dimensions:
 | "이미지 생성", "그림 생성", "웹툰", "AI 그림", "스타일 변환" | Image generation API proxy, backend required |
 | "Gemini", "OpenAI", "DALL-E", "Stable Diffusion" | External AI API proxy, backend required |
 
-### 3. Screen Count Estimation
+### 3. Screen & Feature Floor Estimation
 
-| App Complexity | Screen Count | Feature Count |
-|---------------|-------------|---------------|
-| Simple | 3-5 | 2-3 |
-| Medium | 5-8 | 4-5 |
-| Complex | 8-12 | 6-7 |
+아래 값은 **최소치(floor)다 — 상한이 아니다.** 축소의 근거로 쓰지 않는다.
+
+| App Complexity | Screen Count (최소) | Feature Count (최소, P0+P1) |
+|---------------|--------------------|---------------------------|
+| Simple | ≥3 | ≥4 |
+| Medium | ≥5 | ≥5 |
+| Complex | ≥8 | ≥7 |
 
 Default to Medium complexity unless the idea explicitly suggests otherwise.
+
+기능 수와 무관하게 구성 요건 4종은 항상 충족한다: table-stakes ≥3 · hook P0 ≥1 ·
+retention ≥1 · insight(계산형 파생 가치) ≥1. "Simple > Complex" 는 구현 방식에 적용하는
+제약이지, 이 구성 요건을 깎는 근거가 아니다.
 
 ### 4. Navigation Pattern Selection
 
@@ -109,6 +115,8 @@ For Autobot builds, always implement features in this priority:
 
 1. **P0 (Must have)**: Core value features that define the app
 2. **P1 (Should have)**: Supporting features that enhance core
-3. **P2 (Nice to have)**: Polish features (skip for MVP)
+3. **P2 (Nice to have)**: delight P1 1개(햅틱 피드백 / 전환 애니메이션 / 위트 있는 empty state 중
+   하나)는 **P1 로 필수 포함**하고, 나머지 polish 만 P2 로 스킵한다 — delight 층 전체를 P2 로
+   밀어내면 유저를 붙잡는 요소가 빌드에서 통째로 증발한다.
 
 For initial builds, implement P0 and P1 only.

@@ -413,15 +413,18 @@ verdict 를 `.autobot/artifacts/visual-judge.json` 에 쓰고, 감사 이벤트�
 
 ```bash
 mkdir -p .autobot/artifacts
-cat > .autobot/artifacts/visual-judge.json <<'JSON'
-{"verdict":"pass","highCount":0,"summary":"primary coral #FF6B6B 적용 확인, 탭바·계층 의도대로","violations":[]}
+# buildId 를 포함시켜 이 아티팩트를 현재 빌드에 묶는다 — 이전 빌드의 pass 아티팩트
+# 재사용을 게이트가 차단(DEGRADED)한다.
+BUILD_ID=$(python3 -c "import json;print(json.load(open('.autobot/build-state.json')).get('buildId',''))")
+cat > .autobot/artifacts/visual-judge.json <<JSON
+{"verdict":"pass","buildId":"$BUILD_ID","highCount":0,"summary":"primary coral #FF6B6B 적용 확인, 탭바·계층 의도대로","violations":[]}
 JSON
 
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event visual_judge_verdict \
   --detail "{\"verdict\":\"pass\",\"highCount\":0,\"summary\":\"...\"}"
 ```
 
-> verdict JSON 스키마: `{"verdict":"pass"|"fail", "highCount":<int>, "summary":"<1줄>", "violations":[{"severity":"high|medium|low","axis":"디자인","title":"...","evidence":"...","fix":"..."}]}`.
+> verdict JSON 스키마: `{"verdict":"pass"|"fail", "buildId":"<현재 build-state.json 의 buildId>", "highCount":<int>, "summary":"<1줄>", "violations":[{"severity":"high|medium|low","axis":"디자인","title":"...","evidence":"...","fix":"..."}]}`. `buildId` 가 없거나 state 의 buildId 와 다르면 `check_visual_judge` 가 **DEGRADED** (stale/unscoped 아티팩트 세탁 금지).
 
 ### 9d. Gate 매핑 (DEGRADED-only — 빌드를 멈추지 않는다)
 
@@ -429,7 +432,8 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event visual_judge_v
 
 | verdict | 스크린샷 | `allowVisualDrift` | 결과 |
 |---|---|---|---|
-| `pass` | — | — | green |
+| `pass` (아티팩트 `buildId` == state) | — | — | green |
+| `pass` (아티팩트 `buildId` 부재/불일치) | — | false | **DEGRADED** (stale/unscoped 아티팩트) |
 | `fail` | — | false (기본) | **DEGRADED** (hard-fail 아님) → 배지 DEGRADED → 출하 차단 |
 | 없음/garbled | 있음 | false | **DEGRADED** (anti-laundering — 검증 가능했는데 verdict 없음) |
 | 없음/garbled | 없음 | false | benign-skip (green) — sim 부재로 검증 불가 |

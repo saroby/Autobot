@@ -10,7 +10,12 @@ End-to-end orchestrator that takes an Autobot project from "build ready" to "sub
 Phase ordering and completion state are enforced by
 `scripts/pipeline.sh app-review-controller`. Ask the controller for `next`,
 retain the returned `claimToken`, and pass it to `complete` or `fail`. A `busy`
-action means another session owns the phase and must not be duplicated.
+action means another session owns the phase and must not be duplicated. A
+`halted` action is terminal: the controller stopped the phase after 3 failed
+attempts or a non-retryable reason (`name_collision`, `bundle_id_taken`,
+`asc_session_expired`, `asc_permission_denied`, `auth_failed`,
+`build_number_conflict`) — report the `reason` and stop;
+do not re-claim. Otherwise
 execute only that phase's instructions below, and report `complete`/`fail` back
 to it. Do not infer a skip from timestamps.
 
@@ -27,7 +32,7 @@ to it. Do not infer a skip from timestamps.
 
 1. **`.autobot/build-state.json` must exist.** This skill is for Autobot projects only. Without it, exit early with "이 디렉토리는 Autobot 프로젝트가 아닙니다."
 2. **No interactive Q&A.** Auto Mode applies — derive every answer from `architecture.md` + `build-state.json` + `build-report.md`. The only exception is hard precondition failures (missing ASC creds, missing bundle ID) where we ERROR + halt.
-3. **ASC creds required.** Same three env vars as the rest of Autobot — `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, `ASC_API_KEY_PATH` (App Manager role or higher).
+3. **ASC creds required.** Same three credentials as the rest of Autobot — `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, `ASC_API_KEY_PATH` (App Manager role or higher), resolved as inherited env → project `.env` → `~/.autobot/.env` (every deploy script sources `scripts/release_env.sh`; validation is owned by the controller Phase 0 ship doctor).
 4. **Build processing wait is bounded.** Submission cannot proceed while the latest build is `PROCESSING` on ASC. The submit script polls for up to 30 minutes; after timeout it ERRORs with a `--skip-wait` retry hint.
 5. **Cross-plugin Q&A is bypassed by design.** `aso-skills:metadata-optimization`, `keyword-research`, and `screenshot-optimization` all start with "ask the user 5 questions" — invoking them via the Skill tool reliably triggers Q&A. Treat them as **reference material** the orchestrator-LLM reads inline (their character limits, slot frameworks, copy patterns are documented in this SKILL.md), not as Skill-tool calls. The two skills that *must* be Skill-invoked because they write files are `ios-marketing-capture` (writes Swift files + capture-marketing.sh) and `app-store-screenshots:app-store-screenshots` (scaffolds Next.js generator) — for these, pre-build `app-marketing-context.md` and pass an explicit "context populated; do not re-ask" preamble.
 6. **iOS source modifications are scoped — but persistent.** `ios-marketing-capture` adds a `Debug/MarketingCapture.swift` file (DEBUG-gated) and modifies `ContentView.swift` (or root navigation host) to call into the coordinator. All changes are `#if DEBUG` so they have no release-build footprint. **WARN**: `/autobot:resume` regenerates Autobot-owned views via the codegen pipeline — if it regenerates `ContentView.swift`, the capture hook is lost. Record the touched files in `.autobot/app-review-status.json` so subsequent `/autobot:app-review` runs detect the lost hook and re-inject. (Mitigation: keep capture hooks in a separate `ContentView+Capture.swift` extension file when possible — see the ios-marketing-capture SKILL.md for the recommended layout.)
@@ -61,15 +66,15 @@ fi
 P5=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('phases',{}).get('5',{}).get('status',''))")
 [ "$P5" != "completed" ] && { echo "ERROR: Phase 5 (build) not completed (status: $P5). Run /autobot:resume."; exit 1; }
 
-# (c) ASC creds
-for v in ASC_API_KEY_ID ASC_API_ISSUER_ID ASC_API_KEY_PATH; do
-  [ -z "${!v:-}" ] && { echo "ERROR: $v missing in .env"; exit 1; }
-done
-
-# (d) Bundle ID
+# (c) Bundle ID
 BUNDLE_ID=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json')).get('bundleId',''))")
 [ -z "$BUNDLE_ID" ] && { echo "ERROR: bundleId missing — run /autobot:setup."; exit 1; }
 ```
+
+ASC credential validation is owned by the controller's Phase 0 **ship doctor**
+(env → project `.env` → `~/.autobot/.env` resolution) — do not re-check env
+vars here. The deploy scripts themselves load the same resolution chain via
+`scripts/release_env.sh`, so credentials living only in `.env` files are fine.
 
 Halt on any failure. Do not proceed to Phase 0b.
 
@@ -512,7 +517,7 @@ Failure matrix:
 
 ## Phase F — Ensure binary on ASC
 
-If the current `build-state.json` indicates the build has not been uploaded yet (no `.autobot/upload-status.json` with `result: uploaded`), dispatch the **`deployer` agent** — the same agent `/autobot:testflight` uses. The deployer chains `autobot-register-app` → `autobot-archive-build` → `autobot-upload-build` → `autobot-invite-testers` with the proper error contracts (`name_collision`, `bundle_id_taken`, `asc_session_expired`, `asc_permission_denied` halt before any expensive archive work).
+If the current `build-state.json` indicates the build has not been uploaded yet (no `.autobot/upload-status.json` with `result: uploaded` or `already_uploaded`), dispatch the **`deployer` agent** — the same agent `/autobot:testflight` uses. The deployer chains `autobot-register-app` → `autobot-archive-build` → `autobot-upload-build` → `autobot-invite-testers` with the proper error contracts (`name_collision`, `bundle_id_taken`, `asc_session_expired`, `asc_permission_denied` halt before any expensive archive work).
 
 ```
 Agent(
@@ -520,8 +525,8 @@ Agent(
   subagent_type: "deployer",
   prompt: "Ensure the latest build is on App Store Connect. App: <DISPLAY_NAME>, bundle: <BUNDLE_ID>.
            Re-running is safe — register is idempotent (already_exists is silent success).
-           If .autobot/upload-status.json already shows result=uploaded for the current archive,
-           do nothing and report so. Otherwise run register → archive → upload.
+           If .autobot/upload-status.json already shows result=uploaded or result=already_uploaded
+           for the current archive, do nothing and report so. Otherwise run register → archive → upload.
            invite-testers is optional — skip unless config.json:testerEmails is populated."
 )
 ```
@@ -531,6 +536,12 @@ The deployer writes `.autobot/register-status.json`, `archive-status.json`, `upl
 **Skip Phase F only when the controller marks it complete.** It requires the
 upload status to match the current `buildId`, `bundleId`, and archive/artifact
 digest. Timestamp or source-mtime heuristics are not release identity.
+
+`result: already_uploaded` means ASC rejected the binary as a redundant upload
+(same bundle version already on ASC) — `upload.sh` maps that to success since
+the upload goal is met. Heed its WARN about build-number reuse: content match
+with the ASC binary is unverified, so a re-build with changed code needs a
+build-number bump to actually ship.
 
 ## Phase G — Submit for review
 
@@ -565,6 +576,36 @@ Failure matrix:
 | `age_rating_missing` | Age-rating questionnaire unanswered (Phase B's `app_store_rating_config.json` missing or didn't apply — e.g. the app record didn't exist on ASC yet when metadata uploaded) | Re-run Phase B — its dual skip gate checks `app_store_rating_config.json` independently of the `.txt` count, writes it if missing (step 2b), and re-uploads. Manual ASC-web answer is last-resort only. |
 | `export_compliance_question` | Encryption answer mismatch | Verify `ITSAppUsesNonExemptEncryption` in Info.plist; pass `--uses-encryption` if needed |
 | `already_in_review` | Version already submitted | Treated as success (exit 0) |
+
+## Post-submission — check review verdict (on-demand)
+
+Phase G ends at "Waiting for Review"; the verdict (approval/rejection) arrives
+hours~days later. `check-review-status.sh` retrieves it via the ASC API (API
+Key auth, read-only). It is deliberately **not** a controller phase — run it
+on demand when the user asks "심사 어떻게 됐어?" or before planning a
+re-submission.
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-app-review/scripts/check-review-status.sh" \
+  --bundle-id "$BUNDLE_ID"
+```
+
+Writes `.autobot/review-verdict.json`:
+
+```json
+{
+  "fetchedAt": "2026-07-17T12:00:00+00:00",
+  "appVersionState": "REJECTED",
+  "reviewSubmissionState": "UNRESOLVED_ISSUES",
+  "guidelineNumbers": [],
+  "notes": "States fetched via ASC API. Rejection rationale (Resolution Center) is not exposed by the public API — check ASC web/email for details."
+}
+```
+
+On `REJECTED` / `METADATA_REJECTED`: the written rationale lives only in ASC
+web (Resolution Center) / email — an IRREDUCIBLE human read (see
+`references/autonomy-touchpoints.md`). After fixing, re-run Phase B/E as
+needed and re-submit via Phase G (idempotent).
 
 ## Reporting (final output to user)
 
@@ -615,6 +656,7 @@ On partial failure, report what completed + what failed + the recovery command. 
 - `references/autonomy-touchpoints.md` — full inventory of every point the pipeline can halt (CLOSED / IRREDUCIBLE / CONDITIONAL). Read this to answer "does it run to review with zero human help?" — the honest answer is per-app autonomy is total; only account-level bootstrap + Apple's periodic agreement acceptance need a human.
 - `scripts/upload-screenshots.sh` — fastlane deliver wrapper for screenshots-only upload
 - `scripts/submit-for-review.sh` — build-processing poll + `fastlane deliver --submit_for_review` wrapper
+- `scripts/check-review-status.sh` — on-demand post-submission verdict fetch → `.autobot/review-verdict.json`
 - (age-rating config is written by Phase B into `fastlane/metadata/app_store_rating_config.json` and applied by `autobot-upload-metadata`)
 
 ## Integration with other Autobot commands

@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from conftest import import_runtime_modules
+from conftest import IsolatedProjectCase, import_runtime_modules, run_pipeline
 
 import_runtime_modules()
 
@@ -219,6 +219,26 @@ class TestBuildLock(unittest.TestCase):
         returncodes = sorted(process.wait(timeout=10) for process in processes)
         self.assertEqual(returncodes, [0, 2])
 
+    # ── renew ──
+
+    def test_renew_extends_lease_and_preserves_token(self):
+        build_lock.acquire(self.proj, "build-A")
+        before = json.loads(self._lock().read_text())
+        # Backdate the lease so the extension is observable.
+        before["leaseExpiresAt"] = "2000-01-01T00:00:00Z"
+        self._lock().write_text(json.dumps(before))
+
+        ok, reason = build_lock.renew(self.proj, "build-A")
+        self.assertTrue(ok, reason)
+        after = json.loads(self._lock().read_text())
+        self.assertEqual(after["lockToken"], before["lockToken"])
+        self.assertEqual(after["acquiredAt"], before["acquiredAt"])
+        self.assertGreater(after["leaseExpiresAt"], before["leaseExpiresAt"])
+
+        ok, reason = build_lock.renew(self.proj, "build-B")
+        self.assertFalse(ok)
+        self.assertIn("buildId", reason)
+
     # ── release ──
 
     def test_release_removes_own_lock(self):
@@ -297,6 +317,48 @@ class TestBuildLock(unittest.TestCase):
         self.assertTrue(st["locked"])
         self.assertTrue(st["stale"])
         self.assertFalse(st["holderAlive"])
+
+
+class TestLeaseHeartbeat(IsolatedProjectCase):
+    """start-phase must renew the lock lease so long builds keep protection."""
+
+    def test_start_phase_renews_lease(self):
+        lock_path = self.project_dir / ".autobot" / "build.lock"
+        data = json.loads(lock_path.read_text())
+        data["leaseExpiresAt"] = "2000-01-01T00:00:00Z"
+        lock_path.write_text(json.dumps(data))
+
+        result = run_pipeline("start-phase", "--phase", "1", project_dir=self.project_dir)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+        renewed = json.loads(lock_path.read_text())
+        self.assertGreater(renewed["leaseExpiresAt"], "2000-01-01T00:00:00Z")
+        self.assertEqual(renewed["lockToken"], data["lockToken"])
+
+
+class TestInitStateLockLeak(unittest.TestCase):
+    """init-state must not exit holding the lock when schema validation fails."""
+
+    def test_failed_schema_validation_does_not_leak_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp)
+            bad = run_pipeline(
+                "init-build", "--build-id", "build-X",
+                "--app-name", "badName", "--display-name", "Bad",
+                project_dir=proj,
+            )
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertFalse(
+                (proj / ".autobot" / "build.lock").exists(),
+                "failed init must not leave the build lock behind",
+            )
+            # The corrected retry with the SAME build-id and no --force must work.
+            good = run_pipeline(
+                "init-build", "--build-id", "build-X",
+                "--app-name", "GoodName", "--display-name", "Good",
+                project_dir=proj,
+            )
+            self.assertEqual(good.returncode, 0, msg=good.stdout + good.stderr)
 
 
 if __name__ == "__main__":

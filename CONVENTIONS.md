@@ -71,7 +71,8 @@ spec_loader   ← state_store   ← transitions
 - `event_log` may depend on `spec_loader` + `state_store`.
 - `transitions` may depend on `state_store` (and via that, `spec_loader`).
 - `gate_persistence` may depend on `state_store` + `event_log` + `gate_runner`
-  (`gate_runner` is stdlib-only).
+  (`gate_runner` is stdlib-only), plus `transitions` via function-local import
+  only (breaker predicate in `handle_breaker_trip` — no module-level edge).
 - `phase_advance` and `cli` may depend on everything above.
 - `runtime` is a facade; it imports nothing else *into* the codebase, only
   re-exports.

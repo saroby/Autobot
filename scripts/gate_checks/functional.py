@@ -29,6 +29,11 @@ from flow_runner import run_flows  # noqa: E402
 
 from ._helpers import _ok  # noqa: E402
 
+# Default-mode floor for the P1 flow tier: a single flake among several P1
+# flows stays a warning, but a tier mostly broken (pass rate below the floor)
+# degrades the badge. quality-max still degrades on ANY P1 failure.
+P1_FLOW_PASS_RATE_FLOOR = 0.70
+
 
 # ── Lightweight feature view so tests can inject without a full FeatureSpec ──
 @dataclass
@@ -103,8 +108,10 @@ def _authored_test_names(bundle: Path) -> set[str]:
     return names
 
 
-def _p0_logic_features(project_dir: Path) -> list[_FeatureLite]:
-    """Read the feature-spec and project P0 logic-acceptance ids.
+def _logic_features(
+    project_dir: Path, priorities: tuple[str, ...] = ("P0", "P1"),
+) -> list[_FeatureLite]:
+    """Read the feature-spec and project logic-acceptance ids for *priorities*.
 
     Returns [] when no feature-spec is present (completeness check then no-ops).
     """
@@ -117,7 +124,8 @@ def _p0_logic_features(project_dir: Path) -> list[_FeatureLite]:
         return []
     out: list[_FeatureLite] = []
     for f in features:
-        if getattr(f, "priority", "") != "P0":
+        prio = getattr(f, "priority", "")
+        if prio not in priorities:
             continue
         logic_ids = [
             a.id for a in getattr(f, "acceptance", ())
@@ -126,7 +134,7 @@ def _p0_logic_features(project_dir: Path) -> list[_FeatureLite]:
         if logic_ids:
             out.append(_FeatureLite(
                 feature_id=getattr(f, "id", "?"),
-                priority="P0",
+                priority=prio,
                 logic_acceptance_ids=logic_ids,
             ))
     return out
@@ -136,29 +144,44 @@ def _completeness_subcheck(
     project_dir: Path, bundle: Path | None, features: list[_FeatureLite],
     *, quality_max: bool = False,
 ) -> dict:
-    """P0 logic acceptance ↔ authored test coverage.
+    """P0/P1 logic acceptance ↔ authored test coverage.
 
     A P0 logic acceptance with no named test is always DEGRADED. This remains
     non-fatal for local autonomous progress, but the shipping gate refuses the
-    unverified result without consuming circuit-breaker retries.
+    unverified result without consuming circuit-breaker retries. A P1 gap only
+    warns (mirroring P1 flow semantics); the coverage % rides in the message
+    because run-summary consumes gate messages, not extra state fields.
     """
     if not features:
-        return _ok("logic_test_completeness", True, "no P0 logic acceptances declared")
+        return _ok("logic_test_completeness", True, "no P0/P1 logic acceptances declared")
     authored = _authored_test_names(bundle) if bundle is not None else set()
-    missing: list[str] = []
+    missing_p0: list[str] = []
+    missing_p1: list[str] = []
+    total = 0
     for f in features:
         for acc_id in f.logic_acceptance_ids:
+            total += 1
             if acc_id not in authored and f"{acc_id}()" not in authored:
-                missing.append(f"{f.feature_id}:{acc_id}")
-    if missing:
+                bucket = missing_p0 if f.priority == "P0" else missing_p1
+                bucket.append(f"{f.feature_id}:{acc_id}")
+    covered = total - len(missing_p0) - len(missing_p1)
+    pct = round(100 * covered / total) if total else 100
+    coverage = f"P0+P1 logic coverage {pct}% ({covered}/{total})"
+    if missing_p0:
         return _ok(
             "logic_test_completeness", True,
-            f"{len(missing)} P0 logic acceptance(s) without a named test: {missing}"
-            + " — DEGRADED (add a named test per P0 logic acceptance)",
+            f"{len(missing_p0)} P0 logic acceptance(s) without a named test: {missing_p0}"
+            f" — DEGRADED (add a named test per P0 logic acceptance); {coverage}",
             skipped=True, degraded=True,
         )
+    if missing_p1:
+        return _ok(
+            "logic_test_completeness", True,
+            f"warning: {len(missing_p1)} P1 logic acceptance(s) without a named "
+            f"test: {missing_p1}; {coverage}",
+        )
     return _ok("logic_test_completeness", True,
-               f"all {sum(len(f.logic_acceptance_ids) for f in features)} P0 logic acceptance(s) have a named test")
+               f"all {total} P0/P1 logic acceptance(s) have a named test; {coverage}")
 
 
 def check_logic_tests_pass(
@@ -200,7 +223,7 @@ def check_logic_tests_pass(
 
     features = (
         _features_override if _features_override is not None
-        else _p0_logic_features(project_dir)
+        else _logic_features(project_dir)
     )
 
     summary = _xcresult_summary(bundle) if bundle is not None else None
@@ -243,7 +266,9 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
       assess_feature_spec_quality closes at the source)
     - axe/sim missing / boot fails -> degraded skip (passed=False, skipped+degraded)
     - a P0 acceptance fails         -> hard fail (passed=False)
-    - only P1 acceptances fail      -> suite passes, message carries the warning
+    - only P1 acceptances fail      -> suite passes with a warning while the P1
+      pass rate stays >= P1_FLOW_PASS_RATE_FLOOR; below the floor (or on ANY
+      P1 failure under quality-max) the suite is DEGRADED
     """
     features = load_feature_spec(proj)
     if not features:
@@ -318,9 +343,24 @@ def check_functional_flows_pass(proj: Path, app: str, state: dict) -> list[dict]
                 f"quality-max: P1 flow failure(s) → DEGRADED: {warn_detail}",
                 skipped=True, degraded=True,
             )]
+        # Default mode: a mostly-broken P1 tier must not hide under a green
+        # badge — below the pass-rate floor the suite is DEGRADED (shipping-
+        # blocked, no circuit-breaker retry). Above the floor a stray flake
+        # stays a warning so autonomous completion is not held hostage.
+        p1_rows = [r for r in results if r.get("priority") != "P0"]
+        p1_rate = sum(1 for r in p1_rows if r["passed"]) / len(p1_rows)
+        if p1_rate < P1_FLOW_PASS_RATE_FLOOR:
+            return [_ok(
+                "functional_flows_pass", True,
+                f"{passed_count}/{len(results)} flow acceptances passed; "
+                f"P1 pass rate {p1_rate:.0%} < {P1_FLOW_PASS_RATE_FLOOR:.0%} "
+                f"floor → DEGRADED: {warn_detail}",
+                skipped=True, degraded=True,
+            )]
         return [_ok(
             "functional_flows_pass", True,
-            f"{passed_count}/{len(results)} flow acceptances passed | warnings: {warn_detail}",
+            f"{passed_count}/{len(results)} flow acceptances passed | "
+            f"warnings (P1 pass rate {p1_rate:.0%}): {warn_detail}",
         )]
     return [_ok(
         "functional_flows_pass", True,

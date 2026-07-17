@@ -65,6 +65,22 @@ CHECK:
   ✓ (backend_required) architecture.md에 iOS Configuration 관련 섹션 존재 (grep -qi "ios.*config\|xcconfig")
   ✓ (backend_required) <AppName>/Models/APIContracts.swift 존재
   ~ (backend_required) docker --version 종료 코드 == 0 (미설치 시 DEGRADE, 중단 아님)
+  ~ (backend_required=false) backend/ 디렉토리가 존재하면 DEGRADE — backend-engineer 오디스패치 산출물 표면화
+CHECK (feature_spec_depth) — 기획 깊이/구성 하한:
+  ~ P0+P1 ≥5 (quality-max 7) · P0 ≥2 · distinct 화면 ≥3 · distinct postcondition kind ≥3
+  ~ role 구성: P0/P1 중 hook ≥1 · retention ≥1 (role 미선언 legacy spec 은 경고만)
+  ~ 미달 시 기본 DEGRADED(THIN-SPEC), quality-max 는 hard fail
+  ✗ 예외(기본 모드에도 hard fail): P0 1개 + acceptance 총 step ≤2 — 원탭 데모는 기획이 아님
+  ~ 권고(기본 warning, quality-max DEGRADED): 다단계 flow(steps ≥2) ≥1 · 아이디어가 텍스트 입력을
+    암시하면 text_input step ≥1 · setting_stored 는 value_persisted_after_relaunch 와 짝
+  ~ quality-max 전용: P2 stub 존재 시 DEGRADED (downgrade pressure — 비율 hard fail 은 금지)
+CHECK (market_context_present) — DEGRADED-only:
+  ~ architecture.md `## Market Context` 헤딩 + 표 행 ≥3 (또는 market-brief.json noDirectCompetitors=true)
+CHECK (hook_retention_present) — DEGRADED-only:
+  ~ `### Hook & Retention` 헤딩 존재
+  ~ architecture.json firstRunPolicy == "primer" 면 `## First-Run Experience` 섹션도 요구
+CHECK (service_protocol_depth) — DEGRADED-only:
+  ~ ServiceProtocols.swift 에 CRUD 동사(fetch/add/delete/update/save/get) 외 메서드 ≥1
 FAIL → architect 에이전트 재실행 (최대 2회)
 DEGRADE (docker 미설치) → 빌드는 계속 진행한다. iOS 앱 + backend/ 코드는 생성되고, 백엔드 컨테이너만 미검증(DEGRADED)으로 남는다. Capability Coverage 가 "backend pending / localhost" 를 사용자에게 명시. Docker Desktop 설치 후 백엔드를 로컬 빌드/실행할 수 있다.
 ```
@@ -130,10 +146,14 @@ CHECK:
   ✓ <AppName>/PrivacyInfo.xcprivacy 존재
   ✓ <AppName>/<AppName>.entitlements 존재
   ✓ .gitignore 존재
+  ✓ Packages/<designSystemModule>/Package.swift 존재 & name 일치
+  ✓ Tokens/{Color,Typography,Spacing,Radius}.swift 존재 & 비어있지 않음
+  ✓ Components/{PrimaryButton,Card,SectionHeader,EmptyStateView,ListRow}.swift 존재 &
+    각각 `public struct <Module><이름>` 선언 (ui-builder import 이름 계약)
   ✓ (backend_required) Debug.xcconfig 존재 & API_BASE_URL 포함
   ✓ (backend_required) Release.xcconfig 존재 & API_BASE_URL 포함
   ✓ (backend_required) .gitignore에 backend/.env 포함
-FAIL → scaffold 재실행
+FAIL → scaffold 재실행 (design-system 산출물 누락은 design-system 에이전트 재실행)
 ```
 
 ### Gate 4→5: 병렬 코드 생성 완료
@@ -151,7 +171,10 @@ CHECK:
   ✓ <AppName>/Services/ 디렉토리에 .swift 파일 1개 이상
   ✓ <AppName>/App/<AppName>App.swift에 '.modelContainer' 문자열 포함
   ✓ <AppName>/Models/*.swift 파일이 Phase 1과 동일 (수정되지 않음 — checksum 비교)
-  ✓ 에이전트 간 파일 소유권 위반 없음 (agent-sandbox로 검증됨)
+  ✓ 에이전트 간 파일 소유권 위반 없음 (agent-sandbox로 검증됨) — agentsVerified 가
+    spec phases.4.agents 전원을 포함해야 함 (backend_required=false 면 backend-engineer 제외)
+  ✓ (DEGRADED-only) Views/ 가 designSystemModule 을 import 하고 primitive ≥1 사용 (ds_primitives_used)
+  ✓ (DEGRADED-only) Views/ 에 삭제된 Theme.* / 시스템 .accentColor 참조 없음 (no_legacy_theme_refs)
 FAIL:
   - <AppName>/Models/ 변경됨 → `.autobot/contracts/phase-1-models/` snapshot으로 복원 후 Phase 4 재실행
   - 파일 누락 → 해당 에이전트만 재실행
@@ -167,22 +190,31 @@ POST-GATE (통과 후):
   → build-log.sh --phase 4 --event snapshot_save
 ```
 
-### Gate 5→6: 빌드 성공
+### Gate 5→6: 빌드 성공 + 기능/품질 검증 (spec 기준 15개 체크)
 
 ```
-CHECK:
+CHECK (hard — 실패 시 quality-engineer 재실행):
   ✓ phases.5.metadata.build_succeeded == true
-  ✓ phases.5.metadata.peerReview.verdict ∈ {PASS, skipped}
-  ✓ App 엔트리포인트에서 Stub이 아닌 실제 서비스 사용:
-    grep -qi "Stub" <AppName>/App/<AppName>App.swift → 불일치여야 통과 (Stub 참조 없음)
-    grep -qi "Repository\|Service(" <AppName>/App/<AppName>App.swift → 일치여야 통과 (실제 서비스 존재)
-    grep -qi "ModelContainer" <AppName>/App/<AppName>App.swift → 일치여야 통과 (직접 생성)
-  ✓ <AppName>/App/ServiceStubs.swift 존재 (Preview/테스트용으로 유지 — 삭제하면 Preview 컴파일 에러)
-  ✓ <AppName>/PrivacyInfo.xcprivacy에 architecture.md의 모든 API 카테고리 반영
-  ✓ (backend_required) docker compose build 종료 코드 == 0
-  ✓ (backend_required) docker compose up -d --wait 종료 코드 == 0
-  ✓ (backend_required) curl -f http://localhost:8080/health 종료 코드 == 0
-  ✓ (backend_required) docker compose down 완료
+  ✓ peer_review_acceptable — peerReview.verdict ∈ {PASS, skipped}, PASS 는 findingsPath
+    아티팩트(실파일·JSON·메타데이터 일치) 필요 — 없으면 DEGRADED
+  ✓ axiom_critical_audit_acceptable — axiom 감사 기록 + findings 아티팩트 검증
+  ✓ app_uses_real_repositories — <AppName>/App/*.swift 전체(ServiceStubs.swift 제외,
+    주석·문자열 리터럴 제거 후) 스캔:
+    (Stub|Mock|Fake|InMemory|Dummy|Preview)<Type>( 인스턴스화 → 없어야 통과 (denylist)
+    <Type>(Repository|Service)( 인스턴스화 → 있어야 통과 / ModelContainer 직접 생성 확인
+  ✓ service_stubs_preserved — ServiceStubs.swift 존재 (Preview/테스트용 — 삭제 금지)
+  ✓ first_launch_seeded — seedPolicy=="seeded" 면 진입점에서 SampleData.seedIfNeeded 호출
+  ✓ logic_tests_pass — P0(+P1 커버리지 %) named test 대조
+  ✓ functional_flows_pass — feature-spec P0 flow 를 AXe 로 실행 (P1 pass-rate 70% 미만 DEGRADED)
+  ✓ (backend_required) backend_deploy_readiness — docker compose build/up --wait/health/down
+  ✓ quality_engineer_consumed_learnings — phases.5.learningsConsumed 에 quality-engineer
+
+CHECK (DEGRADED-only — 위반 시 출하(preflight-ship) 차단, circuit breaker 는 소모 안 함):
+  ✓ no_swallowed_errors — ViewModels/Services 의 try?/try! grep 휴리스틱
+  ✓ runtime_smoke — 시뮬레이터 기동 스모크 (명시적 opt-out 만 benign skip)
+  ✓ visual_contract — 실 스크린샷 dominant color ↔ design-spec 토큰 deltaE (+다크모드)
+  ✓ visual_judge — 빌드 스크린샷 ↔ 디자인 의도 멀티모달 판정 (아티팩트에 buildId 필수)
+  ✓ metadata_readiness — ASC 메타데이터 준비 상태
 FAIL → quality-engineer 에이전트 재실행 (최대 2회, 이전 에러 전달)
 FAIL (Docker) → quality-engineer 에이전트 재실행 (Docker 에러 메시지 포함)
 ```
@@ -192,7 +224,8 @@ FAIL (Docker) → quality-engineer 에이전트 재실행 (Docker 에러 메시�
 ```
 CHECK:
   ✓ .autobot/deploy-status.json 존재
-  ✓ deploy-status.json에 archive_path 또는 upload_success 존재
+  ✓ deploy-status.json 에 결과 기록 존재 — deployer.md Step 5 집계 스키마의
+    status ∈ {uploaded, archived} (신형), 또는 top-level archive_path/upload_success (구형 flat 하위호환)
 SOFT FAIL → Phase 7 진행 (배포 실패도 학습 대상)
 ```
 
@@ -300,10 +333,11 @@ review = state["phases"]["5"]["metadata"]["peerReview"]
 assert review["verdict"] in {"PASS", "skipped"}
 PY
 
-# Gate 5→6: App 엔트리포인트에서 Stub 사용 여부 확인
-! grep -qi "Stub" <AppName>/App/<AppName>App.swift        # Stub이 없어야 통과
-grep -qi "Repository\|Service(" <AppName>/App/<AppName>App.swift  # 실제 서비스가 있어야 통과
-grep -qi "ModelContainer" <AppName>/App/<AppName>App.swift        # 직접 생성해야 통과
+# Gate 5→6: App composition 에서 Stub 사용 여부 확인 (실제 구현: gate_checks/build.py —
+# App/*.swift 전체를 ServiceStubs.swift 제외 + 주석·문자열 제거 후 스캔)
+! grep -qiE "(Stub|Mock|Fake|InMemory|Dummy|Preview)[A-Z]\w*\s*\(" <AppName>/App/*.swift  # denylist 인스턴스화 없어야 통과
+grep -qiE "[A-Z]\w*(Repository|Service)\s*\(" <AppName>/App/*.swift  # 실제 서비스 인스턴스화가 있어야 통과
+grep -qi "ModelContainer" <AppName>/App/*.swift                      # 직접 생성해야 통과
 
 # Docker 설치 확인 (Gate 1→2)
 docker --version &>/dev/null

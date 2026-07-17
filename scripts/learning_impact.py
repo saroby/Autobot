@@ -18,7 +18,8 @@ CLI:
         update each consumed learning's effect_score / last_outcome.
     learning_impact.py active --project-dir .
         Print learnings.json with quarantined items (effect_score <= -2)
-        filtered out — Phase 0 bootstrap should consume this.
+        filtered out — consumed by run_summary.py. (Phase 0 bootstrap uses the
+        load-learnings.sh merge-global + render path, not this subcommand.)
     learning_impact.py quarantined --project-dir .
         Print the list of quarantined learning ids (operator visibility).
 
@@ -89,13 +90,14 @@ def _norm_text(value: str) -> str:
 
 def _propagate_to_common_errors(data: dict, rule_text: str, delta: int) -> int:
     """Apply ``delta`` to the effect_score of any ``patterns.common_build_errors``
-    entry whose pattern/fix/prevention text matches ``rule_text``.
+    or ``patterns.external_feedback`` entry whose rule text matches ``rule_text``.
 
-    This is the bridge that makes the RENDERED ``## Prevention Rules`` honor
+    This is the bridge that makes the RENDERED prompt sections honor
     quarantine: render-active-learnings.py drops entries whose effect_score has
     fallen to QUARANTINE_THRESHOLD. Without it a prevention rule graded "hurt"
     in items[] kept being rendered into every future build's prompt — the
-    primary prompt channel ignored quarantine entirely (the W2 defect). The
+    primary prompt channel ignored quarantine entirely (the W2 defect; the
+    ``## External Feedback`` section had the same writer-less dead check). The
     match is best-effort text equality/containment: when an agent logs the exact
     prevention rule it applied via ``--rule`` the link is exact, and a miss is
     harmless because items[] remains audit/grade data rather than a prompt
@@ -104,19 +106,26 @@ def _propagate_to_common_errors(data: dict, rule_text: str, delta: int) -> int:
     rule_n = _norm_text(rule_text)
     if not rule_n:
         return 0
-    errors = data.get("patterns", {}).get("common_build_errors")
-    if not isinstance(errors, list):
+    patterns = data.get("patterns", {})
+    if not isinstance(patterns, dict):
         return 0
+    # (entries, exact-match fields, containment-only fields) per prompt store.
+    targets = (
+        (patterns.get("common_build_errors"), ("prevention", "fix"), ("pattern",)),
+        (patterns.get("external_feedback"), ("suggested_prevention_rule",), ("theme",)),
+    )
     touched = 0
-    for entry in errors:
-        if not isinstance(entry, dict):
+    for entries, exact_fields, extra_fields in targets:
+        if not isinstance(entries, list):
             continue
-        prevention_n = _norm_text(entry.get("prevention", ""))
-        fix_n = _norm_text(entry.get("fix", ""))
-        haystack = " ".join((prevention_n, fix_n, _norm_text(entry.get("pattern", ""))))
-        if rule_n == prevention_n or rule_n == fix_n or rule_n in haystack:
-            entry["effect_score"] = int(entry.get("effect_score", 0) or 0) + delta
-            touched += 1
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            exact = [_norm_text(entry.get(f, "")) for f in exact_fields]
+            haystack = " ".join(exact + [_norm_text(entry.get(f, "")) for f in extra_fields])
+            if any(rule_n == e for e in exact if e) or rule_n in haystack:
+                entry["effect_score"] = int(entry.get("effect_score", 0) or 0) + delta
+                touched += 1
     return touched
 
 
@@ -132,11 +141,23 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
       - circuit breaker tripped in phase N where this learning was applied → "hurt" (−2)
 
     All updates are applied to learnings.json items in-place. Returns a summary.
+
+    One vote per build per item: applied_runs is the idempotency ledger, so
+    re-running the retrospective on the same build_id (fail → resume →
+    complete) never re-adds a delta, and an item consumed in several phases
+    of one build is graded by the first phase only.
     """
     data = _load(project_root)
     state = try_load_state(state_file_for(project_root))
     if not state:
         return {"updated": 0, "reason": "no_build_state"}
+
+    # A build identity is what makes grading idempotent (applied_runs guard
+    # below). A retrospective can run twice on the same build (fail → resume →
+    # complete); without the guard every re-run re-added its delta.
+    build_id = build_id or state.get("buildId")
+    if not build_id:
+        return {"updated": 0, "reason": "no_build_id"}
 
     items_by_id = {item.get("id"): item for item in data["items"] if isinstance(item, dict) and item.get("id")}
     updated = 0
@@ -162,12 +183,20 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
         # graded neutral, not credited as a clean win.
         history = phase_block.get("errorSignatureHistory")
         fix_attempts = len(history) if isinstance(history, list) else 0
+        # A phase that only completed because an operator overrode the breaker
+        # or retry exhaustion is not evidence the learnings helped — demote
+        # "helped" to "neutral". Defensive read: the field is written by the
+        # transitions path and may be absent on older states.
+        try:
+            overrides = int(phase_block.get("operatorOverrides") or 0)
+        except (TypeError, ValueError):
+            overrides = 0
 
         if breaker:
             outcome, delta = "hurt", -2
         elif status in ("failed", "skipped"):
             outcome, delta = "hurt", -1
-        elif status in ("completed", "fallback") and fix_attempts == 0:
+        elif status in ("completed", "fallback") and fix_attempts == 0 and overrides == 0:
             outcome, delta = "helped", 1
         elif status in ("completed", "fallback"):
             outcome, delta = "neutral", 0
@@ -194,6 +223,16 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
                 continue
 
             item = items_by_id.get(learning_id)
+            if item is None and rule_text:
+                # External-feedback items are keyed stable_id("external", rule)
+                # (external_feedback.py) while agents record with a phase key.
+                # Re-keying at this grading chokepoint is what lets review-born
+                # rules ever earn a score instead of minting an untried twin.
+                external_item = items_by_id.get(stable_id("external", rule_text))
+                if external_item is not None:
+                    item = external_item
+                    learning_id = external_item["id"]
+            just_minted = False
             if item is None:
                 if not rule_text:
                     # Never MINT items from rule-less records: bare agent-name
@@ -210,16 +249,44 @@ def grade_build(project_root: Path, build_id: str | None = None) -> dict:
                     "last_outcome": "untried",
                     "applied_runs": [],
                     "rule_preview": rule_text[:200],
+                    # Provenance: this item was first SEEN at grade time, not
+                    # loaded from the pre-build store — so it earns no score
+                    # this pass (see the just_minted branch below).
+                    "minted_by": "grade_build",
                 }
                 data["items"].append(item)
                 items_by_id[learning_id] = item
+                just_minted = True
 
+            runs = item.setdefault("applied_runs", [])
+            if build_id in runs:
+                continue  # this build already voted on this item (idempotency)
+            if just_minted:
+                # A rule first reported AT grade time is recorded for audit but
+                # must NOT self-certify: otherwise an agent could report any
+                # fabricated rule and collect +1 in the same build. The item's
+                # effect_score stays 0 until a LATER build applies the now
+                # pre-existing rule and grades it for real. The build is still
+                # banked (a same-build re-grade stays a no-op), and any EXISTING
+                # pattern entry the rule matches still gets the outcome mirrored
+                # — those entries are not agent-fabricated, so propagating to
+                # them is safe and keeps the render-store quarantine honest.
+                runs.append(build_id)
+                runs[:] = runs[-10:]
+                if rule_text:
+                    _propagate_to_common_errors(data, rule_text, delta)
+                summaries.append({
+                    "id": learning_id,
+                    "phase": phase_id,
+                    "outcome": "minted",
+                    "delta": 0,
+                    "effect_score": 0,
+                })
+                continue
             item["effect_score"] = int(item.get("effect_score", 0)) + delta
             item["last_outcome"] = outcome
-            runs = item.setdefault("applied_runs", [])
-            if build_id and build_id not in runs:
-                runs.append(build_id)
-                runs[:] = runs[-10:]  # cap history
+            runs.append(build_id)
+            runs[:] = runs[-10:]  # cap history
             # Mirror the outcome onto the rendered prevention-rule store so a
             # hurtful rule also drops out of active-learnings.md / phase files.
             if rule_text:
@@ -448,11 +515,16 @@ def _filter_unapproved_external(project: dict) -> dict:
     Filtering HERE — the single choke point every global publish goes through
     (feedback path AND Phase 7 grade) — is what makes the gate real instead of
     prose. Unapproved entries and their phase=="external" tracking items stay
-    project-local."""
+    project-local. sample_quotes are stripped from published entries: quotes
+    exist for the operator's approval judgement and are untrusted review text —
+    they must not propagate cross-project once the theme is approved."""
     entries = project.get("patterns", {}).get("external_feedback")
     if not isinstance(entries, list):
         return project
-    approved = [e for e in entries if isinstance(e, dict) and e.get("approved") is True]
+    approved = [
+        {k: v for k, v in e.items() if k not in ("sample_quotes", "_consumed_signals")}
+        for e in entries if isinstance(e, dict) and e.get("approved") is True
+    ]
     approved_ids = {
         stable_id("external", e.get("suggested_prevention_rule") or "")
         for e in approved
@@ -468,13 +540,45 @@ def _filter_unapproved_external(project: dict) -> dict:
     return filtered
 
 
+GLOBAL_ITEMS_CAP = 500
+
+
+def _cap_global_items(items: list) -> list:
+    """Best-effort size ceiling for the monotonically-growing global items[].
+
+    Over the cap, evict oldest-first (list order ≈ append age) only the items
+    that are quarantined tombstones no build ever consumed (empty applied_runs,
+    untried/hurt). Live or graded items are NEVER dropped — quarantine scores
+    must keep travelling cross-project so new projects don't re-learn a bad
+    rule from zero. If tombstones alone can't reach the cap, the list stays
+    over it rather than losing real learnings."""
+    if len(items) <= GLOBAL_ITEMS_CAP:
+        return items
+
+    def evictable(item: object) -> bool:
+        return (isinstance(item, dict)
+                and int(item.get("effect_score", 0) or 0) <= QUARANTINE_THRESHOLD
+                and not item.get("applied_runs")
+                and item.get("last_outcome") in ("untried", "hurt"))
+
+    overflow = len(items) - GLOBAL_ITEMS_CAP
+    kept: list = []
+    for item in items:
+        if overflow > 0 and evictable(item):
+            overflow -= 1
+            continue
+        kept.append(item)
+    return kept
+
+
 def publish_project_to_global(project_root: Path) -> dict:
     """Phase 7 hand-off: push project learnings up to the global store so the
     next project benefits. Project items overlay global items on id collision
     (latest grade is the truth)."""
     project = _filter_unapproved_external(_load(project_root))
     glob = load_global()
-    merged_items = _merge_items(glob.get("items", []), project.get("items", []))
+    merged_items = _cap_global_items(
+        _merge_items(glob.get("items", []), project.get("items", [])))
     merged_patterns = _merge_patterns(glob.get("patterns", {}), project.get("patterns", {}))
 
     path = _global_learnings_path()

@@ -74,7 +74,7 @@ orchestrator·spec·gate_checks 가 소유한다.
 스킬이 책임지는 단계 요약 (상세는 SSOT 와 스킬 참조):
 
 - **Phase 0** — 빌드 잠금, 환경 감지 (`pipeline.sh env-snapshot ensure`), `build-state.json` init, 앱 이름 결정. env_snapshot 은 선택된 simulator UDID (와 axe 가용성) 를 한 번 캡처해 이후 phase 가 simctl 을 다시 조회하지 않도록 한다.
-- **Phase 1** — architect → `architecture.md` + `Models/` + `ServiceProtocols.swift` + peer review 게이트
+- **Phase 1** — (market-brief self-step: mcp-appstore 가용 시 유사앱 조사 → `.autobot/market-brief.json`, 미가용 시 soft-skip) → architect → `architecture.md` + `Models/` + `ServiceProtocols.swift` + peer review 게이트
 - **Phase 2** — ux-designer (Stitch primary, fallback 시 design-spec 만으로 진행) + `autobot-app-icon` 스킬로 1024 PNG 아이콘 생성 (필수, gate-enforced)
 - **Phase 3** — Xcode 프로젝트 scaffold + Composition seam + PrivacyInfo + entitlements + AppIcon.appiconset apply (gate-enforced)
 - **Phase 4** — ui-builder ∥ data-engineer ∥ (backend-engineer) 병렬 디스패치 + sandbox 사전/사후 검증
@@ -113,7 +113,7 @@ orchestrator·spec·gate_checks 가 소유한다.
 
 ### 기능 검증 배지 (필수 · 화면 최상단 · 크게)
 
-`artifacts/latest/run-summary.json` 의 `functionalVerification.badge` 를 읽어 완료 화면 **최상단**에 출력한다:
+`artifacts/latest` 는 이전 빌드의 산출물일 수 있다 — 그대로 읽지 않는다. 먼저 `bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" write-run-summary` 로 현재 `build-state.json` 기준 summary 를 재생성(멱등, `artifacts/latest` 를 현재 buildId 로 다시 가리키게 함)한 뒤, 그 결과의 `functionalVerification.badge` 를 완료 화면 **최상단**에 출력한다:
 
 - `VERIFIED` → `✅ 기능 검증 통과 (functional flows passed)`
 - `DEGRADED` → `⚠️ DEGRADED — 기능 검증 미완료 (functional unverified). 시뮬레이터/axe/xcodebuild 부재로 flow 를 실행하지 못함. /autobot:testflight·/autobot:app-review 는 이 상태에서 업로드를 거부합니다.`

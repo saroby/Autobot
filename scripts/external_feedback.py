@@ -11,10 +11,14 @@ testable without a network or an LLM:
   - record_feedback()    themes → .autobot/learnings.json
                            patterns.external_feedback [{theme, severity,
                              source_apps, sample_quotes, suggested_prevention_rule,
-                             frequency}]
+                             frequency, source: "appstore"|"app_review"}]
                            items[] entries keyed stable_id("external", rule) so the
                            existing effect_score/quarantine machinery
                            (learning_impact.py) applies for free
+  - record_verdict()     .autobot/review-verdict.json (written by the app-review
+                         pipeline) → REJECTED verdicts join the same store as
+                         high-severity source:"app_review" themes, one per
+                         parsed Guideline number
   - prompt-injection defense: a suggested_prevention_rule that is just a review
     quote verbatim is dropped — review text never becomes a rule.
 
@@ -33,6 +37,7 @@ audit-only, no gate reads them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import unicodedata
@@ -187,8 +192,24 @@ def sanitize_theme(raw: dict) -> dict | None:
     }
 
 
+def _theme_signal(source_app: str, clean: dict) -> str:
+    """Stable id for one consumed feedback signal: source app + theme + rule +
+    the review quotes it was derived from. Re-recording the SAME reviews yields
+    the SAME signal (so frequency is not inflated by re-polling), while genuinely
+    new reviews (different quotes) or a different app produce a new signal."""
+    quotes = "|".join(sorted(_norm_text(q) for q in clean.get("sample_quotes", [])))
+    basis = "\x00".join((
+        _norm_text(source_app),
+        _norm_text(clean.get("theme", "")),
+        _norm_text(clean.get("suggested_prevention_rule") or ""),
+        quotes,
+    ))
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+
+
 def record_feedback(project_root: Path, bundle_id: str, themes: list,
-                    *, app_name: str | None = None) -> dict:
+                    *, app_name: str | None = None,
+                    source: str = "appstore") -> dict:
     """Record sanitized themes into the PROJECT-LOCAL learnings store
     (automatic) and return global promotion candidates (operator-gated)."""
     source_app = app_name or bundle_id
@@ -205,6 +226,7 @@ def record_feedback(project_root: Path, bundle_id: str, themes: list,
     recorded = 0
     new_items = 0
     dropped_rules = 0
+    approval_resets = 0
     candidates: list[dict] = []
 
     for raw in themes if isinstance(themes, list) else []:
@@ -214,6 +236,7 @@ def record_feedback(project_root: Path, bundle_id: str, themes: list,
         if clean.pop("rule_dropped"):
             dropped_rules += 1
         key = _norm_text(clean["theme"])
+        signal = _theme_signal(source_app, clean)
         entry = index.get(key)
         if entry is None:
             entry = {
@@ -223,15 +246,27 @@ def record_feedback(project_root: Path, bundle_id: str, themes: list,
                 "sample_quotes": clean["sample_quotes"],
                 "suggested_prevention_rule": clean["suggested_prevention_rule"],
                 "frequency": 1,
+                "source": source,
                 # Data-level operator gate: unapproved entries never leave the
                 # project store — publish_project_to_global filters on this,
                 # closing BOTH promotion paths (feedback + Phase 7 grade).
                 "approved": False,
+                # Consumed-signal ledger: review signals already counted toward
+                # `frequency`. Re-polling the same reviews yields the same signal
+                # so it is not double-counted (project-local; stripped on global
+                # publish).
+                "_consumed_signals": [signal],
             }
             entries.append(entry)
             index[key] = entry
         else:
-            entry["frequency"] = int(entry.get("frequency", 0) or 0) + 1
+            # Only a NEW signal (a genuinely new review, or a different app)
+            # increments frequency. A re-poll of already-consumed reviews maps to
+            # the same signal and must not inflate the count.
+            consumed = entry.setdefault("_consumed_signals", [])
+            if signal not in consumed:
+                consumed.append(signal)
+                entry["frequency"] = int(entry.get("frequency", 0) or 0) + 1
             if _SEVERITY_RANK[clean["severity"]] < _SEVERITY_RANK.get(
                     normalize_severity(entry.get("severity")), 2):
                 entry["severity"] = clean["severity"]
@@ -240,8 +275,17 @@ def record_feedback(project_root: Path, bundle_id: str, themes: list,
                 apps.append(source_app)
             if clean["sample_quotes"]:
                 entry["sample_quotes"] = clean["sample_quotes"]
-            if clean["suggested_prevention_rule"]:
-                entry["suggested_prevention_rule"] = clean["suggested_prevention_rule"]
+            new_rule = clean["suggested_prevention_rule"]
+            if new_rule and _norm_text(new_rule) != _norm_text(
+                    entry.get("suggested_prevention_rule") or ""):
+                entry["suggested_prevention_rule"] = new_rule
+                # Approval covers a specific rule text. A replaced rule the
+                # operator never saw must NOT inherit approved:True — that
+                # would auto-promote it to the global store on the next
+                # publish (the lessons #24 bypass).
+                if entry.get("approved"):
+                    entry["approved"] = False
+                    approval_resets += 1
         recorded += 1
 
         rule = entry.get("suggested_prevention_rule") or ""
@@ -274,9 +318,84 @@ def record_feedback(project_root: Path, bundle_id: str, themes: list,
         "recorded_themes": recorded,
         "new_items": new_items,
         "dropped_rules": dropped_rules,
+        # >0 means a previously approved theme got a NEW rule text and needs
+        # re-approval — the skill must surface this to the operator.
+        "approval_resets": approval_resets,
         "promotion_candidates": candidates,
         "promotion_requires_operator_confirmation": True,
     }
+
+
+# ── App Review verdict → learnings (source: "app_review") ──
+
+VERDICT_FILE = ".autobot/review-verdict.json"
+# ASC states that mean Apple rejected the submission. DEVELOPER_REJECTED is a
+# self-withdrawal, not a verdict — nothing to learn from it.
+_REJECTED_STATES = ("REJECTED", "METADATA_REJECTED", "INVALID_BINARY")
+
+
+def verdict_is_rejected(verdict: dict) -> bool:
+    state = clean_text(verdict.get("appVersionState"), 60).upper().replace(" ", "_")
+    sub_state = clean_text(verdict.get("reviewSubmissionState"), 60).upper().replace(" ", "_")
+    return state in _REJECTED_STATES or sub_state == "UNRESOLVED_ISSUES"
+
+
+def themes_from_verdict(verdict: dict) -> list[dict]:
+    """REJECTED verdict → one high-severity theme per Guideline number.
+
+    Guideline numbers are the machine-parseable part of a rejection; the
+    written Resolution Center reasoning is not fully exposed via the public
+    ASC API, so the prevention rule is left empty for the operator to fill in
+    (semi-automatic, same approval gate as review themes). `notes` is kept as
+    a sample_quote for that judgement — quotes never render into prompts."""
+    if not isinstance(verdict, dict) or not verdict_is_rejected(verdict):
+        return []
+    notes = clean_text(verdict.get("notes"), MAX_QUOTE_LEN)
+    raw_numbers = verdict.get("guidelineNumbers")
+    numbers = []
+    if isinstance(raw_numbers, list):
+        numbers = [g for g in (clean_text(v, 20) for v in raw_numbers) if g]
+    themes = []
+    for number in numbers or [""]:
+        theme = (f"App Review rejection — Guideline {number}" if number
+                 else "App Review rejection (no guideline parsed)")
+        themes.append({
+            "theme": theme,
+            "severity": "high",
+            "sample_quotes": [notes] if notes else [],
+            "suggested_prevention_rule": "",
+        })
+    return themes
+
+
+def record_verdict(project_root: Path, bundle_id: str,
+                   *, verdict_path: Path | None = None,
+                   app_name: str | None = None) -> dict:
+    """Ingest .autobot/review-verdict.json (written by the app-review
+    pipeline) into the learnings store. Non-rejected verdicts record nothing."""
+    path = verdict_path or (project_root / VERDICT_FILE)
+    if not path.is_file():
+        raise SystemExit(f"ERROR: no verdict file at {path}")
+    try:
+        verdict = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise SystemExit(f"ERROR: unreadable verdict file {path}: {exc}")
+    if not isinstance(verdict, dict):
+        # A JSON scalar/array is a malformed verdict, not a crash: return an
+        # explicit, non-fatal error (the old `(verdict or {}).get(...)` blew up
+        # on a non-empty list).
+        return {"recorded_themes": 0, "rejected": False,
+                "error": "verdict file is not a JSON object",
+                "appVersionState": None}
+    themes = themes_from_verdict(verdict)
+    if not themes:
+        return {"recorded_themes": 0, "rejected": False,
+                "appVersionState": (verdict or {}).get("appVersionState")}
+    summary = record_feedback(project_root, bundle_id, themes,
+                              app_name=app_name, source="app_review")
+    summary["rejected"] = True
+    summary["guideline_themes"] = [t["theme"] for t in themes]
+    return summary
 
 
 def approve_themes(project_root: Path, themes: list[str]) -> dict:
@@ -343,6 +462,14 @@ def _main() -> int:
                        help='file with {"themes": [{theme, severity, sample_quotes, suggested_prevention_rule}]}')
     p_rec.add_argument("--app-name", default=None)
 
+    p_ver = sub.add_parser("record-verdict",
+                           help="ingest .autobot/review-verdict.json as source:app_review themes")
+    p_ver.add_argument("--project-dir", default=".")
+    p_ver.add_argument("--bundle-id", required=True)
+    p_ver.add_argument("--verdict-json", default=None,
+                       help=f"verdict file (default: {VERDICT_FILE})")
+    p_ver.add_argument("--app-name", default=None)
+
     p_app = sub.add_parser("approve",
                            help="operator gate: mark themes eligible for global publish")
     p_app.add_argument("--project-dir", default=".")
@@ -381,6 +508,22 @@ def _main() -> int:
             "source": args.source,
         })
         print(f"OK: feedback_fetched logged ({count} reviews) -> {target}")
+        return 0
+
+    if args.cmd == "record-verdict":
+        summary = record_verdict(
+            proj, args.bundle_id,
+            verdict_path=Path(args.verdict_json) if args.verdict_json else None,
+            app_name=args.app_name)
+        if summary.get("rejected"):
+            append_feedback_event(proj, "external_feedback_recorded", {
+                "themes_count": summary["recorded_themes"],
+                "bundle_id": args.bundle_id,
+                "promoted_candidates": len(summary["promotion_candidates"]),
+                "detail": {"source": "app_review",
+                           "new_items": summary["new_items"]},
+            })
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
 
     # record

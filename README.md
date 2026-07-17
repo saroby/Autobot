@@ -268,7 +268,6 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
     ├── gate_checks/registry.py         # spec procedural name → check 함수 registry
     ├── sandbox_runner.py               # spec.fileOwnership 기반 파일 소유권 enforcement
     ├── snapshot_runner.py              # spec.fileOwnership 기반 phase별 snapshot save/restore
-    ├── detect-plugins.sh               # 플러그인/도구 감지
     ├── detect-peer-ai.sh               # 현재 host와 opposite peer reviewer 감지
     ├── load-learnings.sh               # SessionStart 요약 (학습 데이터 + 빌드 상태)
     ├── render-active-learnings.py      # active/phase learnings 렌더링

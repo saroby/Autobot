@@ -31,6 +31,7 @@ from conftest import (
 import_runtime_modules()
 
 import phase_advance  # noqa: E402
+import transitions  # noqa: E402
 from spec_loader import load_spec  # noqa: E402
 from transitions import circuit_breaker_tripped, update_phase_status  # noqa: E402
 
@@ -199,6 +200,58 @@ class TestSpecGrownPhaseBackfill(IsolatedProjectCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         self.assertIn("Missing phase 2.5", result.stdout)
         self.assertIn("WARN", result.stdout)
+
+
+class TestTransitionRevalidatedInsideLock(unittest.TestCase):
+    """TOCTOU guard: the pre-validation done outside the write lock must be
+    re-checked against the FRESH state inside the lock."""
+
+    def test_concurrent_retry_exhaustion_rejected_inside_lock(self):
+        spec = load_spec()
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / ".autobot" / "build-state.json"
+            state_path.parent.mkdir(parents=True)
+            phases = {pid: {"status": "pending"} for pid in spec["phases"]}
+            phases["0"] = {"status": "completed", "completedAt": "t"}
+            phases["1"] = {"status": "failed", "failedAt": "t", "error": "x", "retryCount": 2}
+            disk_state = {
+                "schemaVersion": spec.get("schemaVersion"),
+                "buildId": "b", "appName": "TestApp", "displayName": "Test",
+                "phases": phases,
+            }
+            state_path.write_text(json.dumps(disk_state))
+
+            # The pre-validation read sees a STALE state (retryCount below max),
+            # as if a concurrent fail-phase exhausted the retries right after
+            # the check but before the write lock was taken.
+            stale = json.loads(json.dumps(disk_state))
+            stale["phases"]["1"]["retryCount"] = 1
+
+            with patch.object(transitions, "load_state", return_value=stale):
+                ok, messages, _ = update_phase_status(
+                    spec, state_path, phase="1", target_status="in_progress",
+                )
+
+            self.assertFalse(ok, "in-lock re-validation must reject the stale transition")
+            self.assertIn("exhausted retries", "\n".join(messages))
+            final = json.loads(state_path.read_text())["phases"]["1"]
+            self.assertEqual(final["status"], "failed", "rejected transition must not write")
+
+
+class TestLegacySchemaVersionPromotion(IsolatedProjectCase):
+    """A legacy-version state that passes validation is promoted on write,
+    so the 'legacy compat mode' WARN is not emitted forever."""
+
+    def test_mutation_promotes_schema_version(self):
+        spec_version = load_spec().get("schemaVersion")
+        path = self.project_dir / ".autobot" / "build-state.json"
+        s = json.loads(path.read_text())
+        s["schemaVersion"] = spec_version - 1
+        path.write_text(json.dumps(s, ensure_ascii=False, indent=2))
+
+        result = run_pipeline("start-phase", "--phase", "1", project_dir=self.project_dir)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertEqual(self.state()["schemaVersion"], spec_version)
 
 
 class TestLearningAppliedValidatesBeforeMutation(IsolatedProjectCase):

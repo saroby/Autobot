@@ -163,6 +163,26 @@ POSTCONDITION_KINDS = (
 )
 
 _POLICED_PRIORITIES = ("P0", "P1")
+# The complete priority enum. A value outside this set (a "P3" typo, an empty
+# string) is not "unpoliced" — it silently bypasses EVERY P0/P1/P2 rule, so
+# structural validation rejects it (hard, same level as the other structure checks).
+VALID_PRIORITIES = ("P0", "P1", "P2")
+
+# Feature roles (cross-agent contract): why each feature exists in the plan.
+# Required on P0/P1 by the architect prompt; absence is tolerated as legacy
+# (warning, never a fail) so pre-role specs keep building.
+FEATURE_ROLES = ("table-stakes", "hook", "retention", "insight")
+
+# Depth floors for Gate 1->2 `feature_spec_depth`. Policy thresholds, not
+# invariants — kept in one dict so the gate message can print the current
+# values and a policy change never hides inside a comparison.
+DEPTH_THRESHOLDS = {
+    "min_p0_p1_features": 5,
+    "min_p0_p1_features_quality_max": 7,
+    "min_p0_features": 2,
+    "min_distinct_screens": 3,
+    "min_postcondition_kinds": 3,
+}
 
 # Keyword families (KR + EN) that signal the user asked for a SPECIFIC layout /
 # screen-occupancy / fidelity property — the class of requirement the CRUD
@@ -203,6 +223,33 @@ def layout_intent_signal(*texts: str) -> str | None:
             continue
         for pat in _LAYOUT_INTENT_PATTERNS:
             m = _re.search(pat, text, _re.IGNORECASE)
+            if m:
+                return m.group(0)
+    return None
+
+
+# Keyword families (KR + EN) that signal the idea involves free-text entry
+# (search / notes / logging / input). Sibling of _LAYOUT_INTENT_PATTERNS, but
+# advisory-only: a match never forces an acceptance, it only warns when no
+# flow acceptance exercises a text_input step.
+_INPUT_INTENT_PATTERNS = (
+    r"검색", r"메모", r"기록", r"입력",
+    r"\badd\b", r"\bsearch\b", r"\blog\b",
+)
+
+
+def input_intent_signal(*texts: str) -> str | None:
+    """Return the first matched text-entry-intent phrase across `texts`, or None.
+
+    A non-None result means the user's own words imply typing (search box,
+    note body, logging an entry) — so a spec whose flows never use a
+    text_input step leaves the core interaction unproven at Gate 5->6.
+    """
+    for text in texts:
+        if not text:
+            continue
+        for pat in _INPUT_INTENT_PATTERNS:
+            m = re.search(pat, text, re.IGNORECASE)
             if m:
                 return m.group(0)
     return None
@@ -308,6 +355,7 @@ class FeatureSpec:
     screen: str
     anchor: str
     acceptance: tuple[Acceptance, ...]
+    role: str = ""  # one of FEATURE_ROLES; "" = legacy spec (pre-role)
 
     @classmethod
     def from_dict(cls, data: dict) -> "FeatureSpec":
@@ -326,6 +374,7 @@ class FeatureSpec:
             screen=str(data.get("screen") or ""),
             anchor=str(data.get("anchor") or ""),
             acceptance=acceptance,
+            role=str(data.get("role") or ""),
         )
 
 
@@ -350,8 +399,10 @@ def load_feature_spec(project_root: Path) -> list[FeatureSpec] | None:
 def validate_feature_spec(project_root: Path) -> tuple[bool, list[str]]:
     """Structural validation for Gate 1->2 — returns (ok, problems).
 
-    Every P0/P1 feature must declare >=1 acceptance criterion AND a non-empty
-    anchor. P2 features are not policed (they may be aspirational stubs).
+    Every feature's priority must be a valid enum value (P0/P1/P2) — an unknown
+    value bypasses every downstream rule. Every P0/P1 feature must declare >=1
+    acceptance criterion AND a non-empty anchor. P2 features are not policed
+    (they may be aspirational stubs).
     """
     features = load_feature_spec(project_root)
     if features is None:
@@ -359,9 +410,15 @@ def validate_feature_spec(project_root: Path) -> tuple[bool, list[str]]:
 
     problems: list[str] = []
     for feat in features:
+        label = feat.id or "<unnamed feature>"
+        if feat.priority not in VALID_PRIORITIES:
+            problems.append(
+                f"{label}: invalid priority {feat.priority!r} "
+                f"(allowed: {', '.join(VALID_PRIORITIES)})"
+            )
+            continue
         if feat.priority not in _POLICED_PRIORITIES:
             continue
-        label = feat.id or "<unnamed feature>"
         if not feat.acceptance:
             problems.append(f"{label} ({feat.priority}): no acceptance criteria")
         if not feat.anchor:
@@ -389,6 +446,11 @@ def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
        would let every flow fail and STILL earn the VERIFIED badge — the
        zero-P0 laundering hole. Counting P0 features is deterministic, so this
        is safe as a gate 1->2 hard fail.
+
+    P2 title/screen grounding is NOT policed here — it lives in
+    assess_feature_spec_depth (DEGRADED-default), so a missing P2 title cannot
+    hard-fail Gate 1->2 (which would only pressure the architect to omit P2s
+    entirely — a Goodhart trap).
     """
     features = load_feature_spec(project_root)
     if features is None:
@@ -403,9 +465,9 @@ def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
             "feature with a kind:'flow' acceptance."
         )
     for feat in features:
+        label = feat.id or "<unnamed feature>"
         if feat.priority not in _POLICED_PRIORITIES:
             continue
-        label = feat.id or "<unnamed feature>"
         for acc in feat.acceptance:
             kind = acc.postcondition.kind
             if not kind:
@@ -426,6 +488,215 @@ def assess_feature_spec_quality(project_root: Path) -> tuple[bool, list[str]]:
                 f"at runtime, so the VERIFIED badge would not actually exercise the UI)"
             )
     return (not problems), problems
+
+
+def assess_feature_spec_depth(
+    project_root: Path, *, quality_max: bool = False,
+) -> dict:
+    """Depth / composition floor for Gate 1->2 ``feature_spec_depth``.
+
+    This measures "is there enough plan", never "is the plan attractive" —
+    counts are deterministic and gameable with filler, so real depth stays
+    owned by the architect prompt self-checks and the /plan critique; this
+    only stops the bottom falling out. Returns verdict buckets the gate maps
+    onto severities:
+
+      hard_problems : one-tap degenerate spec (P0 == 1 AND total acceptance
+                      steps <= 2) — a demo, not a plan; hard even in default
+                      mode (same deterministic class as the zero-P0 rule).
+      problems      : DEPTH_THRESHOLDS shortfalls + role composition
+                      (hook >= 1, retention >= 1 among P0/P1) + P2 grounding
+                      (non-empty title AND screen) — DEGRADED in default mode,
+                      hard fail under quality-max.
+      advisories    : journey depth (>= 1 multi-step flow), input-intent
+                      (idea implies typing but no text_input step),
+                      setting_stored without a P0/P1-flow persistence pair,
+                      P0/P1 features missing a role while others declare one,
+                      P0 flow navigated_to acceptances using allow_preexisting,
+                      P2 > P0+P1 downgrade pressure — warning in default mode,
+                      DEGRADED under quality-max.
+      p2_features   : declared P2 ids (quality-max downgrade pressure row).
+      metrics       : measured counts for the gate message.
+
+    Back-compat: a spec with NO role fields at all is legacy — composition is
+    reported as an advisory, never a problem.
+    """
+    features = load_feature_spec(project_root)
+    if features is None:
+        return {
+            "hard_problems": [],
+            "problems": ["feature-spec.json absent or unparseable"],
+            "advisories": [],
+            "p2_features": [],
+            "metrics": {},
+        }
+
+    policed = [f for f in features if f.priority in _POLICED_PRIORITIES]
+    p0 = [f for f in policed if f.priority == "P0"]
+    p2_ids = [f.id or "<unnamed>" for f in features if f.priority == "P2"]
+    screens = {f.screen.strip() for f in policed if f.screen.strip()}
+    kinds = {
+        a.postcondition.kind
+        for f in policed for a in f.acceptance
+        if a.postcondition.kind
+    }
+    total_steps = sum(len(a.steps) for f in policed for a in f.acceptance)
+    flow_accs = [a for f in policed for a in f.acceptance if a.kind == "flow"]
+
+    min_p0_p1 = DEPTH_THRESHOLDS[
+        "min_p0_p1_features_quality_max" if quality_max else "min_p0_p1_features"
+    ]
+
+    problems: list[str] = []
+    if len(policed) < min_p0_p1:
+        problems.append(f"P0+P1 features {len(policed)} < {min_p0_p1}")
+    if len(p0) < DEPTH_THRESHOLDS["min_p0_features"]:
+        problems.append(
+            f"P0 features {len(p0)} < {DEPTH_THRESHOLDS['min_p0_features']}"
+        )
+    if len(screens) < DEPTH_THRESHOLDS["min_distinct_screens"]:
+        problems.append(
+            f"distinct P0/P1 screens {len(screens)} < "
+            f"{DEPTH_THRESHOLDS['min_distinct_screens']}"
+        )
+    if len(kinds) < DEPTH_THRESHOLDS["min_postcondition_kinds"]:
+        problems.append(
+            f"distinct postcondition kinds {len(kinds)} < "
+            f"{DEPTH_THRESHOLDS['min_postcondition_kinds']}"
+        )
+
+    # P2 grounding (moved here from feature_spec_quality): a name-less/screen-less
+    # P2 is the zero-cost hole hard features evaporate into. DEGRADED-default,
+    # hard under quality-max — not a Gate 1->2 hard fail that would only pressure
+    # the architect to drop P2s entirely (Goodhart).
+    for feat in features:
+        if feat.priority != "P2":
+            continue
+        label = feat.id or "<unnamed feature>"
+        if not feat.title.strip():
+            problems.append(
+                f"{label} (P2): empty title — even a deferred stub must be a "
+                f"named feature"
+            )
+        if not feat.screen.strip():
+            problems.append(
+                f"{label} (P2): empty screen — ground every P2 to a screen so it "
+                f"stays a designed deferral, not an evaporation"
+            )
+
+    advisories: list[str] = []
+    declared_roles = [f.role for f in policed if f.role]
+    invalid_roles = sorted({r for r in declared_roles if r not in FEATURE_ROLES})
+    if invalid_roles:
+        problems.append(
+            f"invalid role value(s) {invalid_roles} "
+            f"(allowed: {', '.join(FEATURE_ROLES)})"
+        )
+    if not declared_roles:
+        advisories.append(
+            "no feature declares a role — legacy spec: hook/retention "
+            "composition unverifiable (declare role on every P0/P1)"
+        )
+    else:
+        # Roles are in use: a P0/P1 feature missing one is a real gap, not a
+        # fully-legacy spec. The old "any role present ⇒ treat all as migrated"
+        # heuristic let those silently pass; surface them as an advisory
+        # (warn-default, DEGRADED under quality-max).
+        missing_role = [f.id or "<unnamed>" for f in policed if not f.role]
+        if missing_role:
+            advisories.append(
+                f"P0/P1 feature(s) {missing_role} declare no role while others do "
+                f"— assign a role ({', '.join(FEATURE_ROLES)}) to every P0/P1"
+            )
+        if not any(f.role == "hook" for f in policed):
+            problems.append(
+                "no P0/P1 feature with role 'hook' — nothing gives a reason "
+                "to download over the category-standard app"
+            )
+        if not any(f.role == "retention" for f in policed):
+            problems.append(
+                "no P0/P1 feature with role 'retention' — nothing gives a "
+                "reason to come back"
+            )
+
+    hard_problems: list[str] = []
+    if len(p0) == 1 and total_steps <= 2:
+        hard_problems.append(
+            f"degenerate spec: exactly 1 P0 feature with {total_steps} total "
+            f"acceptance step(s) — a one-tap demo, not a plan; add features "
+            f"and multi-step journeys"
+        )
+
+    if flow_accs and not any(len(a.steps) >= 2 for a in flow_accs):
+        advisories.append(
+            "every flow acceptance is single-step — declare at least one "
+            "multi-step journey (steps >= 2, e.g. input -> confirm)"
+        )
+
+    signal = input_intent_signal(_raw_idea(project_root))
+    if signal is not None and not any(
+        str(s.get("action") or "") == "text_input"
+        for a in flow_accs for s in a.steps
+    ):
+        advisories.append(
+            f"idea implies text entry ('{signal}') but no flow acceptance "
+            f"uses a text_input step — the core interaction is never typed "
+            f"at Gate 5->6"
+        )
+
+    # Persistence pairing is only proven when BOTH sides live in an enforced
+    # (P0/P1 flow) acceptance — a value_persisted pair parked on a P2 or a
+    # logic-only acceptance is never driven at Gate 5->6, so it does not count.
+    flow_kinds = {a.postcondition.kind for a in flow_accs}
+    if (
+        "setting_stored" in flow_kinds
+        and "value_persisted_after_relaunch" not in flow_kinds
+    ):
+        advisories.append(
+            "setting_stored acceptance(s) without a "
+            "value_persisted_after_relaunch pair in a P0/P1 flow — persistence "
+            "across relaunch is unproven"
+        )
+
+    # allow_preexisting waives navigated_to's novelty proof (legit for tab-bar
+    # roots, but it lets a static stub pass). Count its use on P0 flows so the
+    # bypass is auditable: warn-default, DEGRADED under quality-max.
+    preexisting_p0 = sum(
+        1
+        for f in p0
+        for a in f.acceptance
+        if a.kind == "flow"
+        and a.postcondition.kind == "navigated_to"
+        and a.postcondition.params.get("allow_preexisting")
+    )
+    if preexisting_p0:
+        advisories.append(
+            f"{preexisting_p0} P0 flow navigated_to acceptance(s) use "
+            f"allow_preexisting — the novelty proof is waived; confirm the "
+            f"anchor is a genuine tab-bar root, not a static stub"
+        )
+
+    if len(p2_ids) > len(policed):
+        advisories.append(
+            f"P2 features ({len(p2_ids)}) outnumber P0+P1 ({len(policed)}) — "
+            f"downgrade pressure: hard features may be evaporating into "
+            f"unpoliced P2"
+        )
+
+    return {
+        "hard_problems": hard_problems,
+        "problems": problems,
+        "advisories": advisories,
+        "p2_features": p2_ids,
+        "metrics": {
+            "p0_p1": len(policed),
+            "p0": len(p0),
+            "p2": len(p2_ids),
+            "screens": len(screens),
+            "postcondition_kinds": len(kinds),
+            "total_steps": total_steps,
+        },
+    }
 
 
 def find_missing_feature_anchors(

@@ -124,8 +124,21 @@ final class ItemRepository: ItemServiceProtocol {
     func save() throws {
         try modelContext.save()
     }
+
+    /// 비-CRUD 파생 메서드 — ServiceProtocols 계약에 선언된 시그니처 그대로 구현한다.
+    /// 반환 struct(WeeklySummary)는 architect 가 Models/ 에 정의한 타입 — 여기서 재정의하지 않는다.
+    func weeklySummary() throws -> WeeklySummary {
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: .now) ?? .now
+        let descriptor = FetchDescriptor<Item>(predicate: #Predicate { $0.createdAt >= weekAgo })
+        let recent = try modelContext.fetch(descriptor)
+        return WeeklySummary(total: recent.count, completed: recent.filter(\.isCompleted).count)
+    }
 }
 ```
+
+프로토콜에 있는 계산형 파생 메서드(weeklySummary, currentStreak 류)도 전부 Repository 가
+구현한다 — 계산은 데이터 레이어 소유이고, 여기서 빠지면 ViewModel 이 소유자 없는 인사이트를
+스텁으로 때운다.
 
 **Networking Pattern (if needed):**
 

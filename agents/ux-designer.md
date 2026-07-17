@@ -18,6 +18,8 @@ Read the architecture document to understand app screens and navigation, then us
    - Feature list with priorities
    - `## Design Direction` — the look-and-feel contract that must be preserved even when Stitch is unavailable
 
+   Also read `.autobot/architecture.json` for `designSystemModule` — every SwiftUI Mapping below writes `<Module>` as that value (e.g. `designSystemModule: "FocusDS"` → `FocusDSColor.primary`). The deleted `Theme.*` API and system defaults like `Color.accentColor` must never appear in design-spec.md (ui-builder treats this spec as its PRIMARY visual input and is forbidden from using them).
+
 2. **Create Stitch Project**: `mcp__stitch__create_project`로 앱 프로젝트를 생성한다.
    - MCP 도구를 사용할 수 없으면 CLI fallback: `npx @_davideast/stitch-mcp tool create_project -d '{...}'`
    - 생성된 `projectId`를 이후 모든 단계에서 사용
@@ -62,7 +64,7 @@ Read the architecture document to understand app screens and navigation, then us
    Map web design tokens to iOS equivalents:
    - `font-size: 34px; font-weight: bold` → `.font(.largeTitle)`
    - `font-size: 17px` → `.font(.body)`
-   - `color: #007AFF` → `.tint(.accentColor)`
+   - `color: #007AFF` → `.tint(<Module>Color.accent)`
    - `background: rgba(255,255,255,0.8)` → `.glassEffect()` (Liquid Glass)
    - `border-radius: 12px` → `.clipShape(RoundedRectangle(cornerRadius: 12))`
    - `padding: 16px` → `.padding()`
@@ -84,24 +86,24 @@ Read the architecture document to understand app screens and navigation, then us
 ## Color Tokens
 | Role | Source | SwiftUI Mapping | Usage |
 |------|--------|-----------------|-------|
-| Primary | <hex or N/A> | Theme.primary | Brand identity, CTAs |
-| Secondary | <hex or N/A> | Theme.secondary | Supporting UI |
-| Accent | <hex or N/A> | Theme.accent | Badges, emphasis |
-| Surface | <hex or N/A> | Theme.surface | Cards, elevated surfaces |
+| Primary | <hex or N/A> | <Module>Color.primary | Brand identity, CTAs |
+| Secondary | <hex or N/A> | <Module>Color.secondary | Supporting UI |
+| Accent | <hex or N/A> | <Module>Color.accent | Badges, emphasis |
+| Surface | <hex or N/A> | <Module>Color.surface | Cards, elevated surfaces |
 
 ## Typography
 | Element | Source | SwiftUI Mapping |
 |---------|--------|-----------------|
-| Display | <Stitch or architecture> | Theme.display() |
-| Headline | <Stitch or architecture> | Theme.headline() |
-| Body | <Stitch or architecture> | Theme.body() |
+| Display | <Stitch or architecture> | <Module>Font.display(_:) |
+| Headline | <Stitch or architecture> | <Module>Font.headline(_:) |
+| Body | <Stitch or architecture> | <Module>Font.body(_:) |
 
 ## Spacing & Radius
 | Context | Source | SwiftUI Mapping |
 |---------|--------|-----------------|
-| Card padding | <value or N/A> | Theme.cardPadding |
-| Corner radius | <value or N/A> | Theme.cornerRadius |
-| Section spacing | <value or N/A> | Theme.sectionSpacing |
+| Card padding | <value or N/A> | <Module>Spacing.m |
+| Corner radius | <value or N/A> | <Module>Radius.m |
+| Section spacing | <value or N/A> | <Module>Spacing.l |
 
 ## Screen-by-Screen Layout
 
@@ -118,7 +120,7 @@ Read the architecture document to understand app screens and navigation, then us
 | Purpose | Stitch Value | SwiftUI Mapping |
 |---------|-------------|-----------------|
 | Primary Background | #FFFFFF | Color(.systemBackground) |
-| Accent | #007AFF | Color.accentColor |
+| Accent | #007AFF | <Module>Color.accent |
 
 ### Typography
 | Element | Stitch Value | SwiftUI Mapping |

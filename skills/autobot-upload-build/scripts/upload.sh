@@ -9,12 +9,17 @@
 #   AUTOBOT_UPLOAD_STATUS_FILE  — JSON path; written via temp+rename
 #
 # Exit codes:
-#   0  uploaded, exported-only (--no-upload), or dry-run passed
+#   0  uploaded, already_uploaded (a duplicate rejection AFTER this run's own
+#      upload attempt initiated — our binary landed), exported-only
+#      (--no-upload), or dry-run passed
 #   1  usage / input validation error
 #   2  archive missing or xcodebuild unavailable
 #   4  export failed (no IPA produced)
 #   5  export ok but upload failed (IPA exists for manual upload) — only after
 #      --retries (default 2) bounded auto-retries of the transient upload class
+#   6  build number conflict: on the FIRST attempt ASC already has this bundle
+#      version (from a prior run), so nothing was uploaded and the ASC binary is
+#      not this build — bump the build number and re-archive
 set -euo pipefail
 
 RELEASE_ENV="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../scripts" && pwd)/release_env.sh"
@@ -247,6 +252,13 @@ if ! printf '%s' "$RETRIES" | grep -Eq '^[0-9]+$'; then
   exit 1
 fi
 
+# Linear backoff base for transient upload retries. Overridable so tests can
+# exercise the retry path without a real 30s sleep.
+BACKOFF_BASE="${AUTOBOT_UPLOAD_BACKOFF_SECONDS:-30}"
+if ! printf '%s' "$BACKOFF_BASE" | grep -Eq '^[0-9]+$'; then
+  BACKOFF_BASE=30
+fi
+
 # Default export path: sibling of archive
 if [ -z "$EXPORT_PATH" ]; then
   EXPORT_PATH="$(dirname "$ARCHIVE_PATH")/export"
@@ -471,6 +483,31 @@ while :; do
   IPA_COUNT=${#IPA_FILES[@]}
 
   [ $EXPORT_EXIT -eq 0 ] && break
+  # ASC rejecting the binary as a duplicate. Interpretation depends on whether
+  # THIS run has already initiated an upload:
+  #   - ATTEMPT >= 1: a prior attempt this run started the upload then failed
+  #     ambiguously (transient 5xx/network) and actually landed the binary; the
+  #     redundant response confirms our own upload. Treat as success.
+  #   - ATTEMPT == 0 (first attempt): this run uploaded nothing yet, so the
+  #     binary already on ASC belongs to a PREVIOUS run. Shipping it as
+  #     "already uploaded" would send an OLD binary to review — hard-fail and
+  #     require a build-number bump.
+  # Classified BEFORE the transient check so retries never re-upload the build.
+  if [ "$IPA_COUNT" -eq 1 ] && [ "$NO_UPLOAD" -eq 0 ] \
+    && grep -Eiq 'redundant binary|already been used|bundle version must be higher|previously uploaded' "$ATTEMPT_LOG"; then
+    if [ "$ATTEMPT" -ge 1 ]; then
+      log_warn "ASC reports this bundle version already exists after an earlier upload attempt this run (content match unverified)"
+      log_warn "if the code changed mid-run, bump the build number and re-archive"
+      log_ok "binary already on App Store Connect from an earlier attempt this run — treating as uploaded"
+      write_status "already_uploaded" "true" "$IPA_FILE"
+      exit 0
+    fi
+    log_error "ASC already has bundle version ${ARCHIVE_VERSION} (build ${ARCHIVE_BUILD}) from a prior run — build number conflict"
+    log_error "this run has uploaded nothing yet, so the binary on ASC is NOT this build; shipping it would send an old binary to review"
+    log_info  "bump CFBundleVersion (build number) and re-run autobot-archive-build, then upload again"
+    write_status "build_number_conflict" "false" "$IPA_FILE" "build_number_conflict"
+    exit 6
+  fi
   TRANSIENT_UPLOAD_FAILURE=0
   if grep -Eiq 'HTTP[^0-9]*5[0-9][0-9]|timed? out|network|connection (reset|refused)|temporar(il)?y unavailable|service unavailable|NSURLError' "$ATTEMPT_LOG"; then
     TRANSIENT_UPLOAD_FAILURE=1
@@ -478,7 +515,7 @@ while :; do
   if [ "$IPA_COUNT" -eq 1 ] && [ "$NO_UPLOAD" -eq 0 ] \
     && [ "$TRANSIENT_UPLOAD_FAILURE" -eq 1 ] && [ "$ATTEMPT" -lt "$RETRIES" ]; then
     ATTEMPT=$((ATTEMPT + 1))
-    BACKOFF=$((30 * ATTEMPT))
+    BACKOFF=$((BACKOFF_BASE * ATTEMPT))
     log_warn "upload failed (xcodebuild exit $EXPORT_EXIT) — auto-retry $ATTEMPT/$RETRIES in ${BACKOFF}s"
     sleep "$BACKOFF"
     continue

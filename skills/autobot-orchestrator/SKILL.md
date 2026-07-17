@@ -44,7 +44,8 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
    - Phase 2.5 → `/autobot:plan` 만 트리거 (코드 생성 전 기획·디자인 HTML 미리보기)
    - Phase 6 → `/autobot:testflight` / `/autobot:app-review` 만 트리거 (TestFlight 배포)
    - mvp 자율 흐름은 manual phase 를 만나면 그 다음 non-manual phase 로 점프 (Phase 2 → 3, Phase 5 → 7)
-2. 해당 Phase 의 agent 목록을 spec 의 `phases.<id>.agents` 에서 확인한다. 배열이 없으면 self 단계다.
+1a. **Phase 1 (architect) dispatch 직전 self-step "market-brief"**: mcp-appstore(`search_app` → `get_similar_apps` → `analyze_reviews`)가 가용하면 유사 카테고리 앱을 조사해 `.autobot/market-brief.json` 을 작성한다 — `{generatedAt, source: "mcp-appstore", similarApps:[{name, notableFeatures:[]}], tableStakes:[], complaintThemes:[], opportunityGaps:[], noDirectCompetitors}`. 직접 경쟁앱이 없으면 fail 이 아니라 `noDirectCompetitors: true` 로 기록한다. mcp-appstore 가 미설치·미가용이면 이 파일 작성을 **건너뛰고** architect 가 이미 보유한 WebSearch fallback 에 맡긴다(soft-skip — hard fail 금지, DEGRADED 도 아님. 존재하면 활용, 없어도 자율 빌드는 그대로 진행).
+2. 해당 Phase 의 agent 목록을 spec 의 `phases.<id>.agents` 에서 확인한다. 배열이 없으면 self 단계다. Phase 4 의 backend-engineer 는 `backend_required == true` 일 때만 디스패치한다 — `references/agent-dispatch.md` 참조.
 3. self 단계는 직접 수행한다. agent 목록이 있으면 각 항목을 `Agent(subagent_type=...)` 로 디스패치한다.
 4. **Agent 디스패치 직전에 context_pack 을 생성**해 sub-agent 프롬프트의 첫 블록으로 임베드한다 (LOOP 19). context-pack 은 spec 에서 생성한 phase 슬라이스·output contract·required input 경로만 전달한다. 정적 작업 지침은 `agents/*.md`, 학습은 `learning-bootstrap.md` 가 각각 소유한다:
 
@@ -58,6 +59,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
    출력 (≤ 40KB) 을 그대로 Agent 프롬프트 맨 앞에 붙인다. `--prompt-tail` 은 이전 실패 원인처럼 이번 실행에만 존재하는 동적 정보에만 사용한다.
 5. **sandbox guard 활성화 / 해제**: sub-agent dispatch 직전 `pipeline.sh sandbox set-active --agent <name> --phase <N>`, 완료 직후 `pipeline.sh sandbox clear-active`. PreToolUse hook 이 marker 를 보고 사전 차단한다 (LOOP 12).
 6. Phase 3 은 **두 단계 dispatch**: (a) `create-xcode-project.sh` 를 self 로 실행, 직후 (b) `design-system` 에이전트를 단일 dispatch. 둘 다 끝난 뒤 `advance-phase --phase 3` 으로 gate 실행.
+6a. Phase 2 도 같은 two-step 패턴: (a) `ux-designer` 를 dispatch, 직후 (b) `.autobot/app-icon-1024.png` 가 없으면 `autobot-app-icon` 스킬을 self 로 실행. gate 2→3 의 `app_icon_source_present` 가 이 파일을 hard 검사하므로 (b) 를 건너뛰면 재시도도 같은 이유로 실패한다. 둘 다 끝난 뒤 `advance-phase --phase 2`.
 7. Phase 4 는 **반드시 한 메시지에서** ui-builder + data-engineer (+조건부 backend-engineer) 를 동시 디스패치한다. 세 coder 는 disjoint 트리(Views/ vs Services/ vs backend/)에 쓰므로 construction 상 충돌이 없다. 병렬 중에는 세 agent 가 하나의 marker 를 공유하므로 hook 이 개별 write 를 특정 agent 로 귀속시킬 수 없다 — 따라서 marker 의 `agent` 는 broadAccess 컨텍스트(`quality-engineer`)로 set 한다. pre-write guard 의 Phase 4 역할은 **forbidden floor**(`{appName}/Models/` + `.autobot` 제어 파일)를 세 agent 모두에게 강제하는 것이고(broadAccess 라도 floor 는 뚫지 못한다), **agent 간 디렉토리 OVERLAP 은 Gate 4→5 의 post-hoc `agent-sandbox.sh after` 가 정확히 검출**한다. 가장 제한적인 단일 agent 로 marker 를 set 하면 다른 두 coder 의 정당한 write 가 차단되므로 그렇게 하지 않는다.
 8. Phase 완료 후 `pipeline.sh advance-phase --phase <N>` 으로 outgoing gate 실행 + 상태 마킹 + (성공 시) inputHash 자동 기록을 한 호출로 처리한다.
 9. Gate 실패 시 `retryCount < maxRetry` 면 같은 Phase 재실행, 아니면 `failed` 마킹 후 Phase 7 로 점프.
@@ -143,7 +145,7 @@ Phase 3 scaffold 는 다음을 **컴파일 가능한 형태로** 생성한다 �
 - `<AppName>/App/ServiceStubs.swift` — Preview 용 mock (ui-builder 가 생성/유지)
 - `<AppName>/Models/ServiceProtocols.swift` — 통합 계약 (architect 만 수정)
 
-Phase 4 의 ui-builder/data-engineer 는 protocol 뒤 구현만 작성한다. `@main`, `CompositionRoot`, `Models` 직접 수정 금지 — Gate 4→5 에서 차단.
+Phase 4 의 ui-builder/data-engineer 는 protocol 뒤 구현만 작성한다. `@main`, `CompositionRoot`, `Models` 직접 수정 금지 — Gate 4→5 는 `@main` 단일성·ServiceStubs 보존만 검사하고, CompositionRoot 의 stub 오염은 Gate 5→6 `no_stubs_in_app` 이 차단한다.
 
 ### Phase 3 two-step dispatch
 

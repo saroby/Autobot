@@ -545,33 +545,6 @@
         }
       }
     },
-    "circuit_breaker_triggered": {
-      "required": [
-        "phase",
-        "detail"
-      ],
-      "optional": [],
-      "detailSchema": {
-        "type": "object",
-        "required": [
-          "reason"
-        ],
-        "properties": {
-          "reason": {
-            "type": "string"
-          },
-          "signature": {
-            "type": "string"
-          },
-          "repeatCount": {
-            "type": "integer"
-          },
-          "scope": {
-            "type": "string"
-          }
-        }
-      }
-    },
     "build_fix_attempt": {
       "required": [
         "phase",
@@ -701,7 +674,11 @@
       "deployer": {
         "writes": [
           "build/",
-          ".autobot/deploy-status.json"
+          ".autobot/deploy-status.json",
+          ".autobot/register-status.json",
+          ".autobot/archive-status.json",
+          ".autobot/upload-status.json",
+          ".autobot/invite-status.json"
         ]
       },
       "design-system": {
@@ -733,7 +710,9 @@
     "forbiddenPerAgent": {
       "ui-builder": [
         "{appName}/Services/",
-        "Packages/"
+        "Packages/",
+        "{appName}/App/CompositionRoot.swift",
+        "{appName}/App/{appName}App.swift"
       ],
       "design-system": [
         "{appName}/"
@@ -1061,8 +1040,32 @@
         },
         {
           "type": "procedural",
+          "name": "feature_spec_depth",
+          "label": "feature_spec_depth",
+          "docs": "feature-spec 깊이/구성 하한 (P0+P1·P0·화면·postcondition kind 카운트 + role hook/retention ≥1). 기본 DEGRADED(THIN-SPEC), quality-max 는 hard fail. 예외: P0 1개 + 총 step ≤2 원탭 데모 spec 만 기본 모드에서도 hard fail"
+        },
+        {
+          "type": "procedural",
           "name": "idea_layout_requirements_captured",
           "label": "idea_layout_requirements_captured"
+        },
+        {
+          "type": "procedural",
+          "name": "market_context_present",
+          "label": "market_context_present",
+          "docs": "architecture.md `## Market Context` 헤딩 + 표 행 ≥3 (또는 market-brief.json noDirectCompetitors=true). DEGRADED-only"
+        },
+        {
+          "type": "procedural",
+          "name": "hook_retention_present",
+          "label": "hook_retention_present",
+          "docs": "`### Hook & Retention` 헤딩 존재 + firstRunPolicy==\"primer\" 면 `## First-Run Experience` 도 요구. DEGRADED-only"
+        },
+        {
+          "type": "procedural",
+          "name": "service_protocol_depth",
+          "label": "service_protocol_depth",
+          "docs": "ServiceProtocols.swift 에 CRUD 동사(fetch/add/delete/update/save/get) 외 메서드 ≥1 grep. DEGRADED-only"
         },
         {
           "type": "state_field_contains",
@@ -1171,6 +1174,12 @@
           "name": "design_system_tokens_exist",
           "label": "design_system_tokens_exist",
           "docs": "Sources/<designSystemModule>/Tokens/ 아래 Color.swift, Typography.swift, Spacing.swift, Radius.swift 모두 존재 + 비어있지 않음"
+        },
+        {
+          "type": "procedural",
+          "name": "design_system_components_exist",
+          "label": "design_system_components_exist",
+          "docs": "Components/ 아래 PrimaryButton·Card·SectionHeader·EmptyStateView·ListRow 5파일 존재 + 각각 `public struct <Module><이름>` 선언 (ui-builder import 이름 계약 — tokens_exist 와 동급 hard check)"
         }
       ]
     },
@@ -1216,6 +1225,18 @@
           "name": "no_hardcoded_font_sizes",
           "label": "no_hardcoded_font_sizes",
           "docs": "접근성(Dynamic Type) 결정적 grep — Views/ 의 사유 주석 없는 .font(.system(size:)) 검출. 휴리스틱이므로 DEGRADED-only(hard fail 금지), 위반은 출하 차단 등급이 아닌 품질 신호로 기록"
+        },
+        {
+          "type": "procedural",
+          "name": "ds_primitives_used",
+          "label": "ds_primitives_used",
+          "docs": "Views/ 가 designSystemModule 을 import 하고 5개 primitive 중 ≥1 사용 — 미사용이면 DS 레이어가 dead code. DEGRADED-only(hard fail 금지)"
+        },
+        {
+          "type": "procedural",
+          "name": "no_legacy_theme_refs",
+          "label": "no_legacy_theme_refs",
+          "docs": "Views/ 의 삭제된 Theme.* API·시스템 기본 .accentColor 참조 grep — DS 토큰(<Module>Color.*) 우회 검출. 휴리스틱이므로 DEGRADED-only(hard fail 금지)"
         },
         {
           "type": "procedural",

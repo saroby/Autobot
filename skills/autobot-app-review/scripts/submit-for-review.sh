@@ -25,10 +25,37 @@
 #   5  fastlane deliver failed (see status.reason)
 set -euo pipefail
 
+RELEASE_ENV="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../scripts" && pwd)/release_env.sh"
+. "$RELEASE_ENV"
+autobot_load_release_env "${CLAUDE_PROJECT_DIR:-.}"
+
 log_info()  { printf 'INFO: %s\n'  "$*"; }
 log_ok()    { printf 'OK: %s\n'    "$*"; }
 log_warn()  { printf 'WARN: %s\n'  "$*" >&2; }
 log_error() { printf 'ERROR: %s\n' "$*" >&2; }
+
+# Extract the latest build's state from `fastlane pilot builds` output (reads
+# stdin). Prints the lowercased state token (processing|valid|invalid|expired)
+# of the first row that carries one, or nothing. ALWAYS exits 0 — a no-match
+# must not abort the caller under `set -euo pipefail`. The prior
+# `grep|head|tr|awk` pipeline let grep exit 1 on an unrecognized row, which
+# pipefail propagated into the `LAST_STATE="$(...)"` assignment and killed the
+# poll loop before the retry logic could run.
+extract_build_state() {
+  awk '
+    {
+      line = tolower($0)
+      gsub(/\|/, " ", line)
+      n = split(line, cols, /[ \t]+/)
+      for (i = n; i >= 1; i--) {
+        if (cols[i] == "processing" || cols[i] == "valid" || cols[i] == "invalid" || cols[i] == "expired") {
+          print cols[i]
+          exit
+        }
+      }
+    }
+  '
+}
 
 BUNDLE_ID=""
 TEAM_ID=""
@@ -144,7 +171,7 @@ bundle_id = sys.argv[3]
 valid = (
     state.get("buildId")
     and state.get("bundleId") == bundle_id
-    and upload.get("result") == "uploaded"
+    and upload.get("result") in ("uploaded", "already_uploaded")
     and upload.get("buildId") == state.get("buildId")
     and upload.get("bundleId") == bundle_id
 )
@@ -248,13 +275,18 @@ API_KEY_JSON="$WORK_DIR/fastlane_api_key.json"
 # fastlane's Spaceship::ConnectAPI::Token.from_json_file requires the .p8 PEM
 # CONTENT under `key` — it does not recognize a `key_filepath` field and fails
 # with "API key JSON is missing field(s): key". Embed the file contents.
-ASC_API_KEY_CONTENT="$(cat "$ASC_API_KEY_PATH")"
+# The PEM flows file → python → file only: a shell variable/argv would expose
+# the private key to same-host process listings and any future `set -x`.
 ( umask 077
-  emit_json \
-    "key_id=$ASC_API_KEY_ID" \
-    "issuer_id=$ASC_API_ISSUER_ID" \
-    "key=$ASC_API_KEY_CONTENT" \
-    > "$API_KEY_JSON"
+  python3 - "$ASC_API_KEY_ID" "$ASC_API_ISSUER_ID" "$ASC_API_KEY_PATH" > "$API_KEY_JSON" <<'PY'
+import json, sys
+with open(sys.argv[3], encoding="utf-8") as handle:
+    key = handle.read()
+print(json.dumps(
+    {"key_id": sys.argv[1], "issuer_id": sys.argv[2], "key": key},
+    ensure_ascii=False, sort_keys=True, indent=2,
+))
+PY
 )
 chmod 600 "$API_KEY_JSON"
 
@@ -342,22 +374,12 @@ if [ "$DRY_RUN" -eq 0 ] && [ "$SKIP_WAIT" -eq 0 ]; then
     PILOT_EXIT=$?
     set -e
 
-    # pilot prints a table. Pull the first non-header row's "Build State"
-    # column. Accept variations across fastlane versions (older "Processing"
-    # vs newer "PROCESSING" / "VALID" / "INVALID").
-    LAST_STATE="$(printf '%s\n' "$PILOT_OUTPUT" \
-      | grep -Ei 'processing|valid|invalid|expired' \
-      | head -n 1 \
-      | tr -d '|' \
-      | awk '{
-          for (i = NF; i >= 1; i--) {
-            v = tolower($i)
-            if (v == "processing" || v == "valid" || v == "invalid" || v == "expired") {
-              print v; exit
-            }
-          }
-        }' \
-    )"
+    # pilot prints a table. Pull the first row that carries a "Build State"
+    # token. Accept variations across fastlane versions (older "Processing"
+    # vs newer "PROCESSING" / "VALID" / "INVALID"). extract_build_state always
+    # exits 0, so an unrecognized row leaves LAST_STATE empty and routes into
+    # the retry logic below rather than aborting under pipefail.
+    LAST_STATE="$(printf '%s\n' "$PILOT_OUTPUT" | extract_build_state)"
 
     if [ -z "$LAST_STATE" ] && [ $PILOT_EXIT -ne 0 ]; then
       CONSECUTIVE_POLL_ERRORS=$((CONSECUTIVE_POLL_ERRORS + 1))

@@ -78,18 +78,33 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-build/scripts/upload.sh" \
 }
 ```
 
-`result`: `uploaded` / `exported_only` / `upload_failed` / `export_failed` / `dry_run` / `failed`.
+`result`: `uploaded` / `already_uploaded` / `build_number_conflict` / `exported_only` / `upload_failed` / `export_failed` / `dry_run` / `failed`.
 `auth_method`: `api_key` / `xcode_account` / `none`.
+
+ASC 가 "Redundant Binary Upload / bundle version must be higher / has already
+been used" 로 거절한 경우의 해석은 **이번 실행이 업로드를 개시했는지**에 달렸다:
+
+- **첫 시도(attempt 1)** 에서 곧바로 redundant 면 이번 실행은 아무것도 올리지
+  않았으므로 ASC 의 바이너리는 **이전 실행**의 것이다. 이를 성공으로 처리하면 옛
+  바이너리가 심사로 직행하므로 `build_number_conflict` (exit 6, `upload_success:
+  false`) 로 **하드 실패**한다 — build number 를 올려 재-archive 후 재업로드해야
+  한다.
+- **재시도(attempt ≥ 2, 앞선 시도가 업로드 개시 후 transient 로 모호하게 실패한
+  경우)** 의 redundant 는 우리 업로드가 이미 안착했다는 신호이므로
+  `already_uploaded` (exit 0, `upload_success: true`) 로 성공 처리한다. 단
+  **콘텐츠 일치는 미검증**이라 코드가 실행 중간에 바뀌었다면 빌드번호 bump 가
+  필요하다 (스크립트가 WARN).
 
 ## Exit codes
 
 | Code | 의미 | 대응 |
 |------|------|------|
-| 0 | export+upload 성공, export-only 성공, 또는 dry-run 통과 | 다음 단계 (`autobot-invite-testers`) |
+| 0 | export+upload 성공, `already_uploaded` (재시도 중 우리 업로드가 안착), export-only 성공, 또는 dry-run 통과 | 다음 단계 (`autobot-invite-testers`). `already_uploaded` 면 빌드번호 재사용 경고 확인 |
 | 1 | 사용법/입력값 오류 | 인자 확인 |
 | 2 | archive 미존재 또는 xcodebuild 미설치 | `autobot-archive-build` 먼저 실행 |
 | 4 | export 실패 (IPA 도 안 만들어짐) | 로그/signing 확인 |
 | 5 | export 는 됐는데 upload 실패 — IPA 는 존재 | Transporter 수동 업로드 |
+| 6 | build number 충돌 — 첫 시도에서 ASC 에 동일 bundle version 이 이미 존재 (이전 실행의 바이너리) | build number 를 올려 `autobot-archive-build` 재실행 후 재업로드 |
 
 exit 5 는 부분 성공: IPA 는 손에 있으니 Xcode Organizer 나 Apple Transporter 로 수동 업로드 가능.
 
@@ -151,7 +166,7 @@ ls -la <archive-dir>/export/*.ipa
 
 - **`autobot-register-app`** — 반드시 이 스킬보다 먼저 성공해야 한다. orchestrator 가 순서 보장.
 - **`autobot-archive-build`** — 이 스킬의 `--archive-path` 인자는 archive-build 의 `archive_path` 출력을 그대로 받는다.
-- **`autobot-invite-testers`** — 업로드 성공 (`result: uploaded`) 후에만 호출된다.
+- **`autobot-invite-testers`** — 업로드 성공 (`result: uploaded` 또는 `already_uploaded`) 후에만 호출된다.
 
 ## Files
 

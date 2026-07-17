@@ -49,6 +49,8 @@ echo "Bundle ID: $BUNDLE_ID"
 
 - `mcp-appstore` 도구가 없으면: "mcp-appstore MCP 서버가 필요합니다" 안내 후 중단 (하드 실패 아님 — 환경 안내).
 - 리뷰 0건이면: `feedback_fetched` 이벤트만 기록하고 "아직 리뷰가 없습니다. 출시 후 며칠 뒤 다시 실행하세요." 보고 후 종료.
+- **심사 verdict (선택)**: `.autobot/review-verdict.json` 이 존재하면 `external_feedback.py record-verdict --project-dir . --bundle-id "$BUNDLE_ID"` 를 함께 실행한다 — REJECTED 계열이면 Guideline 번호당 high-severity 테마(`source: "app_review"`)가 자동 기록되고, 아니면 no-op (스킬 §3b).
+- `record` / `record-verdict` 출력의 `approval_resets > 0` 이면: 기존 승인 테마의 rule 이 교체되어 승인이 리셋되었음을 Step 4 에서 운영자에게 알린다 (재승인 필요).
 
 ## Step 4: 글로벌 승격 확인 (운영자 게이트 — 유일한 질문)
 

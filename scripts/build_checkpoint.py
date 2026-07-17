@@ -21,6 +21,7 @@ from spec_loader import load_spec  # noqa: E402
 from state_store import load_json, load_state, state_file_for  # noqa: E402
 
 SCHEMA_VERSION = 1
+_RESTORE_JOURNAL = "restore-journal.json"
 
 
 def _root(project: Path) -> Path:
@@ -87,6 +88,120 @@ def _validate_save_policy(spec: dict, attempt: int) -> None:
         raise ValueError(f"attempt {attempt} is outside buildFixLoop maxAttempts={max_attempts}")
 
 
+def _orphan_pid(name: str) -> str | None:
+    """Owner pid encoded in `.restore-backup.<pid>.<hex>` / `.attempt-N.<pid>.<hex>.tmp`."""
+    parts = name.split(".")
+    if name.startswith(".restore-backup.") and len(parts) >= 4:
+        return parts[2]
+    if name.startswith(".attempt-") and name.endswith(".tmp") and len(parts) >= 5:
+        return parts[2]
+    return None
+
+
+def _sweep_orphans(root: Path) -> None:
+    """Remove restore-backup/save-temp dirs whose owner process is dead."""
+    for path in root.iterdir():
+        pid = _orphan_pid(path.name)
+        if pid is None or pid == str(os.getpid()):
+            continue
+        try:
+            os.kill(int(pid), 0)
+            continue  # owner still alive — not an orphan
+        except (ProcessLookupError, ValueError):
+            pass
+        except OSError:
+            continue  # PermissionError etc. — assume alive
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _apply_targets(project: Path, source_root: Path, targets: list[str]) -> None:
+    """Replace each target in the working tree with the checkpoint's copy.
+
+    Idempotent: re-running after a partial run converges on the checkpoint.
+    """
+    for relative in targets:
+        destination = project / relative
+        source = source_root / relative
+        if destination.is_dir():
+            shutil.rmtree(destination)
+        elif destination.exists():
+            destination.unlink()
+        if source.exists():
+            _copy(source, destination)
+
+
+def _active_build_id(project: Path) -> str | None:
+    """buildId of the project's live build-state, or None when unavailable.
+
+    Recovery runs even when no build-state exists (checkpoint-only tests, early
+    aborts), so a missing/unreadable state degrades to None rather than raising
+    — which disables the cross-build guard and falls back to same-build replay.
+    """
+    path = state_file_for(project)
+    if not path.is_file():
+        return None
+    try:
+        state = load_state(path)
+    except (Exception, SystemExit):  # noqa: BLE001 — recovery must never crash
+        return None
+    return state.get("buildId") if isinstance(state, dict) else None
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    """Write JSON via tmp + os.replace so a crash can't leave a half-written
+    journal the recovery path would then choke on."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _recover_interrupted_restore(project: Path) -> None:
+    """Converge a restore that died (SIGKILL/power loss) mid delete-copy.
+
+    restore_checkpoint journals the in-flight attempt before its destructive
+    loop; if the journal survives, the working tree may be a mix of old and
+    checkpoint files. Re-applying the (integrity-checked) attempt is
+    idempotent. Called on every save/latest/restore entry.
+    """
+    root = _root(project)
+    if not root.is_dir():
+        return
+    journal_path = root / _RESTORE_JOURNAL
+    if journal_path.is_file():
+        journal = load_json(journal_path)
+        journal_build_id = journal.get("buildId")
+        active_build_id = _active_build_id(project)
+        # Cross-build guard: a journal left by build A must never replay onto
+        # build B's working tree (it would overwrite B's files with A's
+        # checkpoint). Only replay when the journal's build matches the live
+        # build; on a definite mismatch, quarantine the journal without
+        # touching any file.
+        if journal_build_id and active_build_id and journal_build_id != active_build_id:
+            quarantine = journal_path.with_name(
+                f"{_RESTORE_JOURNAL}.quarantined.{os.getpid()}.{uuid.uuid4().hex}"
+            )
+            journal_path.rename(quarantine)
+            print(
+                f"WARN: restore journal buildId={journal_build_id} does not match "
+                f"active buildId={active_build_id}; quarantined to {quarantine.name} "
+                "without touching the working tree",
+                file=sys.stderr,
+            )
+        else:
+            attempt_dir = root / f"attempt-{journal['attempt']}"
+            metadata = _load_metadata(attempt_dir)  # raises loudly if tampered/corrupt
+            targets = [value.rstrip("/") for value in metadata["targets"]]
+            for relative in targets:
+                path = Path(relative)
+                if path.is_absolute() or ".." in path.parts:
+                    raise ValueError(f"unsafe checkpoint target: {relative}")
+            _apply_targets(project, attempt_dir, targets)
+            journal_path.unlink(missing_ok=True)
+    # Housekeeping runs AFTER the integrity-critical journal recovery so a
+    # tampered/corrupt journal surfaces before we sweep any scratch dirs.
+    _sweep_orphans(root)
+
+
 def save_checkpoint(
     project: Path,
     spec: dict,
@@ -97,6 +212,7 @@ def save_checkpoint(
     diff_hash: str | None = None,
 ) -> dict:
     _validate_save_policy(spec, attempt)
+    _recover_interrupted_restore(project)
     app_name = str(state.get("appName") or "")
     if not app_name:
         raise ValueError("state.appName is required")
@@ -156,12 +272,14 @@ def _load_metadata(path: Path) -> dict:
 
 
 def latest_checkpoint(project: Path, *, exclude_signature: str | None = None) -> dict:
+    _recover_interrupted_restore(project)
     candidates: list[tuple[int, Path, dict]] = []
     for path in _root(project).glob("attempt-*"):
         try:
             metadata = _load_metadata(path)
             attempt = int(metadata["attempt"])
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            print(f"WARN: checkpoint {path} skipped: {exc}", file=sys.stderr)
             continue
         if exclude_signature is not None and metadata.get("errorSignature") == exclude_signature:
             continue
@@ -185,6 +303,7 @@ def restore_checkpoint(
         raise ValueError("buildFixLoop policy is disabled")
     if exclude_signature is not None and not checkpoint.get("rollbackOnSignatureRepeat"):
         raise ValueError("buildFixLoop checkpoint.rollbackOnSignatureRepeat is disabled")
+    _recover_interrupted_restore(project)
     chosen = (
         {**_load_metadata(_root(project) / f"attempt-{attempt}"),
          "path": str(_root(project) / f"attempt-{attempt}")}
@@ -206,21 +325,25 @@ def restore_checkpoint(
 
     backup = checkpoint_root / f".restore-backup.{os.getpid()}.{uuid.uuid4().hex}"
     backup.mkdir(parents=True, exist_ok=False)
+    journal_path = checkpoint_root / _RESTORE_JOURNAL
     try:
         for relative in targets:
             destination = project / relative
             if destination.exists():
                 _copy(destination, backup / relative)
+        # Journal marks the destructive window: if the process dies between
+        # delete and copy, the next save/latest/restore re-applies this attempt
+        # instead of leaving a half-restored franken-tree. Written atomically
+        # (tmp + os.replace) so a crash mid-write can't leave a torn journal.
+        # buildId scopes the journal to its build so a stale one from another
+        # build is quarantined, not replayed (see _recover_interrupted_restore).
+        _atomic_write_json(journal_path, {
+            "attempt": chosen["attempt"],
+            "buildId": chosen.get("buildId"),
+            "startedAt": datetime.now(timezone.utc).isoformat(),
+        })
         try:
-            for relative in targets:
-                destination = project / relative
-                source = source_root / relative
-                if destination.is_dir():
-                    shutil.rmtree(destination)
-                elif destination.exists():
-                    destination.unlink()
-                if source.exists():
-                    _copy(source, destination)
+            _apply_targets(project, source_root, targets)
         except BaseException:
             for relative in targets:
                 destination = project / relative
@@ -231,7 +354,10 @@ def restore_checkpoint(
                     destination.unlink()
                 if saved.exists():
                     _copy(saved, destination)
+            # Rollback converged the tree — the journal must not re-apply.
+            journal_path.unlink(missing_ok=True)
             raise
+        journal_path.unlink(missing_ok=True)
     finally:
         shutil.rmtree(backup, ignore_errors=True)
     return chosen

@@ -232,9 +232,11 @@ Stitch가 생성한 웹 디자인 토큰을 iOS SwiftUI 패턴으로 매핑하�
 
 ### Colors
 
+`<Module>` = `.autobot/architecture.json` 의 `designSystemModule` 값 (예: `FocusDS` → `FocusDSColor.accent`).
+
 | Web (Stitch CSS) | iOS (SwiftUI) |
 |-----------------|---------------|
-| `#007AFF` / blue accent | `Color.accentColor` |
+| `#007AFF` / blue accent | `<Module>Color.accent` (DS token — never `Color.accentColor`) |
 | `#FFFFFF` / white background | `Color(.systemBackground)` |
 | `#F2F2F7` / light gray background | `Color(.secondarySystemBackground)` |
 | `#000000` / primary text | `Color.primary` |

@@ -206,10 +206,11 @@ com.axi.MyApp 은 다른 Apple Developer team 이 선점했습니다.
 ## Output
 
 deployer 가 작성하는 status 파일들:
+- `.autobot/register-status.json` — `result: registered`/`already_exists`/실패 reason
 - `.autobot/archive-status.json` — `result: archived`, `archive_path`
-- `.autobot/upload-status.json` — `result: uploaded`/`upload_failed`/`export_failed`, `ipa_path`, `upload_success`
+- `.autobot/upload-status.json` — `result: uploaded`/`already_uploaded`/`upload_failed`/`export_failed`, `ipa_path`, `upload_success`
 - `.autobot/invite-status.json` — `result: invited`/`partial`, `emails_invited`/`skipped`/`failed`
-- `.autobot/deploy-status.json` — 위 3개의 집계 (`status: uploaded`/`archived`/`failed`)
+- `.autobot/deploy-status.json` — 위 4개의 집계 (`status: uploaded`/`archived`/`failed`)
 
 이후 `/autobot:resume` 로 회고 보고서(`build-report.md`) 를 재생성하면 새 deploy 결과가 반영된다.
 

@@ -7,6 +7,8 @@ Detects drift between the executable spec and documentation:
   3. Hardcoded maxRetry values in markdown match pipeline.json
   4. Phase count matches across files
   5. spec/parts matches the executable pipeline bundle
+  6. AUTOBOT_* env vars referenced in docs are known to some script
+  7. The 3 prose copies of the Phase → phase-learning-file mapping agree
 
 Usage:
     python3 verify_spec_docs.py [--project-dir .]
@@ -97,6 +99,21 @@ def check_implementations(spec: dict) -> list[str]:
                 errors.append(
                     f"Gate {gate_id}: procedural check '{name}' has no impl in gate_checks.registry"
                 )
+    return errors
+
+
+def check_gate_structure(spec: dict) -> list[str]:
+    """Every gate must declare a non-empty `checks` array.
+
+    A gate with no checks passes vacuously — a silent hole where a phase
+    transition looks gated but enforces nothing. (Registry existence of the
+    named procedural checks is covered by check_implementations.)
+    """
+    errors = []
+    for gate_id, gate_spec in spec.get("gates", {}).items():
+        checks = gate_spec.get("checks")
+        if not isinstance(checks, list) or not checks:
+            errors.append(f"Gate '{gate_id}' has an empty or missing checks array")
     return errors
 
 
@@ -231,10 +248,14 @@ def check_facade_exports() -> list[str]:
 
 def _default_prose_docs() -> list[tuple[str, str]]:
     paths: list[Path] = [PLUGIN_DIR / "README.md"]
-    for root in ("commands", "skills", "agents", "references"):
+    for root in ("commands", "skills", "agents", "references", "docs"):
         base = PLUGIN_DIR / root
         if base.is_dir():
             paths.extend(sorted(base.rglob("*.md")))
+
+    # docs/superpowers/ is a historical spec/plan archive — intentionally stale,
+    # not a live operational doc, so it's excluded from drift scanning.
+    paths = [p for p in paths if "superpowers" not in p.relative_to(PLUGIN_DIR).parts]
 
     docs: list[tuple[str, str]] = []
     for path in paths:
@@ -256,6 +277,12 @@ _PIPELINE_SUB_RE = re.compile(r"pipeline\.sh\"?\s+([a-z][a-z0-9-]*)")
 _PLUGIN_SCRIPT_RE = re.compile(
     r"\$\{?CLAUDE_PLUGIN_ROOT\}?/(scripts/[A-Za-z0-9_\-./]*[A-Za-z0-9_\-])"
 )
+# AUTOBOT_* env var name references.
+_AUTOBOT_VAR_RE = re.compile(r"\bAUTOBOT_[A-Z][A-Z0-9_]*\b")
+# A doc-local knob: the var is declared right there with a shell default
+# (`${AUTOBOT_X:-default}`), so it's self-contained and not a reference to a
+# name the scripts are expected to already know about.
+_AUTOBOT_VAR_DEFAULT_RE = re.compile(r"\$\{(AUTOBOT_[A-Z][A-Z0-9_]*):-")
 # Fenced code blocks and inline backtick spans.
 _CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
 
@@ -269,10 +296,25 @@ def _pipeline_subcommands() -> set[str]:
     return set(re.findall(r"^\s{2}([a-z][a-z0-9-]*)\)", content, re.MULTILINE))
 
 
+def _known_autobot_vars() -> set[str]:
+    """AUTOBOT_* names referenced anywhere in scripts/ and skills/*/scripts/
+    (.sh + .py) — the set of vars the shell scripts actually know about."""
+    known: set[str] = set()
+    for root in ("scripts", "skills"):
+        base = PLUGIN_DIR / root
+        if not base.is_dir():
+            continue
+        for pattern in ("*.sh", "*.py"):
+            for path in base.rglob(pattern):
+                known |= set(_AUTOBOT_VAR_RE.findall(path.read_text(encoding="utf-8")))
+    return known
+
+
 def check_prose_generic_drift(
     spec: dict,
     docs: list[tuple[str, str]] | None = None,
     pipeline_subs: set[str] | None = None,
+    known_autobot_vars: set[str] | None = None,
 ) -> list[str]:
     """Generic drift scan over all prose docs (auto-detects renames, unlike the
     hardcoded blocklist in check_prose_contract_drift):
@@ -281,9 +323,14 @@ def check_prose_generic_drift(
                            unknown events mid-build otherwise)
       - `pipeline.sh <sub>` (in code spans) must be a pipeline.sh case label
       - `$CLAUDE_PLUGIN_ROOT/scripts/...` referenced paths must exist
+      - `AUTOBOT_*` names (in code spans) must be read/set by some script, or
+        declared locally in the doc via `${AUTOBOT_X:-default}`
     """
     docs = _default_prose_docs() if docs is None else docs
     pipeline_subs = _pipeline_subcommands() if pipeline_subs is None else pipeline_subs
+    known_autobot_vars = (
+        _known_autobot_vars() if known_autobot_vars is None else known_autobot_vars
+    )
     known_events = set((spec.get("logEvents") or {}).keys()) if isinstance(spec, dict) else set()
     errors: list[str] = []
 
@@ -308,6 +355,16 @@ def check_prose_generic_drift(
                 errors.append(
                     f"{path}: references $CLAUDE_PLUGIN_ROOT/{rel} which does not exist"
                 )
+
+        doc_local_vars = set(_AUTOBOT_VAR_DEFAULT_RE.findall(code_text))
+        if known_autobot_vars:
+            for var in sorted(set(_AUTOBOT_VAR_RE.findall(code_text))):
+                if var not in known_autobot_vars and var not in doc_local_vars:
+                    errors.append(
+                        f"{path}: references unknown env var '{var}' "
+                        f"(no script reads/sets it, and it's not a doc-local "
+                        f"${{{var}:-default}} knob)"
+                    )
     return errors
 
 
@@ -385,6 +442,118 @@ def check_release_metadata_consistency(
     return errors
 
 
+# --- Phase → phase-learning file mapping (3 prose copies, spec/parts has no
+# learningFile field — see scripts/render-active-learnings.py PHASE_FILE_ALIASES) ---
+
+_RESUME_PHASE_FILE_RE = re.compile(
+    r"Phase\s+(\d+)\s*→\s*`\.autobot/phase-learnings/([\w.\-]+\.md)`"
+)
+_SKILL_PHASE_FILE_RE = re.compile(r"(\d+)→`([\w.\-]+\.md)`")
+_BOOTSTRAP_PHASE_FILE_RE = re.compile(
+    r"^\|\s*(\d+)\s*\|[^|]*\|\s*`phase-learnings/([\w.\-]+\.md)`\s*\|", re.MULTILINE
+)
+
+
+def _phase_file_aliases() -> dict[str, list[str]]:
+    """Parse PHASE_FILE_ALIASES out of render-active-learnings.py without
+    importing it (hyphenated filename isn't a valid module name)."""
+    import ast
+
+    path = SCRIPT_DIR / "render-active-learnings.py"
+    if not path.is_file():
+        return {}
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        # PHASE_FILE_ALIASES is a module-level annotated assignment
+        # (`NAME: type = {...}`), which is ast.AnnAssign, not ast.Assign.
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "PHASE_FILE_ALIASES"
+            and node.value is not None
+        ):
+            return ast.literal_eval(node.value)
+    return {}
+
+
+def check_phase_learning_mapping(
+    resume_text: str | None = None,
+    skill_text: str | None = None,
+    bootstrap_text: str | None = None,
+    known_filenames: set[str] | None = None,
+) -> list[str]:
+    """The Phase → phase-learning-file mapping is duplicated prose (no spec
+    field backs it) in commands/resume.md, SKILL.md and learning-bootstrap.md.
+    Cross-check the 3 copies agree, and that every filename they name is one
+    render-active-learnings.py's PHASE_FILE_ALIASES actually knows about.
+    """
+    resume_path = PLUGIN_DIR / "commands" / "resume.md"
+    skill_path = PLUGIN_DIR / "skills" / "autobot-orchestrator" / "SKILL.md"
+    bootstrap_path = (
+        PLUGIN_DIR / "skills" / "autobot-orchestrator" / "references" / "learning-bootstrap.md"
+    )
+    if resume_text is None:
+        if not resume_path.is_file():
+            return []
+        resume_text = resume_path.read_text(encoding="utf-8")
+    if skill_text is None:
+        if not skill_path.is_file():
+            return []
+        skill_text = skill_path.read_text(encoding="utf-8")
+    if bootstrap_text is None:
+        if not bootstrap_path.is_file():
+            return []
+        bootstrap_text = bootstrap_path.read_text(encoding="utf-8")
+
+    sources = {
+        "commands/resume.md": dict(_RESUME_PHASE_FILE_RE.findall(resume_text)),
+        "skills/autobot-orchestrator/SKILL.md": dict(_SKILL_PHASE_FILE_RE.findall(skill_text)),
+        "skills/autobot-orchestrator/references/learning-bootstrap.md": dict(
+            _BOOTSTRAP_PHASE_FILE_RE.findall(bootstrap_text)
+        ),
+    }
+
+    errors: list[str] = []
+
+    # A canonical doc that yields zero mappings has lost the prose entirely (or
+    # its format drifted past the extractor) — the cross-doc agreement check
+    # then silently passes on nothing.
+    for doc_name, mapping in sources.items():
+        if not mapping:
+            errors.append(
+                f"{doc_name}: extracted 0 Phase→phase-learning-file mappings "
+                "(mapping prose missing or its format drifted)"
+            )
+
+    # Cross-source agreement: every phase mentioned by 2+ sources must name
+    # the same file in all of them.
+    all_phases = set()
+    for mapping in sources.values():
+        all_phases |= set(mapping)
+    for phase in sorted(all_phases):
+        seen = {name: mapping[phase] for name, mapping in sources.items() if phase in mapping}
+        filenames = set(seen.values())
+        if len(filenames) > 1:
+            detail = ", ".join(f"{name}={fn}" for name, fn in seen.items())
+            errors.append(f"phase-learning mapping for Phase {phase} disagrees across docs: {detail}")
+
+    # Every named filename must be a known alias (or the shared fallback).
+    known_filenames = (
+        {fn for aliases in _phase_file_aliases().values() for fn in aliases} | {"active-learnings.md"}
+        if known_filenames is None
+        else known_filenames
+    )
+    if known_filenames:
+        for doc_name, mapping in sources.items():
+            for phase, filename in mapping.items():
+                if filename not in known_filenames:
+                    errors.append(
+                        f"{doc_name}: Phase {phase} names '{filename}', which is not in "
+                        f"render-active-learnings.py's PHASE_FILE_ALIASES"
+                    )
+    return errors
+
+
 def main() -> int:
     spec = load_spec()
     all_errors: list[str] = []
@@ -402,14 +571,19 @@ def main() -> int:
     all_errors.extend(errs)
     print(f"  Check implementations in gate_checks.registry: {'PASS' if not errs else f'{len(errs)} issues'}")
 
-    # 3. Retry drift
+    # 2b. Gate descriptor structure (non-empty checks array)
+    errs = check_gate_structure(spec)
+    all_errors.extend(errs)
+    print(f"  Gate descriptor structure (non-empty checks): {'PASS' if not errs else f'{len(errs)} issues'}")
+
+    # 3. Retry drift — a deterministic doc↔spec mismatch, so it fails the run.
     errs = check_retry_drift(spec)
-    all_warnings.extend(errs)
+    all_errors.extend(errs)
     print(f"  Retry value consistency: {'PASS' if not errs else f'{len(errs)} drift(s)'}")
 
-    # 4. Phase count
+    # 4. Phase count — deterministic drift, fails the run.
     errs = check_phase_count(spec)
-    all_warnings.extend(errs)
+    all_errors.extend(errs)
     print(f"  Phase count consistency: {'PASS' if not errs else f'{len(errs)} issues'}")
 
     # 5. Split spec bundle
@@ -435,12 +609,17 @@ def main() -> int:
     # 9. Generic prose drift (events / pipeline.sh subcommands / script paths)
     errs = check_prose_generic_drift(spec)
     all_errors.extend(errs)
-    print(f"  Generic prose drift (events/subcommands/paths): {'PASS' if not errs else f'{len(errs)} issues'}")
+    print(f"  Generic prose drift (events/subcommands/paths/env vars): {'PASS' if not errs else f'{len(errs)} issues'}")
 
     # 10. Release metadata
     errs = check_release_metadata_consistency()
     all_errors.extend(errs)
     print(f"  Release metadata consistency: {'PASS' if not errs else f'{len(errs)} issues'}")
+
+    # 11. Phase → phase-learning file mapping (3 prose copies must agree)
+    errs = check_phase_learning_mapping()
+    all_errors.extend(errs)
+    print(f"  Phase learning file mapping: {'PASS' if not errs else f'{len(errs)} issues'}")
 
     if all_errors:
         print(f"\nERRORS ({len(all_errors)}):")

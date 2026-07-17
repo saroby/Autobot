@@ -20,11 +20,17 @@ from conftest import import_runtime_modules
 
 import_runtime_modules()
 
+import metadata_validator  # noqa: E402
 import sim_runtime  # noqa: E402
 import visual_contract  # noqa: E402
-from gate_checks.app import check_no_hardcoded_font_sizes  # noqa: E402
+from gate_checks.app import (  # noqa: E402
+    check_composition_seam_intact,
+    check_models_checksum_matches,
+    check_no_hardcoded_font_sizes,
+)
 from gate_checks.build import (  # noqa: E402
     check_app_uses_real_repositories,
+    check_metadata_readiness,
     check_no_swallowed_errors,
     check_runtime_smoke,
     check_visual_contract,
@@ -211,6 +217,77 @@ class TestAppUsesRealRepositories(_TempProject):
         results = {r["check"]: r for r in check_app_uses_real_repositories(self.proj, APP, {})}
         self.assertFalse(results["no_stubs_in_app"]["passed"])
 
+    def test_denylist_covers_mock_fake_inmemory_dummy_preview(self):
+        # Renaming a stub (Mock*/InMemory*/…) must not slip past the hard gate.
+        for prefix in ("Mock", "Fake", "InMemory", "Dummy", "Preview"):
+            with self.subTest(prefix=prefix):
+                self._entry(f"@main struct DemoApp: App {{ let repo = {prefix}ItemRepository() }}\n")
+                results = {r["check"]: r for r in check_app_uses_real_repositories(self.proj, APP, {})}
+                self.assertFalse(results["no_stubs_in_app"]["passed"],
+                                 results["no_stubs_in_app"]["message"])
+
+    def test_comment_only_repository_mention_does_not_satisfy_services(self):
+        # `// TODO: wire FooRepository` must not green-light has_real_services.
+        self._entry("@main struct DemoApp: App {}\n"
+                    "// TODO: wire FooRepository and ModelContainer here\n")
+        results = {r["check"]: r for r in check_app_uses_real_repositories(self.proj, APP, {})}
+        self.assertFalse(results["has_real_services"]["passed"])
+        self.assertFalse(results["has_model_container"]["passed"])
+
+    def test_wiring_in_composition_root_satisfies_services(self):
+        # Documented contract puts production wiring in CompositionRoot.swift —
+        # the entry-file-only grep used to false-fail this legitimate layout.
+        self._entry("@main struct DemoApp: App { var body: some Scene { WindowGroup { CompositionRoot() } } }\n")
+        self.write(f"{APP}/App/CompositionRoot.swift",
+                   "enum CompositionRoot { static let repo = ItemRepository() }\n"
+                   ".modelContainer(for: Item.self)\n")
+        results = {r["check"]: r for r in check_app_uses_real_repositories(self.proj, APP, {})}
+        self.assertTrue(results["no_stubs_in_app"]["passed"])
+        self.assertTrue(results["has_real_services"]["passed"])
+        self.assertTrue(results["has_model_container"]["passed"])
+
+    def test_type_annotation_only_does_not_satisfy_services(self):
+        # `var repo: ItemRepository?` is a type reference, NOT production wiring —
+        # only an instantiation `FooRepository(` counts.
+        self._entry("@main struct DemoApp: App { var repo: ItemRepository? }\n")
+        results = {r["check"]: r for r in check_app_uses_real_repositories(self.proj, APP, {})}
+        self.assertFalse(results["has_real_services"]["passed"],
+                         results["has_real_services"]["message"])
+
+    def test_real_wiring_pattern_satisfies_services(self):
+        # The documented wiring form (wiring-patterns.md) instantiates the repo
+        # with the model context — this MUST pass the hard gate.
+        self.write(f"{APP}/App/CompositionRoot.swift",
+                   "struct CompositionRoot: View {\n"
+                   "    let container: ModelContainer\n"
+                   "    var body: some View {\n"
+                   "        RootView(itemService: ItemRepository(modelContext: container.mainContext))\n"
+                   "    }\n"
+                   "}\n")
+        self._entry("@main struct DemoApp: App {}\n")
+        results = {r["check"]: r for r in check_app_uses_real_repositories(self.proj, APP, {})}
+        self.assertTrue(results["has_real_services"]["passed"],
+                        results["has_real_services"]["message"])
+        self.assertTrue(results["has_model_container"]["passed"])
+
+    def test_stub_in_string_literal_does_not_fail(self):
+        # `MockItemRepository()` inside a STRING (log message, test name) must
+        # not trip the hard no_stubs gate — only executable code counts.
+        self._entry('@main struct DemoApp: App { let repo = ItemRepository()\n'
+                    'let msg = "do not use MockItemRepository() in prod" }\n')
+        results = {r["check"]: r for r in check_app_uses_real_repositories(self.proj, APP, {})}
+        self.assertTrue(results["no_stubs_in_app"]["passed"],
+                        results["no_stubs_in_app"]["message"])
+
+    def test_stub_in_code_still_fails_when_a_string_stub_also_present(self):
+        # A real stub instantiation in code fails even if a sibling line has the
+        # stub name only inside a string.
+        self._entry('@main struct DemoApp: App { let repo = StubItemRepository()\n'
+                    'let msg = "ignore MockItemRepository() text" }\n')
+        results = {r["check"]: r for r in check_app_uses_real_repositories(self.proj, APP, {})}
+        self.assertFalse(results["no_stubs_in_app"]["passed"],
+                         results["no_stubs_in_app"]["message"])
+
 
 class TestVisualContractDarkMapping(_TempProject):
     """check_visual_contract maps the darkMode sub-result to DEGRADED-only."""
@@ -247,6 +324,137 @@ class TestVisualContractDarkMapping(_TempProject):
     def test_legacy_result_without_dark_field_keeps_single_check(self):
         out = self._run(None)
         self.assertEqual([r["check"] for r in out], ["visual_contract"])
+
+    def test_env_killswitch_skip_is_degraded_not_benign(self):
+        # AUTOBOT_DISABLE_VISUAL_CONTRACT=1 must leave an audit trail: DEGRADED,
+        # never a clean pass (unlike ordinary resource skips).
+        with mock.patch.object(
+            visual_contract, "evaluate",
+            return_value={"status": "skipped", "skipReason": "visual_contract_disabled"},
+        ):
+            r = check_visual_contract(self.proj, APP, {})[0]
+        self.assertFalse(r["passed"])
+        self.assertTrue(r.get("skipped"))
+        self.assertTrue(r.get("degraded"))
+
+    def test_ordinary_skip_stays_benign(self):
+        with mock.patch.object(
+            visual_contract, "evaluate",
+            return_value={"status": "skipped", "skipReason": "screenshot_missing"},
+        ):
+            r = check_visual_contract(self.proj, APP, {})[0]
+        self.assertTrue(r["passed"])
+        self.assertTrue(r.get("skipped"))
+        self.assertFalse(r.get("degraded", False))
+
+
+class TestMetadataReadinessMapping(_TempProject):
+    """check_metadata_readiness maps metadata_validator.evaluate's 3-state
+    result to (passed, skipped, degraded) — pinned with evaluate mocked."""
+
+    def _run(self, result: dict, *, asc: bool = False) -> dict:
+        state = {"environment": {"ascConfigured": asc}}
+        with mock.patch.object(metadata_validator, "evaluate", return_value=result) as ev:
+            out = check_metadata_readiness(self.proj, APP, state)[0]
+            # asc_configured must be forwarded — the skip↔hard-require flip
+            # lives inside evaluate.
+            self.assertEqual(ev.call_args.kwargs.get("asc_configured"), asc)
+        return out
+
+    def test_skipped_is_benign(self):
+        r = self._run({"status": "skipped", "skipReason": "asc_not_configured"})
+        self.assertTrue(r["passed"])
+        self.assertTrue(r.get("skipped"))
+        self.assertFalse(r.get("degraded", False))
+
+    def test_passed_is_green(self):
+        r = self._run({
+            "status": "passed", "locale": "ko", "category": "PRODUCTIVITY",
+            "age_rating": "4+", "export_compliance": "false",
+            "screenshotCounts": {"6.9": 3},
+        }, asc=True)
+        self.assertTrue(r["passed"])
+        self.assertFalse(r.get("skipped", False))
+
+    def test_failed_is_hard_fail(self):
+        r = self._run({"status": "failed", "reason": "age rating config missing"}, asc=True)
+        self.assertFalse(r["passed"])
+        self.assertFalse(r.get("skipped", False))
+        self.assertIn("age rating", r["message"])
+
+    def test_env_killswitch_skip_is_degraded(self):
+        r = self._run({"status": "skipped", "skipReason": "metadata_gate_disabled"}, asc=True)
+        self.assertFalse(r["passed"])
+        self.assertTrue(r.get("skipped"))
+        self.assertTrue(r.get("degraded"))
+
+
+class TestCompositionSeamIntact(_TempProject):
+    def _write_seam(self):
+        self.write(f"{APP}/App/{APP}App.swift",
+                   "@main\nstruct DemoApp: App {}\n")
+        self.write(f"{APP}/App/ServiceStubs.swift", "struct StubItemRepository {}\n")
+
+    def _by_check(self, state=None) -> dict:
+        return {r["check"]: r for r in check_composition_seam_intact(self.proj, APP, state or {})}
+
+    def test_single_main_and_stubs_pass(self):
+        self._write_seam()
+        r = self._by_check()
+        self.assertTrue(r["single_main_entry"]["passed"])
+        self.assertTrue(r["service_stubs_present"]["passed"])
+
+    def test_duplicate_main_fails(self):
+        self._write_seam()
+        self.write(f"{APP}/Views/Second.swift", "@main\nstruct Second: App {}\n")
+        r = self._by_check()
+        self.assertFalse(r["single_main_entry"]["passed"])
+        self.assertIn("multiple @main", r["single_main_entry"]["message"])
+
+    def test_no_main_fails(self):
+        self.write(f"{APP}/App/ServiceStubs.swift", "struct StubItemRepository {}\n")
+        r = self._by_check()
+        self.assertFalse(r["single_main_entry"]["passed"])
+
+    def test_fatalerror_in_composition_root_fails(self):
+        self._write_seam()
+        self.write(f"{APP}/App/CompositionRoot.swift",
+                   "struct CompositionRoot: View { init() { fatalError(\"unwired\") } }\n")
+        r = self._by_check()
+        self.assertFalse(r["composition_root_clean"]["passed"])
+
+    def test_clean_composition_root_passes(self):
+        self._write_seam()
+        self.write(f"{APP}/App/CompositionRoot.swift",
+                   "struct CompositionRoot: View { var body: some View { RootView() } }\n")
+        r = self._by_check()
+        self.assertTrue(r["composition_root_clean"]["passed"])
+
+
+class TestModelsChecksumMatches(_TempProject):
+    def test_missing_snapshot_fails(self):
+        self.write(f"{APP}/Models/Item.swift", "struct Item {}\n")
+        r = check_models_checksum_matches(self.proj, APP, {})[0]
+        self.assertFalse(r["passed"])
+        self.assertIn("snapshot missing", r["message"])
+
+    def test_save_then_verify_passes_and_mutation_fails(self):
+        import subprocess
+        from conftest import SCRIPTS_DIR
+        self.write(f"{APP}/Models/Item.swift", "struct Item {}\n")
+        save = subprocess.run(
+            ["bash", str(SCRIPTS_DIR / "snapshot-contracts.sh"), "save",
+             "--app-name", APP, "--project-dir", str(self.proj)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(save.returncode, 0, msg=save.stdout + save.stderr)
+        r = check_models_checksum_matches(self.proj, APP, {})[0]
+        self.assertTrue(r["passed"], r["message"])
+
+        self.write(f"{APP}/Models/Item.swift", "struct Item { var mutated = true }\n")
+        r = check_models_checksum_matches(self.proj, APP, {})[0]
+        self.assertFalse(r["passed"])
+        self.assertIn("MISMATCH", r["message"])
 
 
 if __name__ == "__main__":

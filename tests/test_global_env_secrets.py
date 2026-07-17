@@ -107,6 +107,33 @@ class ConfigSetEnvTests(unittest.TestCase):
         self.assertEqual(r.stdout.strip(), str(self.dir / ".env"))
 
 
+class DeployScriptsSourceReleaseEnvTests(unittest.TestCase):
+    """Every skills/*/scripts/*.sh that checks ASC_API_KEY_ID must load the
+    canonical env chain (inherited env > project .env > ~/.autobot/.env) via
+    release_env.sh. Otherwise ship doctor (which resolves all three layers)
+    passes on .env-only setups while the script itself dies late with
+    'missing ASC API credentials' — the doctor-pass/script-fail split that
+    broke unattended app-review runs (audit 2026-07-17).
+    """
+
+    def test_every_asc_credential_consumer_sources_release_env(self):
+        consumers = {
+            script for script in (PLUGIN_DIR / "skills").glob("*/scripts/*.sh")
+            if "ASC_API_KEY_ID" in script.read_text(encoding="utf-8")
+        }
+        names = {script.name for script in consumers}
+        # The three scripts that historically skipped the loader must be covered.
+        self.assertLessEqual(
+            {"upload-metadata.sh", "upload-screenshots.sh", "submit-for-review.sh"},
+            names,
+        )
+        for script in sorted(consumers):
+            src = script.read_text(encoding="utf-8")
+            with self.subTest(script=str(script.relative_to(PLUGIN_DIR))):
+                self.assertIn("release_env.sh", src)
+                self.assertIn("autobot_load_release_env", src)
+
+
 @unittest.skipUnless(REGISTER_SH.is_file(), "register-app.sh missing")
 class DeployEnvPrecedenceTests(unittest.TestCase):
     """register-app.sh --dry-run: precedence env > project .env > global .env.

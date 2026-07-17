@@ -144,7 +144,12 @@ def validate_transition_request(
 
     if target_status == "in_progress" and not operator_override:
         tripped, failures, threshold, scope = circuit_breaker_tripped(spec, state)
-        if tripped:
+        # The spec's alwaysRun phase (retrospective) must stay enterable after
+        # a trip — onTrip=skipToRetrospective promises "only Phase 7 proceeds",
+        # and without this exemption a trip on the fail-phase path deadlocks
+        # the build (retro start is REJECTED too).
+        always_run = bool(spec.get("phases", {}).get(phase, {}).get("alwaysRun"))
+        if tripped and not always_run:
             return False, [
                 f"REJECTED: circuit breaker tripped — {scope} retryCount={failures} ≥ {threshold}",
                 "  Pass --allow-terminal-restart to force an operator-driven restart.",
@@ -168,6 +173,9 @@ def update_phase_status(
     metadata_items: list[str] | None = None,
 ) -> tuple[bool, list[str], str]:
     state = load_state(state_path)
+    # Fast-fail pre-check outside the lock; re-validated inside the write lock
+    # below because a concurrent process can change retryCount/breaker state
+    # between this check and the write.
     ok, messages = validate_transition_request(
         spec, state, phase, target_status,
         allow_terminal_restart=allow_terminal_restart,
@@ -177,9 +185,28 @@ def update_phase_status(
 
     timestamp = at or utc_now()
     metadata_items = metadata_items or []
+    resume_policy = spec.get("policies", {}).get("resume", {})
+    # Mirrors validate_transition_request's operator_override condition.
+    operator_override = (
+        allow_terminal_restart
+        and resume_policy.get("allowExplicitRestartFromTerminal", False)
+        and target_status == "in_progress"
+    )
 
     def mutate(next_state: dict[str, Any]) -> None:
         phase_state = next_state.setdefault("phases", {}).setdefault(phase, {"status": "pending"})
+        if operator_override:
+            # Audit trail for --allow-terminal-restart: recorded atomically with
+            # the transition so run_summary/learning loops can tell an
+            # override-completed build from a clean one.
+            _tripped, failures, threshold, _scope = circuit_breaker_tripped(spec, next_state)
+            phase_state["operatorOverrides"] = int(phase_state.get("operatorOverrides", 0)) + 1
+            phase_state["lastOperatorOverride"] = {
+                "at": timestamp,
+                "priorRetryCount": int(phase_state.get("retryCount", 0) or 0),
+                "breakerFailures": failures,
+                "threshold": threshold,
+            }
         phase_state["status"] = target_status
 
         if target_status == "in_progress":
@@ -215,5 +242,15 @@ def update_phase_status(
                 key, value = parse_key_value(raw)
                 metadata[key] = value
 
-    mutate_state_with_validation(state_path, spec, mutate)
+    def validator(fresh_state: dict[str, Any]) -> tuple[bool, list[str]]:
+        return validate_transition_request(
+            spec, fresh_state, phase, target_status,
+            allow_terminal_restart=allow_terminal_restart,
+        )
+
+    ok, lock_messages = mutate_state_with_validation(
+        state_path, spec, mutate, validator=validator,
+    )
+    if not ok:
+        return False, lock_messages, timestamp
     return True, messages, timestamp

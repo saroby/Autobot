@@ -46,8 +46,24 @@ SUCCESS_RESULTS = {
         "committed_no_push", "dry_run",
     },
     "E": {"uploaded", "already_uploaded", "success"},
-    "F": {"uploaded"},
+    "F": {"uploaded", "already_uploaded"},
     "G": {"submitted", "already_in_review"},
+}
+MAX_PHASE_ATTEMPTS = 3
+# Failures that retrying can never fix (SKILL.md failure matrix): halt at once.
+NON_RETRYABLE_REASONS = {
+    "name_collision",
+    "bundle_id_taken",
+    "asc_session_expired",
+    "asc_permission_denied",
+    # Bad/expired ASC API credentials — the deliver scripts (upload-metadata.sh,
+    # submit-for-review.sh, upload-screenshots.sh) all emit reason=auth_failed;
+    # retrying the same credentials only burns attempts.
+    "auth_failed",
+    # upload.sh: on the first attempt ASC already holds this bundle version, so
+    # the binary must be bumped + re-archived — a retry of the same build cannot
+    # resolve it.
+    "build_number_conflict",
 }
 STATUS_FILES = {
     "0b": "register-status.json",
@@ -148,7 +164,7 @@ def _content_digest(paths: list[Path]) -> str:
 
 
 def _binary_identity_matches(project: Path, build: dict, status: dict) -> bool:
-    if status.get("result") != "uploaded":
+    if status.get("result") not in SUCCESS_RESULTS["F"]:
         return False
     if status.get("buildId") != build.get("buildId"):
         return False
@@ -256,15 +272,26 @@ def reconcile(project: Path, state: dict) -> dict:
 def next_phase(state: dict) -> dict:
     for phase in PHASE_ORDER:
         block = (state.get("phases") or {}).get(phase) or {}
-        if block.get("status") != "completed" and _dependencies_complete(state, phase):
-            return {"phase": phase, "action": ACTIONS[phase], "status": block.get("status", "pending")}
+        if block.get("status") == "completed" or not _dependencies_complete(state, phase):
+            continue
+        # Retry ceiling mirrors the main engine's circuit breaker (3 strikes).
+        # A halted phase terminates the run; reconcile still promotes it to
+        # completed if valid evidence appears (legitimate out-of-band recovery).
+        if block.get("status") == "halted" or block.get("attempts", 0) >= MAX_PHASE_ATTEMPTS:
+            return {
+                "phase": phase,
+                "action": "halted",
+                "status": block.get("status", "failed"),
+                "reason": block.get("reason"),
+            }
+        return {"phase": phase, "action": ACTIONS[phase], "status": block.get("status", "pending")}
     return {"phase": None, "action": "complete", "status": "completed"}
 
 
 def claim_next_phase(project: Path, state: dict) -> dict:
     selected = next_phase(state)
     phase = selected.get("phase")
-    if phase is None:
+    if phase is None or selected.get("action") == "halted":
         return selected
     block = state["phases"][phase]
     lease = block.get("claimExpiresAt")
@@ -340,7 +367,16 @@ def fail_phase(
     if phase not in PHASE_ORDER:
         raise ValueError(f"unknown App Review phase: {phase}")
     _require_claim(state, phase, claim_token)
-    state["phases"][phase] = {"status": "failed", "failedAt": _now(), "reason": reason}
+    attempts = (state["phases"].get(phase) or {}).get("attempts", 0) + 1
+    status = "failed"
+    if reason in NON_RETRYABLE_REASONS or attempts >= MAX_PHASE_ATTEMPTS:
+        status = "halted"
+    state["phases"][phase] = {
+        "status": status,
+        "failedAt": _now(),
+        "reason": reason,
+        "attempts": attempts,
+    }
     state["updatedAt"] = _now()
     _write(project, state)
     return state

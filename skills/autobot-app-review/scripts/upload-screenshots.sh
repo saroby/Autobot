@@ -18,6 +18,10 @@
 #   4  fastlane deliver failed (see status.reason)
 set -euo pipefail
 
+RELEASE_ENV="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../scripts" && pwd)/release_env.sh"
+. "$RELEASE_ENV"
+autobot_load_release_env "${CLAUDE_PROJECT_DIR:-.}"
+
 log_info()  { printf 'INFO: %s\n'  "$*"; }
 log_ok()    { printf 'OK: %s\n'    "$*"; }
 log_warn()  { printf 'WARN: %s\n'  "$*" >&2; }
@@ -214,13 +218,18 @@ API_KEY_JSON="$WORK_DIR/fastlane_api_key.json"
 # fastlane's Spaceship::ConnectAPI::Token.from_json_file requires the .p8 PEM
 # CONTENT under `key` — it does not recognize a `key_filepath` field and fails
 # with "API key JSON is missing field(s): key". Embed the file contents.
-ASC_API_KEY_CONTENT="$(cat "$ASC_API_KEY_PATH")"
+# The PEM flows file → python → file only: a shell variable/argv would expose
+# the private key to same-host process listings and any future `set -x`.
 ( umask 077
-  emit_json \
-    "key_id=$ASC_API_KEY_ID" \
-    "issuer_id=$ASC_API_ISSUER_ID" \
-    "key=$ASC_API_KEY_CONTENT" \
-    > "$API_KEY_JSON"
+  python3 - "$ASC_API_KEY_ID" "$ASC_API_ISSUER_ID" "$ASC_API_KEY_PATH" > "$API_KEY_JSON" <<'PY'
+import json, sys
+with open(sys.argv[3], encoding="utf-8") as handle:
+    key = handle.read()
+print(json.dumps(
+    {"key_id": sys.argv[1], "issuer_id": sys.argv[2], "key": key},
+    ensure_ascii=False, sort_keys=True, indent=2,
+))
+PY
 )
 chmod 600 "$API_KEY_JSON"
 

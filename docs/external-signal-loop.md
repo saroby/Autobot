@@ -14,7 +14,9 @@
   suggested_prevention_rule, frequency}` + `items[]` (`stable_id("external", rule)`,
   `phase: "external"`) 기록 → 기존 effect_score/quarantine 재사용.
 - 렌더 소비자: `render-active-learnings.py` 의 `## External Feedback` 섹션
-  (write-only 함정 방지, quotes 는 인용 표기로 격리).
+  (write-only 함정 방지). 리뷰 원문 quotes 는 프롬프트에 렌더되지 않는다 —
+  테마·심각도·빈도만 렌더하고, quotes 는 운영자 승인 판단용으로만
+  learnings.json 에 남으며 글로벌 publish 시 strip 된다 (인젝션 잔여 경로 봉쇄).
 - 리뷰 텍스트는 신뢰 불가 입력: 제어/포맷 문자 제거·길이 제한, 리뷰 원문을 그대로
   베낀 prevention rule 은 폐기 (`rule_is_quoted_review`).
 - 이벤트: `feedback_fetched` / `external_feedback_recorded` (spec.logEvents 선등록).
@@ -23,7 +25,13 @@
   이 있으면 그 파일, 없으면 `.autobot/feedback-log.jsonl` (이벤트당 정확히 한 파일,
   audit-only — gate 는 읽지 않음).
 - 글로벌 승격: 후보 제시 → `AskUserQuestion` 운영자 확인 1회 →
-  `learning_impact.py publish-global`. 자동 승격 금지 (lessons #24).
+  `learning_impact.py publish-global`. 자동 승격 금지 (lessons #24). 같은 테마
+  재관측에서 rule 텍스트가 교체되면 `approved` 는 자동 리셋된다 — 운영자가 본
+  적 없는 rule 이 승인을 상속해 자동 승격되는 우회를 막는다.
+- 심사 verdict 유입: app-review 파이프라인이 남긴 `.autobot/review-verdict.json`
+  을 `external_feedback.py record-verdict` 가 읽어 REJECTED + Guideline 번호를
+  `source: "app_review"` high-severity 테마로 같은 저장소에 합류시킨다 (상세
+  사유는 운영자 반자동 — SKILL §3b). crash/retention 은 여전히 v2.
 
 ## 왜 (leverage)
 

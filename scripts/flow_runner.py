@@ -253,13 +253,44 @@ def _present(elements: list[dict], anchor: str) -> bool:
     return any(_anchor_id(e) == anchor for e in elements)
 
 
+def _anchor_signature(elements: list[dict], anchor: str) -> tuple:
+    """Observable state of *anchor*: (match count, ((AXLabel, AXValue), ...)).
+
+    A change in this signature is the cheapest runtime proof that the tap DID
+    something to the element (new artifact row, toggled value, updated label)
+    rather than merely leaving a static stub on screen.
+    """
+    matches = [e for e in elements if _anchor_id(e) == anchor]
+    return (
+        len(matches),
+        tuple(
+            (
+                str(e.get("AXLabel") or e.get("label") or ""),
+                str(e.get("AXValue") or e.get("value") or ""),
+            )
+            for e in matches
+        ),
+    )
+
+
+# Spatial kinds are asserted by visual_contract / visual_judge on screenshots;
+# the AXe runner has nothing to add, so they pass through explicitly (never
+# via a lenient unknown-kind fallback).
+_VISUAL_POSTCONDITION_KINDS = ("occupies_screen_fraction", "matches_visual_reference")
+
+
 def _evaluate_postcondition(
     kind: str, params: dict, before: list[dict], after: list[dict],
 ) -> tuple[bool, str]:
     """Assert an acceptance postcondition by comparing before/after describe-ui.
 
-    `params["anchor"]` names the element whose presence/count we inspect.
-    Unknown kinds degrade to a navigated_to-style presence check on the anchor.
+    `params["anchor"]` names the element we inspect. Anchor *presence* alone
+    proves nothing (a static stub keeps the identifier): navigated_to demands
+    the anchor be NEWLY present vs the flow-entry snapshot (opt out with
+    params.allow_preexisting for tab-bar roots), artifact_generated /
+    setting_stored demand the anchor's AXLabel/AXValue signature to change.
+    Unknown / empty kinds FAIL — a postcondition nobody can check is a spec
+    bug, not a pass.
     """
     anchor = params.get("anchor") or ""
 
@@ -272,16 +303,26 @@ def _evaluate_postcondition(
         return (a < b), f"count[{anchor}] {b}->{a}"
 
     if kind == "navigated_to":
-        ok = _present(after, anchor)
-        return ok, f"navigated_to[{anchor}] present_after={ok}"
+        present = _present(after, anchor)
+        if params.get("allow_preexisting"):
+            return present, (
+                f"navigated_to[{anchor}] present_after={present} (allow_preexisting)"
+            )
+        preexisting = _present(before, anchor)
+        ok = present and not preexisting
+        return ok, (
+            f"navigated_to[{anchor}] present_after={present} "
+            f"preexisting={preexisting}"
+        )
 
-    if kind == "artifact_generated":
-        ok = _present(after, anchor)
-        return ok, f"artifact_generated[{anchor}] present_after={ok}"
-
-    if kind == "setting_stored":
-        ok = _present(after, anchor)
-        return ok, f"setting_stored[{anchor}] present_after={ok}"
+    if kind in ("artifact_generated", "setting_stored"):
+        sig_before = _anchor_signature(before, anchor)
+        sig_after = _anchor_signature(after, anchor)
+        ok = sig_after[0] > 0 and sig_after != sig_before
+        return ok, (
+            f"{kind}[{anchor}] present_after={sig_after[0] > 0} "
+            f"changed={sig_after != sig_before}"
+        )
 
     if kind == "value_persisted_after_relaunch":
         # Handled out-of-band by the caller (needs a relaunch); here we only
@@ -289,9 +330,10 @@ def _evaluate_postcondition(
         ok = _present(after, anchor)
         return ok, f"value_persisted_after_relaunch[{anchor}] present_after={ok}"
 
-    # Unknown / anchor-only postcondition: presence check (lenient).
-    ok = _present(after, anchor) if anchor else True
-    return ok, f"{kind or 'unknown'}[{anchor}] present_after={ok}"
+    if kind in _VISUAL_POSTCONDITION_KINDS:
+        return True, f"{kind}[{anchor}] delegated to visual_contract/visual_judge"
+
+    return False, f"unknown postcondition kind '{kind or ''}' — not runtime-checkable"
 
 
 def _relaunch(udid: str, bundle_id: str) -> None:
@@ -314,6 +356,11 @@ def _run_acceptance(
     ready, before = _wait_for_anchor(udid, entry_anchor, screen)
     if not ready:
         return False, f"entry anchor '{entry_anchor}' never ready within {DEFAULT_WAIT_TIMEOUT}s"
+    # `before` is overwritten by every step's semantic wait below; keep the
+    # flow-entry snapshot so navigated_to's novelty comparison is against the
+    # state BEFORE the flow ran, not the instant before the final tap (a
+    # mid-flow appearance must not count as "preexisting").
+    entry_snapshot = before
 
     # 2) Execute each step. Actions map to AXe subcommands whose signatures are
     #    documented at axe-cli.com/docs/command-reference (tap/type are anchor- and
@@ -374,7 +421,13 @@ def _run_acceptance(
         time.sleep(DEFAULT_POSTCONDITION_SETTLE)
         after = _describe_ui(udid)
 
-    ok, detail = _evaluate_postcondition(post.kind, post.params, before, after)
+    # All delta postconditions compare against the flow-ENTRY snapshot, not the
+    # last pre-action snapshot. `before` is overwritten by every step's wait, so
+    # a change produced by an EARLIER step (e.g. step 1 creates the artifact,
+    # step 2 taps elsewhere) would read as "no change" against the final tap's
+    # before-state — a false P0 fail. navigated_to already used entry_snapshot;
+    # count/artifact/setting now do too, measuring the flow's net effect.
+    ok, detail = _evaluate_postcondition(post.kind, post.params, entry_snapshot, after)
     return ok, detail
 
 
