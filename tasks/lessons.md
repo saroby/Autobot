@@ -217,3 +217,8 @@
 - **실패 모드**: `ci.yml`의 첫 스텝이 `from scripts import spec_loader` 절대 임포트를 시도했는데, `scripts/`가 `__init__.py` 없는 네임스페이스 패키지라 GitHub 실행 환경(레포 루트 cwd)에서는 `ModuleNotFoundError`로 즉사했다. 로컬에서 `python3 scripts/verify_spec_docs.py`처럼 스크립트를 직접 실행하면 `scripts/`가 `sys.path[0]`에 올라 문제가 재현되지 않아, 이 스텝은 도입 커밋부터 9회 연속(3주+) 실패하면서도 아무도 눈치채지 못했다.
 - **검출 신호**: `gh run list --workflow=<name>` 최근 실행이 전부 실패, 특히 소요 시간이 균일하게 짧으면(같은 스텝에서 매번 즉사) 강한 신호.
 - **방지 규칙**: CI 워크플로를 새로 추가하거나 수정해 푸시/PR을 올렸으면 로컬 통과만으로 끝내지 말고 `gh run list`/`gh run view`로 실제 GitHub 실행 결과(특히 스텝별 소요 시간과 로그)를 최소 1회 확인한다. 로컬 재현 명령은 CI의 cwd·sys.path·환경변수와 다를 수 있다는 전제를 깔고, 가능하면 CI가 실제로 실행하는 명령 그대로(`python3 scripts/foo.py`, `python3 -c "..."` 등)를 회귀 테스트로 subprocess 실행해 고정한다.
+
+## 2026-07-17 — screen-interview 독푸딩: 헤딩 중복 생성
+- 실패 모드: 라운드 기록을 Edit 로 append 하다가 "미결/후속" 섹션을 두 번 생성 (편집 앵커가 결정 로그 끝이어서 기존 섹션 위치를 지나침).
+- 감지 신호: 템플릿 계약("섹션 이름은 계약이다") 위반 — 같은 H2 가 파일에 2개.
+- 예방 규칙: SKILL 철칙 2 에 "같은 헤딩을 두 번 만들지 않는다 — 기존 섹션에 항목 추가" 명문화 (반영 완료).
