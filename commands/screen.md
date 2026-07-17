@@ -20,7 +20,7 @@ allowed-tools:
 > 인터뷰 절차·SSOT 병합 규칙·뷰코드 계약의 SSOT 는 **`autobot-screen-interview` 스킬**이 소유한다.
 
 - **입력** — 화면 이름 또는 한 줄 설명 (생략 시 인터뷰 첫 질문으로 대상 화면부터 확정)
-- **결과물** — `docs/screens/<slug>.md` (화면 spec, 인터뷰의 주 산출물) + `SOUL.md` / `AGENTS.md` / `CLAUDE.md` 생성·병합 + presentation-only SwiftUI 뷰 (`<ScreenName>View.swift`, 상태별 `#Preview` 포함)
+- **결과물** — `docs/screens/<slug>.md` (화면 spec, 인터뷰의 주 산출물) + `SOUL.md` / `AGENTS.md` / `CLAUDE.md` 생성·병합 + presentation-only SwiftUI 뷰 (`<ScreenName>View.swift`, 상태별 `#Preview` 포함) + **상태별 프리뷰 PNG 렌더** (`designs/previews/`, 대화에 표시)
 
 `/autobot:mvp` 의 화면 대량 생산과 반대 방향이다: **화면 하나 = 깊이의 단위.** 인터뷰로 존재 이유·콘텐츠 위계·인터랙션·상태·룩앤필을 끌어내고, 결정을 SSOT 문서에 남겨 이후 세션의 어떤 에이전트든 같은 맥락에서 이어 일할 수 있게 한다.
 
@@ -47,4 +47,4 @@ allowed-tools:
 1. **Step 0 컨텍스트 스캔** — 프로젝트 구조·기존 SSOT·`.autobot/` 산출물(있으면) 파악, 대상 화면 확정
 2. **R1–R5 인터뷰** — 존재 이유 → 콘텐츠 위계 → 인터랙션 → 상태 → 룩앤필 (혼합: 갈림길은 AskUserQuestion, 열린 질문은 대화)
 3. **R6 확정** — 최종 spec 스냅샷 승인
-4. **산출물 생성** — SSOT 생성·병합 + SwiftUI 뷰 + 컴파일 확인(가능한 경우) + 최종 보고
+4. **산출물 생성** — SSOT 생성·병합 + SwiftUI 뷰 + 컴파일 확인 + **프리뷰 렌더(상태별 PNG 를 대화에 표시)** + 최종 보고
