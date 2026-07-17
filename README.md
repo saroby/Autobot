@@ -50,6 +50,14 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 /autobot:resume 5      # Phase 5(빌드 검증)부터 강제 재개
 ```
 
+### 독립 명령: 화면 하나 깊게 기획
+
+```bash
+/autobot:screen 홈 피드
+```
+
+파이프라인과 무관하게 **아무 앱 프로젝트에서나** 화면 하나를 5라운드 인터뷰(존재 이유 → 콘텐츠 위계 → 인터랙션 → 상태 → 룩앤필)로 깊게 기획합니다. 산출물: `docs/screens/<slug>.md` 화면 spec + SOUL.md/AGENTS.md/CLAUDE.md 생성·병합 + presentation-only SwiftUI 뷰 (상태별 `#Preview`). 라운드마다 spec 에 즉시 기록되어 세션이 끊겨도 재개됩니다.
+
 ## 빌드 파이프라인
 
 ```
@@ -179,9 +187,13 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 ├── .claude-plugin/plugin.json          # 플러그인 매니페스트
 ├── commands/
 │   ├── mvp.md                          # /autobot:mvp — 로컬 MVP 빌드 (Phase 0-5 + 7)
+│   ├── plan.md                         # /autobot:plan — Phase 0–2 기획·디자인만 빌드, Phase 2.5 정지 후 미리보기
 │   ├── testflight.md                   # /autobot:testflight — ASC 등록 + archive + upload + 초대
 │   ├── meta.md                         # /autobot:meta — App Store 텍스트 메타데이터 생성 (+ 선택 업로드)
+│   ├── app-review.md                   # /autobot:app-review — 메타데이터·스크린샷·심사 제출 일괄
+│   ├── feedback.md                     # /autobot:feedback — App Store 리뷰 회수 → 학습 저장소 기록
 │   ├── resume.md                       # /autobot:resume — 중단된 빌드 재개
+│   ├── screen.md                       # /autobot:screen — 화면 하나 집중 인터뷰 → SSOT + SwiftUI 뷰 (독립)
 │   └── setup.md                        # /autobot:setup — 글로벌 기본값 설정
 ├── agents/
 │   ├── architect.md                    # Phase 1: 아키텍처 + 타입/통합 계약
@@ -244,6 +256,9 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   ├── autobot-upload-metadata/        # /autobot:meta — `fastlane deliver --skip_binary_upload` 업로드
 │   │   ├── SKILL.md
 │   │   └── scripts/upload-metadata.sh
+│   ├── autobot-screen-interview/       # /autobot:screen — 화면 인터뷰 → SSOT 문서 + presentation-only 뷰
+│   │   ├── SKILL.md
+│   │   └── references/templates.md
 │   ├── autobot-build-report/           # Phase 7 빌드 리포트 + 학습 제안 템플릿
 │   │   ├── SKILL.md
 │   │   └── references/report-template.md

@@ -15,6 +15,12 @@
 - **기획 검토 배선**: codex 아키텍처 리뷰에 planningViolations 축(경고-only), Phase 2.5 critique 에 매력도 4항목.
 - **flow 검증 강화**: postcondition 이 존재 검사에서 상태 변화 검증으로 — navigated_to 신규성(entry 스냅샷 대비), artifact/setting 은 AXLabel/AXValue delta, unknown kind 관대 통과 폐지, delta 기준선을 flow-entry 로 통일(다단계 오탐 해소).
 
+### Added — /autobot:screen 화면 집중 인터뷰 (독립 명령)
+- **`commands/screen.md` + `autobot-screen-interview` 스킬 신설**: 화면 하나를 5라운드 인터뷰(존재 이유 → 콘텐츠 위계 → 인터랙션 → 상태 → 룩앤필, 혼합 방식)로 깊게 기획. 라운드마다 `docs/screens/<slug>.md` 에 즉시 기록해 세션이 끊겨도 재개 가능(status: interviewing → confirmed → built).
+- **SSOT 문서 산출**: SOUL.md(제품 정체성) + AGENTS.md(에이전트 규칙 정본) + CLAUDE.md(@AGENTS.md 참조) 생성·비파괴 병합. 템플릿은 `references/templates.md`.
+- **presentation-only SwiftUI 뷰**: 로직(네트워크·저장·ViewModel) 금지, mock 주입 + 콜백 파라미터 + R4 상태 전부 `#Preview`. 컴파일 검증은 advisory (hard fail 금지 철칙 준수).
+- Autobot 파이프라인과 무관하게 아무 앱 프로젝트에서 동작. `.autobot/architecture.md` 가 있으면 컨텍스트로 활용해 중복 질문 제거.
+
 ### Fixed — 배포 체인 무인 완주
 - **[HIGH] 메타데이터·스크린샷 업로드/심사 제출이 creds 를 못 읽던 결함**: 3개 스크립트가 release_env.sh 를 source 하지 않아 doctor 통과 후 실행만 실패 — upload.sh 패턴으로 통일 + grep 계약 테스트.
 - redundant binary 를 성공으로 오분류하던 재시도: attempt-1 redundant = `build_number_conflict`(exit 6, 비재시도 halted — ASC 의 옛 바이너리로 심사 직행 차단), attempt≥2 만 `already_uploaded`.
