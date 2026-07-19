@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-07-19
+
+### Added — `/autobot:ssot` 제품 청사진 스킬 (독립)
+- **`autobot-ssot` 스킬 + `/autobot:ssot` 커맨드 신설**: 제품 전체를 인터뷰(R1 존재 이유 → R2 기능/MVP 경계 → R3 도메인 → R4 원칙/하지 않을 것 → R5 성격)로 끌어내 정수가 되는 결정을 `ssot/*.md` 로 체계화하고, `SOUL.md`/`AGENTS.md`/`CLAUDE.md` 를 생성·비파괴 병합한다. `autobot-screen-interview` 의 검증된 골격(Step 0 스캔·라운드마다 즉시 기록·status 재개·비파괴 병합)을 제품 전체 규모로 재사용. 어떤 프로젝트에서나 쓰는 독립 명령.
+- **`ssot/` 를 git submodule(별도 repo)로 승격**: 청사진을 프로젝트에서 분리해 `git submodule add <url> ssot` 로 재빌드마다 재사용 가능하게 한다. git 없으면 `git init` 먼저. 배선의 실패 지점을 `references/submodule-setup.md` 에 집중 — ①3가지 진입 상태(신규/중단된 일반 폴더/이미 submodule=UPDATE) 분기로 재실행 멱등성, ②푸시 성공 검증(`PUSH_OK`) 전 원본 `mv`/`rm` 금지(부분 푸시 유실 방지), ③`gh repo create` already_exists → 기존 원격 재사용, ④UPDATE 순서 불변식(브랜치 전환 → commit → push → 검증 → 부모 gitlink)로 detached-HEAD 커밋 유실 차단.
+- `docs/screens/`(화면별 spec, `/autobot:screen` 소유)와 헤딩 충돌을 막도록 AGENTS.md SSOT 지도에 두 소유(`ssot/`=제품 청사진 / `docs/screens/`=화면 spec)를 명시.
+
 ## [0.13.1] — 2026-07-19
 
 ### Added — 교차-빌드 핫스팟 분석기 (A1, 오프라인 학습 마이닝)
