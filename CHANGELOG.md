@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.13.3] — 2026-07-20
+
+### Changed — 검색 구현 시 네이티브 `.searchable` 우선
+- **`references/ios-ux-style.md` SwiftUI Patterns 에 `### Search` 추가**: 검색 UI 를 만들 때 커스텀 TextField + 필터 리스트를 손으로 조립하기 전에 SwiftUI 네이티브 [`.searchable(text:placement:prompt:)`](https://developer.apple.com/documentation/swiftui/view/searchable(text:placement:prompt:)) 를 먼저 고려하도록 지침화. 시스템 검색 바 배치·키보드·접근성·취소 동작을 공짜로 얻는다. ui-builder 가 이 파일을 "exactly" 따르므로 자동 반영.
+
 ## [0.13.2] — 2026-07-19
 
 ### Added — `/autobot:ssot` 제품 청사진 스킬 (독립)

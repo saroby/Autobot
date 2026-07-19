@@ -72,6 +72,17 @@ NavigationStack {
 }
 ```
 
+### Search
+
+검색을 구현할 땐 **커스텀 검색 UI 를 만들기 전에 SwiftUI 네이티브 [`.searchable(text:placement:prompt:)`](https://developer.apple.com/documentation/swiftui/view/searchable(text:placement:prompt:)) 를 먼저 고려한다.** 시스템 검색 바 배치·키보드·접근성·취소 동작을 공짜로 얻는다. TextField + 필터 리스트를 손으로 조립하는 건 네이티브가 부족할 때만.
+
+```swift
+NavigationStack {
+    List(results) { item in ... }
+        .searchable(text: $query, prompt: "검색")
+}
+```
+
 ### Tab View
 
 ```swift
