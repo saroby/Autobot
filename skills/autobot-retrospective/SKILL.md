@@ -144,6 +144,13 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" grade-learnings \
 #     성공/실패 모든 run 에서 호출. /autobot:resume 안내가 footer 에 자동 들어간다.
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" write-run-summary
 
+# (b2) 교차-빌드 핫스팟 분석 (read-only). (a) 가 이번 빌드 채점을 전역 저장소에
+#      반영한 뒤, 호스트가 지금까지 돌린 모든 빌드의 누적 learning 을 phase 단위로
+#      롤업해 "파이프라인이 어디서 체계적으로 약한가 / 어떤 learning 이 죽은 무게인가"
+#      를 뽑는다. 토폴로지가 정적이라 '더 나은 순서'가 아니라 '약한 지점'을 마이닝하며,
+#      pipeline.json 을 건드리지 않고 운영자 검토용 **후보**만 출력한다(자동 적용 없음).
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/topology_insights.py" --out-dir .autobot >/dev/null 2>&1 || true
+
 # (c) 현재 실행이 Phase 0 또는 resume에서 획득해 보관한 generation token으로 해제.
 # status에서 token을 다시 읽지 않는다. 다른 세션이 takeover한 경우 그 세대는 보호돼야 한다.
 : "${OWNED_LOCK_TOKEN:?Phase 0/resume에서 획득한 build lock token이 필요합니다}"
@@ -152,6 +159,8 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-lock release \
 ```
 
 `grade-learnings` 의 출력 (`{"updated": N, "summaries": [...]}`) 을 build-report.md 의 `## Learning Impact` 섹션에 그대로 첨부한다. quarantined 가 발생했다면 `## Quarantined Learnings` 섹션도 추가한다 (`pipeline.sh grade-learnings` 출력의 negative effect_score 항목들).
+
+(b2) 가 생성한 `.autobot/topology-insights.md` 의 **Phase 핫스팟 표 + 개선 후보** 를 build-report.md 의 `## Cross-Build Pipeline Insights` 섹션에 그대로 첨부한다 (교차-빌드 관측이라 이번 빌드가 실패했어도 유용하다). 후보는 자동 적용되지 않으며, 승격이 필요하면 기존 `learning_impact publish-global` 운영자 승인 경로를 쓴다.
 
 ### Phase 7 self-check (필수)
 
