@@ -1,6 +1,6 @@
 {
   "name": "autobot",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "App idea to App Store review in one command. Enterprise-grade iOS 26+ app builder with parallel agent orchestration, self-improving build process, and end-to-end ASO-optimized review submission (metadata + screenshots + binary + AXI-Homepage product registration).",
   "author": {
     "name": "saroby"

@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-07-19
+
+### Added — 교차-빌드 핫스팟 분석기 (A1, 오프라인 학습 마이닝)
+- **`scripts/topology_insights.py` 신설**: 호스트 전역 학습 저장소(`~/.config/autobot/learnings.json`, `learning_impact.load_global` 재사용)를 phase 단위로 롤업해 "파이프라인이 어디서 체계적으로 약한가 / 어떤 learning 이 죽은 무게(effect_score≤0)인가"를 뽑는다. 순수 `rollup(global_learnings)` 코어 + 얇은 CLI(`--out-dir`, `--format md`). **read-only** — pipeline.json 을 건드리지 않고 운영자 검토용 **후보**만 출력하며, 승격은 기존 `learning_impact publish-global` 승인 경로를 쓴다.
+- **왜 '토폴로지 탐색'이 아니라 '핫스팟 마이닝'인가**: 토폴로지가 정적(`spec/pipeline.json` 이 매 빌드 동일)이라 히스토리에 순서 변량이 없다 — 오프라인 마이닝은 '더 나은 미시행 순서'를 찾을 수 없고 교정 압력이 어디에 몰리는지만 정직하게 드러낸다. (실측: 누적 88건 중 Phase 4=47%·Phase 5=26%, Phase 5 의 죽은 learning 21건.)
+- **retrospective 배선**: `autobot-retrospective` Phase 7 마감에 (b2) 스텝 추가 — grade-learnings 직후 실행해 `.autobot/topology-insights.{json,md}` 생성, build-report.md 의 `## Cross-Build Pipeline Insights` 섹션에 첨부. 새 스킬·커맨드 없이 기존 마감 흐름에만 얹음.
+- `tests/test_topology_insights.py` 8건(phase 랭킹·후보 생성·격리 카운트·빌드 커버리지 dedup·빈/오염 저장소 안전성) green.
+
 ## [0.13.0] — 2026-07-18
 
 전수 감사(일반 8렌즈 + 기획깊이 3렌즈, finding별 적대적 반증 검증 — 확정 56 / 기각 9, `tasks/weakness-audit-2026-07-17.md`) 후 9-워크스트림 일괄 수정 + codex 교차 검수(A/B/D 3영역 지적 30건 반영, 4건 근거 유지). 테스트 667 → 962 전부 green.
