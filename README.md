@@ -194,6 +194,7 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   ├── feedback.md                     # /autobot:feedback — App Store 리뷰 회수 → 학습 저장소 기록
 │   ├── resume.md                       # /autobot:resume — 중단된 빌드 재개
 │   ├── screen.md                       # /autobot:screen — 화면 하나 집중 인터뷰 → SSOT + SwiftUI 뷰 (독립)
+│   ├── ssot.md                         # /autobot:ssot — 제품 전체 인터뷰 → ssot/ 청사진(git submodule) + SSOT 문서 (독립)
 │   └── setup.md                        # /autobot:setup — 글로벌 기본값 설정
 ├── agents/
 │   ├── architect.md                    # Phase 1: 아키텍처 + 타입/통합 계약
@@ -259,6 +260,11 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   ├── autobot-screen-interview/       # /autobot:screen — 화면 인터뷰 → SSOT 문서 + presentation-only 뷰
 │   │   ├── SKILL.md
 │   │   └── references/templates.md
+│   ├── autobot-ssot/                   # /autobot:ssot — 제품 인터뷰 → ssot/ 청사진 + git submodule 배선
+│   │   ├── SKILL.md
+│   │   └── references/                 # templates.md · submodule-setup.md
+│   │       ├── templates.md
+│   │       └── submodule-setup.md
 │   ├── autobot-build-report/           # Phase 7 빌드 리포트 + 학습 제안 템플릿
 │   │   ├── SKILL.md
 │   │   └── references/report-template.md
