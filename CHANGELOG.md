@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [0.13.4] — 2026-07-20
+
+### Added — `/autobot:make` 프로젝트 Makefile 생성 (포트 재사용 안전)
+- **`autobot-make` 스킬 + `/autobot:make` 커맨드 신설**: 프로젝트 런타임(Node/Python/Docker/Go)과 실행 명령·포트를 탐지해 관용 타깃(`install`/`run`/`stop`/`test`/`clean`)의 Makefile 을 생성/비파괴 병합한다. **포트를 바인딩하는 프로그램은 `run` 이 `kill-port` 에 의존해 이전 포트 점유 프로세스를 먼저 kill** — 재시작 시 "address already in use" 제거.
+- **`references/port-targets.mk`**: 재사용 포트-kill 규약 SSOT. `lsof -ti tcp:<port>` → 있으면 `kill -9`, 없으면 "already free"(빈 입력 안전), `PORTS` 공백 구분으로 다중 포트. `tests/test_make_port_kill.py` 2건 — 실제 `http.server` 리스너를 띄워 kill 검증 + 빈 포트 no-op(+ Makefile 탭 유효성까지 동시 검증) green.
+
+### Added — `/autobot:clone` 실기기/스토어 앱 분석 → 원본 재구현 브리프
+- **`autobot-clone-analyze` 스킬 + `/autobot:clone` 커맨드 신설**: 기존 앱을 **실기기(idb) + App Store 메타(mcp-appstore)**로 분석해, architect 의 `architecture.md` 섹션 구조에 대응하는 제품 브리프(`.autobot/clone-analysis/brief.md`)를 재구성한다. 사용자가 브리프를 `/autobot:plan`·`/autobot:mvp` 에 넘기면 진짜 architect 가 gate-valid 산출물을 만든다 — 파이프라인 상태를 위조하지 않는다.
+- **기기 계층은 idb (facebook/idb)**: `idb ui describe-all` 로 포그라운드 앱의 **접근성 트리(요소 role·label·frame·id)를 JSON 덤프** — 스크린샷 비전보다 정확한 구조 소스로, 재구성의 1급 입력. `idb screenshot` 은 시각 보완, `idb ui tap/swipe` 로 에이전트 주도 탐색도 가능(기본은 사람 주도 — 블라인드 탐색의 로그인/결제/파괴 버튼 위험 회피).
+- **`scripts/clone_idb.sh` 신설**: `targets`(idb 대상 열거 — physical device 만 OK, 시뮬레이터는 App Store 앱 못 돌리므로 INFO)·`screen <udid> <outdir> <name>`(스크린샷 + 접근성 트리 페어 캡처). 오프라인 검증 seam(`CLONE_TARGETS_RAW` fixture)으로 `tests/test_clone_idb.py` 3건 green. 실기기 iPhone 시뮬레이터로 페어 캡처(png + a11y.json) end-to-end 실증.
+- **`scripts/clone_capture.sh`**: idb 불가 시 스크린샷-only 폴백(devicectl). `CoreDeviceError 4016` 을 `ddiServicesAvailable` 로 분기해 "잠금 해제" vs "Developer Mode/Trust" 안내를 구분. `tests/test_clone_capture.py` 5건 green.
+- **설치 함정 문서화**: idb-companion 은 `facebook/fb` tap + Homebrew 6.x `brew trust` + 소스 컴파일. **`fb-idb` 는 Python 3.14 에서 `asyncio.get_event_loop` 제거로 깨지므로 Python ≤3.13 설치 필수**(`pipx install fb-idb --python python3.11`). 실기기는 Developer Mode + Trust 필요.
+- **설계 원칙**: (1) 복제 금지 경계 — 대상 앱의 이름·로고·에셋·상표는 브리프에 넣지 않는 경쟁 분석용. (2) 사람 주도 기본 + 에이전트 주도 옵션. (3) 스토어 메타가 최소 backbone — 기기 없이도 진행.
+
 ## [0.13.3] — 2026-07-20
 
 ### Changed — 검색 구현 시 네이티브 `.searchable` 우선
