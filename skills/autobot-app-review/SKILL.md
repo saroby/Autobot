@@ -1,6 +1,6 @@
 ---
 name: autobot-app-review
-description: Use when running the end-to-end App Store review submission pipeline for an Autobot project — generates ASO-optimized metadata (if `fastlane/metadata/` is empty), plans a screenshot narrative via `aso-skills:screenshot-optimization`, captures raw screens via the `ParthJadhav/ios-marketing-capture` skill, composites them into App Store-sized iPhone slides via `app-store-screenshots` at every required iPhone size (6.9"/6.5"/6.3"/6.1"), registers new apps on the AXI-Homepage product directory by pushing to `https://github.com/saroby/AXI-Homepage`, uploads metadata + screenshots + binary, and submits the version for App Review. Triggers on "submit for review", "app review", "앱 리뷰", "App Store 제출", "/autobot:app-review".
+description: Use when running the end-to-end App Store review submission pipeline for an Autobot project — generates ASO-optimized metadata (if `fastlane/metadata/` is empty), plans a screenshot narrative via `aso-skills:screenshot-optimization`, captures raw screens via the `ParthJadhav/ios-marketing-capture` skill, composites them into App Store-sized iPhone slides via `app-store-screenshots` at the single required iPhone size (6.9", 1320×2868), registers new apps on the AXI-Homepage product directory by pushing to `https://github.com/saroby/AXI-Homepage`, uploads metadata + screenshots + binary, and submits the version for App Review. Triggers on "submit for review", "app review", "앱 리뷰", "App Store 제출", "/autobot:app-review".
 ---
 
 # Autobot App Review — Metadata + Screenshots + Submit
@@ -47,7 +47,7 @@ to it. Do not infer a skip from timestamps.
 | **B. Metadata** | `autobot-generate-metadata` + `autobot-upload-metadata` (dual skip gate — `.txt` files and `app_store_rating_config.json` checked independently) | `fastlane/metadata/<locale>/*.txt` + `app_store_rating_config.json` |
 | **C. Screenshot plan** | `aso-skills:screenshot-optimization` (via Skill tool) | `.autobot/screenshot-plan.md` |
 | **D-1. Raw capture** | `ParthJadhav/ios-marketing-capture` (via Skill tool, auto-install if absent) | `marketing/<locale>/*.png` |
-| **D-2. Composite at all iPhone sizes** | `app-store-screenshots:app-store-screenshots` (via Skill tool) | `fastlane/screenshots/<locale>/*.png` at 4 iPhone sizes |
+| **D-2. Composite at the 6.9" iPhone size** | `app-store-screenshots:app-store-screenshots` (via Skill tool) | `fastlane/screenshots/<locale>/*.png` at 6.9" (1320×2868) only |
 | **H. Homepage registration** (new apps only) | `scripts/register-on-homepage.sh` | AXI-Homepage `products.ts` updated + assets copied + pushed to origin/main |
 | **E. Screenshot upload** | `scripts/upload-screenshots.sh` | ASC screenshots replaced |
 | **F. Build upload** | `deployer` agent (`autobot-register-app` → `autobot-archive-build` → `autobot-upload-build`) | ASC binary uploaded |
@@ -332,48 +332,66 @@ Output: `marketing/<locale>/01-home.png`, `02-feature.png`, ... (full-screen PNG
 - Simulator unavailable → ERROR with the device install hint from the script.
 - Sentinel timeout → the capture coordinator didn't finish — log + ERROR with retry hint.
 
-## Phase D-2 — Composite at all required iPhone sizes
+## Phase D-2 — Composite at the required iPhone size
 
-Use **`app-store-screenshots:app-store-screenshots`** (Skill-invoke — this one scaffolds a Next.js project, so it must run) to take `marketing/<locale>/*.png` (raw simulator captures) + the app icon + brand colors and composite them into Apple-style ad slides with headlines, gradients, and device mockups, exported at **every required iPhone size**.
+Use **`app-store-screenshots:app-store-screenshots`** (Skill-invoke — this one scaffolds a Next.js project, so it must run) to take `marketing/<locale>/*.png` (raw simulator captures) + the app icon + brand colors and composite them into Apple-style ad slides with headlines, gradients, and device mockups, exported at **the single required iPhone size (6.9")**.
 
 ### Generator location
 
 `.autobot/screenshots-generator/` (gitignored — already covered by `.autobot/` in `.gitignore`).
 
-### Required export sizes
+### Required export size — one size only
 
-The `app-store-screenshots` skill's `IPHONE_SIZES` array must include all four sizes.
+Apple (2025+) requires **only the 6.9" iPhone screenshot** (1320×2868). ASC
+displays it on every iPhone, so no smaller size is needed.
+
+> **Why one size, not four:** uploading multiple iPhone sizes (6.5"/6.3"/6.1")
+> alongside 6.9" is what makes **each slide appear twice** in App Store Connect.
+> `fastlane deliver` classifies each image into an ASC display family by pixel
+> dimensions, and several of those sizes collapse onto the same modern-iPhone
+> family — so ASC receives two images for one slot. One size per slide → exactly
+> one image per slot → no duplicates.
 
 | Display Size | Pixels (portrait) | Required by ASC |
 |--------------|-------------------|------------------|
-| 6.9" | 1320×2868 | Yes (universal — accepted by every iPhone) |
-| 6.5" | 1284×2778 | Yes (older devices fallback) |
-| 6.3" | 1206×2622 | Yes |
-| 6.1" | 1125×2436 | Yes |
+| 6.9" | 1320×2868 | Yes — the only required iPhone size; shown on all iPhones |
+
+The `app-store-screenshots` skill's `IPHONE_SIZES` array must contain **only**
+the 6.9" entry: `{ label: '6.9"', w: 1320, h: 2868 }`.
 
 ### Drive the skill
 
 Load `app-store-screenshots:app-store-screenshots` via the Skill tool with directive:
-> Context: this is an automated Autobot run. Pre-derived answers live in `.autobot/screenshot-plan.md` (slide narrative + headlines) and `app-marketing-context.md` (brand, colors, font, audience). Raw captures live in `./marketing/<locale>/`. App icon is at `<appIconPath>` (from `autobot-app-icon` output). **Do not ask follow-up questions** — use the files. Generator scaffolds to `.autobot/screenshots-generator/`. **Target: Apple App Store iPhone only.** Export every iPhone size in `IPHONE_SIZES` (6.9"/6.5"/6.3"/6.1") for every locale. Output naming: `<locale>/<NN>_<slot-name>.png` written into `fastlane/screenshots/<locale>/` so fastlane's deliver step picks them up.
+> Context: this is an automated Autobot run. Pre-derived answers live in `.autobot/screenshot-plan.md` (slide narrative + headlines) and `app-marketing-context.md` (brand, colors, font, audience). Raw captures live in `./marketing/<locale>/`. App icon is at `<appIconPath>` (from `autobot-app-icon` output). **Do not ask follow-up questions** — use the files. Generator scaffolds to `.autobot/screenshots-generator/`. **Target: Apple App Store iPhone only.** Export **only** the 6.9" size (1320×2868) — the single required iPhone size — for every locale. Do **not** export 6.5"/6.3"/6.1"; extra sizes cause each slide to appear twice on ASC. Output naming: `<locale>/<NN>_<slot-name>.png` written into `fastlane/screenshots/<locale>/` so fastlane's deliver step picks them up.
 
 **Filename convention** (required by fastlane deliver):
 - `01_hero.png`, `02_feature.png`, ... — numeric prefix determines ASC slot order
-- Fastlane auto-detects the display family from pixel dimensions (1320×2868 → 6.9", etc.), so all four sizes can live in the same locale directory
+- One 1320×2868 image per slide — fastlane classifies it as the 6.9" family, the only iPhone slot ASC needs
 
 ### Verify output
 
 ```bash
-IPHONE_SIZE_COUNT=4   # 6.9", 6.5", 6.3", 6.1"
+IPHONE_SIZE_COUNT=1   # 6.9" only — the single required iPhone size
 EXPECTED_SHOTS_PER_LOCALE=$((SLOT_COUNT * IPHONE_SIZE_COUNT))
 
 ACTUAL=$(find fastlane/screenshots -mindepth 2 -name "*.png" -type f | wc -l | tr -d ' ')
 EXPECTED_TOTAL=$((EXPECTED_SHOTS_PER_LOCALE * LOCALE_COUNT))
 if [ "$ACTUAL" -lt "$EXPECTED_TOTAL" ]; then
-  echo "WARN: only $ACTUAL/$EXPECTED_TOTAL screenshots generated. Proceeding — fastlane will accept partial sets."
+  echo "WARN: only $ACTUAL/$EXPECTED_TOTAL screenshots generated. Proceeding — fastlane accepts partial sets."
+fi
+# Guard against the duplicate-upload bug: every screenshot must be 1320×2868 (6.9").
+# A slide present at any other dimension collapses onto the same ASC slot → shown twice.
+if command -v sips &>/dev/null; then
+  find fastlane/screenshots -mindepth 2 -name "*.png" -type f | while read -r f; do
+    dims=$(sips -g pixelWidth -g pixelHeight "$f" 2>/dev/null | awk '/pixelWidth/{w=$2}/pixelHeight/{h=$2}END{print w"x"h}')
+    if [ "$dims" != "1320x2868" ]; then
+      echo "WARN: non-6.9\" screenshot ($dims) will duplicate the slot on ASC — remove it: $f"
+    fi
+  done
 fi
 ```
 
-Don't hard-fail on partial output; fastlane accepts incomplete sets — ASC will mark missing sizes as "needs attention" but still allows submission for the largest supplied size.
+Don't hard-fail on partial output; fastlane accepts incomplete sets — ASC allows submission with the 6.9" set. Any screenshot that is **not** 1320×2868 must be removed before upload, or ASC will show that slide twice.
 
 ## Phase H — Register on AXI-Homepage (new apps only)
 
@@ -617,7 +635,7 @@ After all phases complete:
 Bundle ID:        com.axi.MyApp
 Display Name:     내 앱
 Metadata:         5 fields × 1 locale (ko)
-Screenshots:      20 files × 1 locale (ko) — 5 slides × 4 sizes (6.9"/6.5"/6.3"/6.1")
+Screenshots:      5 files × 1 locale (ko) — 5 slides × 6.9" (1320×2868)
 Build:            v1.0 (123) — VALID
 Submission:       Waiting for Review
 Auto-release:     ON (released immediately upon approval)

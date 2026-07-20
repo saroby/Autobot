@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [0.13.6] — 2026-07-20
+
+### Added — `autobot-check-name` 스킬 (국가별 앱 이름 선점 사전 검증)
+- **새 스킬 `autobot-check-name`**: 앱을 ASC 에 등록하기 **전에** 특정 국가 App Store 에서 그 앱 타이틀이 이미 선점됐는지 공개 **iTunes Search API** 로 조회한다. `autobot-register-app` 의 `name_collision` 실패를 값싸게 사전 경고. 인증 불필요(ASC 세션·API Key 불요, `curl`+`python3` 만) — 등록의 Apple ID 웹 세션과 대비.
+- **다국가·정규화 매칭**: `--country kr,us,jp` 다중 조회(소문자화·dedupe), `trackName` 을 casefold+공백 collapse 로 정규화해 완전일치=`taken`(exit 2), 토큰 겹침=`similar`(조언, 실패 안 함), `--exact` 로 조언 억제. exit 0 clear / 1 usage·network / 2 taken.
+- **한계 명시**: Search API 는 live 앱만·term 당 상위 ~200 개만 → `taken` 은 신뢰, `clear` 는 best-effort(예약-미출시 이름 불가시). 최종 판정은 여전히 register-app 의 `name_collision`.
+- **안전성**: 인자 검증이 네트워크 전 차단, status JSON 은 python 소유·원자적 temp+rename, 응답 속 적대적 문자열의 JSON injection 방어. macOS bash 3.2 호환(연관배열 미사용). 오프라인 회귀 테스트 16개(`AUTOBOT_CHECKNAME_FIXTURE_DIR` fixture 주입).
+
+### Fixed — App Store 스크린샷 "슬라이드마다 2장씩" 중복 업로드
+- **근본 원인**: `autobot-app-review` Phase D-2 가 슬라이드마다 iPhone 4개 사이즈(6.9"/6.5"/6.3"/6.1")를 같은 locale 폴더에 생성 → `fastlane deliver` 가 픽셀 치수로 ASC display family 를 분류하는데, 그중 2개 이상이 **현대 iPhone 동일 슬롯으로 병합**되어 한 슬롯에 같은 슬라이드가 2장씩 올라갔다. (생성기 `app-store-screenshots` 의 `exportAll` 은 선택된 1개 사이즈만 내보내므로 이중-기록은 아님 — 원인은 다중 사이즈 업로드.)
+- **수정**: Apple 2025+ 는 **6.9"(1320×2868) 한 사이즈만 요구**(모든 iPhone 에 표시)하므로 Phase D-2 를 6.9" 단일 사이즈 생성·업로드로 축소. 슬라이드당 PNG 1장 → ASC 슬롯당 이미지 1장 → 중복 소멸. `IPHONE_SIZE_COUNT=1` 로 검증식 수정, `sips` 로 1320×2868 이외 스크린샷을 업로드 전 경고하는 가드 추가, frontmatter·phase 표·리포트 예시의 4-사이즈 문구 정정.
+
 ## [0.13.5] — 2026-07-20
 
 ### Added — 호스트-게이팅 모델 라우팅 (Claude 호스트 전용 비용 절감)
