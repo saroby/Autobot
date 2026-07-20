@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [0.13.5] — 2026-07-20
+
+### Added — 호스트-게이팅 모델 라우팅 (Claude 호스트 전용 비용 절감)
+- **`agent-dispatch.md` 에 중앙관리 Model Routing 정책 표 신설**: `architect`·`quality-engineer`=`opus`(요구→아키텍처→계약 추론, 컴파일 에러 진단), 나머지 6개 coder/보조 에이전트=`sonnet`. 이미 예약돼 있던 "centrally managed policy" 자리에 안착.
+- **host-gated**: `scripts/detect-peer-ai.sh --format env` 의 `runtimeHost` 를 빌드당 1회 판별 → `claude` 일 때만 `Agent(model=<tier>)` 지정, `codex`/`unknown` 은 생략해 호스트 기본 모델 상속. `SKILL.md` dispatch 로직에 step 4a 로 명문화.
+- **frontmatter 는 model-neutral 유지** — provider 중립 불변식(`test_agents_inherit_the_host_model`)을 깨지 않는다. Claude 에서만 Opus→Sonnet 절감(8개 중 6개), Codex 호스트 무영향. VBW(Claude 전용)의 모델 라우팅 아이디어를 Autobot 의 다중-호스트 설계에 맞게 이식.
+
+### Changed — SessionStart 훅으로 compaction 후 빌드 상태 복구
+- **`scripts/load-learnings.sh` 확장**: 활성(비종료) 빌드가 있을 때 현재 Phase·상태·buildId·재시도 브리프를 `hookSpecificOutput.additionalContext` 로 주입. SessionStart 는 `compact` 소스로도 발화하므로, 컨텍스트 compaction 후에도 모델이 빌드 위치를 되찾아 build-state.json(SSOT) 재-read 를 유도한다.
+- PreCompact 훅은 stdout·`additionalContext` 를 지원하지 않아(차단 전용) 부적합 — 지원되는 SessionStart 채널로 구현. `systemMessage`(유저 전용)와 분리. 무빌드/활성빌드/손상상태 fail-open/완료빌드 4케이스 검증.
+
+### Changed — 화면 액션은 네비게이션 바 버튼 우선 (하단 긴 버튼 지양)
+- **`references/ios-ux-style.md` 에 `### 화면 액션 버튼 배치` + Anti-Patterns 행 추가**: 화면 단위 액션(추가·편집·완료·공유·필터)은 하단 풀-폭 버튼을 새로 만들기보다 `.toolbar`(`.primaryAction` 등) 버튼을 기본으로. 하단 고정 버튼은 단일 커밋형 확정(결제·온보딩·저장)에만 + `.safeAreaInset(edge: .bottom)` 부착. `ui-builder` 가 이 문서를 "exactly" 따르므로 자동 반영.
+
+### Added — 스캐폴드가 화면 방향을 항상 명시 선언 (portrait 기본)
+- **`create-xcode-project.sh` project.yml 에 `INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait` 추가**: 방향 선언 누락 시 Xcode 가 iPhone 에 전 방향을 허용해 portrait-first 설계가 landscape 에서 깨지던 문제를 구조적으로 차단. 디자인 스파인(iPhone portrait)에 맞춘 기본값이며, landscape 필요 앱만 값을 확장(주석 안내).
+
 ## [0.13.4] — 2026-07-20
 
 ### Added — `/autobot:make` 프로젝트 Makefile 생성 (포트 재사용 안전)

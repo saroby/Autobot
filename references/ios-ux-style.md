@@ -83,6 +83,22 @@ NavigationStack {
 }
 ```
 
+### 화면 액션 버튼 배치
+
+화면 단위 액션(추가·편집·완료·공유·필터·설정 등)은 **하단에 긴(풀-폭) 버튼을 새로 만들기보다 네비게이션 바 `.toolbar` 버튼을 우선한다.** 시스템이 배치·터치 타깃·Dynamic Type·접근성을 처리하고, 버튼이 콘텐츠 영역을 잠식하지 않는다.
+
+```swift
+.toolbar {
+    ToolbarItem(placement: .primaryAction) {
+        Button("추가", systemImage: "plus") { ... }
+    }
+}
+```
+
+- placement 관례: `.primaryAction`(우상단) = 주요 추가/생성, `.topBarLeading` = 편집/닫기, sheet 는 `.confirmationAction` / `.cancellationAction`.
+- 하단 고정 버튼은 **단일 커밋형 플로우의 최종 확정**(결제 "결제하기", 온보딩 "시작하기", 폼 "저장")에만 쓴다 — 이때도 위 Tab Bar rule 2 대로 `.safeAreaInset(edge: .bottom)` 으로 부착한다.
+- "액션이 하나뿐" 이라는 이유로 하단 풀-폭 버튼을 기본값으로 두지 않는다. 기본은 툴바다.
+
 ### Tab View
 
 ```swift
@@ -220,3 +236,4 @@ ScrollView 내부에서는 추가로:
 | 하드코딩 컬러/사이즈 | Semantic colors, Dynamic Type |
 | `List { ForEach { NavigationLink(destination:)` | `NavigationLink(value:)` + `.navigationDestination` |
 | `.onTapGesture` on root (키보드 닫기용) | `.simultaneousGesture(TapGesture())` |
+| 화면 액션에 하단 풀-폭 버튼 (추가·편집·필터 등) | 네비게이션 바 `.toolbar` 버튼 (`.primaryAction` 등) — 하단 고정은 단일 커밋형 확정에만 |

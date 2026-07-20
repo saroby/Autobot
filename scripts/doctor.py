@@ -76,6 +76,14 @@ def simulator_probe(*, required: bool) -> Probe:
     return Probe("simulator", "pass", "available", f"{count} devices", "")
 
 
+def codesign_probe() -> Probe:
+    # codesign has no version subcommand; presence on PATH is all we can probe.
+    path = shutil.which("codesign")
+    if not path:
+        return Probe("codesign", "fail", "codesign not found", "", "Install Xcode command line tools.")
+    return Probe("codesign", "pass", "available", path, "")
+
+
 def disk_probe(project: Path, *, required: bool) -> Probe:
     gib = shutil.disk_usage(project).free / (1024 ** 3)
     if gib < 1:
@@ -107,7 +115,7 @@ def run_doctor(project: Path, profile: str) -> dict:
         checks.extend([
             lambda: _command("fastlane", ["fastlane", "--version"]),
             lambda: credential_probe(project),
-            lambda: _command("codesign", ["codesign", "--version"]),
+            codesign_probe,
         ])
     with ThreadPoolExecutor(max_workers=len(checks)) as executor:
         probes = list(executor.map(lambda check: check(), checks))

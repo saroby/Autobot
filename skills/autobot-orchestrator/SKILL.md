@@ -57,6 +57,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
    ```
 
    출력 (≤ 40KB) 을 그대로 Agent 프롬프트 맨 앞에 붙인다. `--prompt-tail` 은 이전 실패 원인처럼 이번 실행에만 존재하는 동적 정보에만 사용한다.
+4a. **모델 라우팅 (host-gated)**: Claude Code 호스트면 Agent dispatch 시 `references/agent-dispatch.md` 의 **Model Routing** 표대로 `Agent(model=<tier>)` 를 지정한다 (architect·quality-engineer=`opus`, 나머지 coder/보조 에이전트=`sonnet`). 그 외 호스트(codex/unknown)는 `model` 을 생략해 호스트 기본 모델을 상속한다. host 판별은 빌드당 1회 — `bash "$CLAUDE_PLUGIN_ROOT/scripts/detect-peer-ai.sh" --format env` 의 `runtimeHost` 값을 캐시해 모든 dispatch 에 재사용한다. **frontmatter 에는 model 을 박지 않는다** (provider 중립 불변식 — `test_agents_inherit_the_host_model` 이 강제). tier 표는 agent-dispatch.md 가 SSOT.
 5. **sandbox guard 활성화 / 해제**: sub-agent dispatch 직전 `pipeline.sh sandbox set-active --agent <name> --phase <N>`, 완료 직후 `pipeline.sh sandbox clear-active`. PreToolUse hook 이 marker 를 보고 사전 차단한다 (LOOP 12).
 6. Phase 3 은 **두 단계 dispatch**: (a) `create-xcode-project.sh` 를 self 로 실행, 직후 (b) `design-system` 에이전트를 단일 dispatch. 둘 다 끝난 뒤 `advance-phase --phase 3` 으로 gate 실행.
 6a. Phase 2 도 같은 two-step 패턴: (a) `ux-designer` 를 dispatch, 직후 (b) `.autobot/app-icon-1024.png` 가 없으면 `autobot-app-icon` 스킬을 self 로 실행. gate 2→3 의 `app_icon_source_present` 가 이 파일을 hard 검사하므로 (b) 를 건너뛰면 재시도도 같은 이유로 실패한다. 둘 다 끝난 뒤 `advance-phase --phase 2`.

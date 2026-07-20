@@ -481,6 +481,11 @@ ${DEV_TEAM_LINE}
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # 화면 방향은 항상 명시 선언한다. 누락 시 Xcode 가 iPhone 에 전 방향을
+        # 허용해, portrait-first 로 설계된 화면이 landscape 에서 깨진다. 디자인
+        # 스파인이 iPhone portrait 이므로 기본은 portrait — landscape 가 필요한
+        # 앱만 이 값을 확장한다 (예: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight").
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         CODE_SIGN_ENTITLEMENTS: ${APP_NAME}/${APP_NAME}.entitlements
 
   ${APP_NAME}Tests:

@@ -92,9 +92,85 @@ if [ -f "$STATE_FILE" ]; then
   HAS_BUILD_STATE="true"
 fi
 
-# ── Output systemMessage ──
-cat << EOF
-{
-  "systemMessage": "[Autobot] has_env=${HAS_ENV}, asc_configured=${ASC_CONFIGURED}, has_learnings=${HAS_LEARNINGS}, active_learnings=${ACTIVE_LEARNINGS}, learnings_summary=${ACTIVE_LEARNINGS_SUMMARY}, has_build_state=${HAS_BUILD_STATE}. Phase learning files use explicit names: architecture.md, parallel_coding.md, quality.md, deploy.md. Read the mapped phase file first when present, then .autobot/active-learnings.md for shared context."
-}
-EOF
+# ── Output ──
+# SessionStart JSON. Two channels with different audiences:
+#   systemMessage             → shown to the USER only (not the model)
+#   hookSpecificOutput.additionalContext → injected into the MODEL's context
+# SessionStart fires on source=compact too, so when a build is mid-flight we
+# inject a compact "resume brief" that lets the model recover its bearings AFTER
+# a context compaction. PreCompact cannot inject context (stdout ignored); this
+# SessionStart channel is the supported path. Fail-open: any parse error just
+# drops the brief and still emits the systemMessage.
+HAS_ENV="$HAS_ENV" ASC_CONFIGURED="$ASC_CONFIGURED" HAS_LEARNINGS="$HAS_LEARNINGS" \
+ACTIVE_LEARNINGS="$ACTIVE_LEARNINGS" ACTIVE_LEARNINGS_SUMMARY="$ACTIVE_LEARNINGS_SUMMARY" \
+HAS_BUILD_STATE="$HAS_BUILD_STATE" STATE_FILE="$STATE_FILE" PLUGIN_ROOT="$PLUGIN_ROOT" \
+python3 <<'PY'
+import json, os
+
+env = os.environ
+
+# Build systemMessage by concatenation (never .format/% — the learnings summary
+# may contain literal braces). json.dumps escapes safely at the end.
+sysmsg = (
+    "[Autobot] has_env=" + env.get("HAS_ENV", "")
+    + ", asc_configured=" + env.get("ASC_CONFIGURED", "")
+    + ", has_learnings=" + env.get("HAS_LEARNINGS", "")
+    + ", active_learnings=" + env.get("ACTIVE_LEARNINGS", "")
+    + ", learnings_summary=" + env.get("ACTIVE_LEARNINGS_SUMMARY", "")
+    + ", has_build_state=" + env.get("HAS_BUILD_STATE", "")
+    + ". Phase learning files use explicit names: architecture.md, parallel_coding.md, "
+    "quality.md, deploy.md. Read the mapped phase file first when present, then "
+    ".autobot/active-learnings.md for shared context."
+)
+
+out = {"systemMessage": sysmsg}
+
+TERMINAL = {"completed", "fallback", "skipped"}
+
+def phase_sort_key(pid):
+    try:
+        return float(pid)
+    except Exception:
+        return 1e9
+
+def phase_names():
+    try:
+        spec = json.load(open(os.path.join(env.get("PLUGIN_ROOT", ""), "spec", "pipeline.json")))
+        return {pid: (p.get("name") or pid) for pid, p in spec.get("phases", {}).items()}
+    except Exception:
+        return {}
+
+if env.get("HAS_BUILD_STATE") == "true":
+    try:
+        st = json.load(open(env["STATE_FILE"]))
+        phases = st.get("phases", {}) or {}
+        active = None  # lowest-numbered non-terminal phase = where work resumes
+        for pid in sorted(phases, key=phase_sort_key):
+            if (phases[pid] or {}).get("status") not in TERMINAL:
+                active = pid
+                break
+        if active is not None:
+            ph = phases[active] or {}
+            name = phase_names().get(active, active)
+            retry = ph.get("retryCount", ph.get("retry_count", 0))
+            brief = (
+                "[Autobot build IN PROGRESS] buildId=" + str(st.get("buildId", "?"))
+                + ", app=" + str(st.get("displayName") or st.get("appName", "?"))
+                + ", currentPhase=" + str(active) + " (" + str(name) + ")"
+                + ", status=" + str(ph.get("status", "pending"))
+                + ", retry=" + str(retry)
+                + ". This build's ground truth is .autobot/build-state.json (SSOT) — if your "
+                "working context was just compacted, RE-READ it plus the mapped phase-learning "
+                "file before acting. Never edit build-state.json directly; mutate state only via "
+                "scripts/pipeline.sh. If you hold a build lock, preserve the OWNED_LOCK_TOKEN from "
+                "init-build. Resume the build with /autobot:resume."
+            )
+            out["hookSpecificOutput"] = {
+                "hookEventName": "SessionStart",
+                "additionalContext": brief,
+            }
+    except Exception:
+        pass
+
+print(json.dumps(out, ensure_ascii=False))
+PY

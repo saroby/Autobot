@@ -8,7 +8,7 @@ from conftest import import_runtime_modules
 
 import_runtime_modules()
 
-from doctor import Probe, credential_probe, summarize  # noqa: E402
+from doctor import Probe, codesign_probe, credential_probe, summarize  # noqa: E402
 
 
 class TestDoctor(unittest.TestCase):
@@ -28,6 +28,12 @@ class TestDoctor(unittest.TestCase):
                 "ASC_API_KEY_PATH": str(key),
             })
             self.assertEqual(probe.status, "pass")
+
+    def test_codesign_probe_passes_when_present(self):
+        # Regression: codesign has no --version flag; probing it once blocked ship.
+        probe = codesign_probe()
+        self.assertEqual(probe.status, "pass")
+        self.assertTrue(probe.evidence)
 
     def test_summary_is_machine_actionable(self):
         result = summarize("ship", [
