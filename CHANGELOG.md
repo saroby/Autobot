@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.13.7] — 2026-07-22
+
+### Fixed — 커맨드-스킬 문서 드리프트 (app-review 스크린샷 사이즈)
+- **`/autobot:app-review` 커맨드의 낡은 "4개 사이즈(6.9"/6.5"/6.3"/6.1")" 문구 제거**: SSOT 인 `autobot-app-review/SKILL.md` 는 이미 **6.9" 단일(1320×2868)** 만 규정하는데(여러 사이즈 업로드 시 ASC 에서 슬라이드가 2장씩 중복되는 버그 회피), 커맨드 3곳(CRITICAL RULE #5·Phase D-2 표·Step 4 보고 템플릿)이 낡은 4종 표기를 유지하고 있었다. 커맨드를 SKILL.md 기준으로 정정.
+
+### Changed — 내부 구현 스킬 사용자 노출 정리
+- **내부 스킬 8개에 `user-invocable: false` 추가**: `autobot-app-review`, `autobot-app-icon`, `autobot-build-report`, `autobot-feedback`, `autobot-generate-metadata`, `autobot-retrospective`, `autobot-setup`, `autobot-upload-metadata`. 이들은 커맨드·orchestrator 가 내부 호출하는 구현 스킬이라 사용자가 `/` 자동완성에서 직접 고를 대상이 아닌데도 목록에 노출돼 동명/유사 커맨드(`/autobot:app-review` 등)와 혼동을 유발했다. 이제 사용자 목록에서 숨기되 Claude 의 내부 자동 호출은 유지. 나머지 Autobot 스킬은 이미 `user-invocable: false` 였고 이번에 누락분을 메워 전 스킬 일관.
+
 ## [0.13.6] — 2026-07-20
 
 ### Added — `autobot-check-name` 스킬 (국가별 앱 이름 선점 사전 검증)

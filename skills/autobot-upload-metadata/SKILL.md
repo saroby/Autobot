@@ -1,5 +1,6 @@
 ---
 name: autobot-upload-metadata
+user-invocable: false
 description: Use when uploading App Store metadata (name, subtitle, description, keywords, etc.) from `fastlane/metadata/` to App Store Connect via `fastlane deliver --skip_binary_upload --skip_screenshots`. Single-responsibility skill — does ASC metadata upload only, no generation and no binary upload. Requires the app to be registered on ASC and `fastlane/metadata/` to exist (produced by `autobot-generate-metadata`). Also use when retrying metadata upload after fixing length violations, troubleshooting "Could not edit App Store information", or pushing localized text without touching the binary.
 ---
 

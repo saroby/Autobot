@@ -1,5 +1,6 @@
 ---
 name: autobot-retrospective
+user-invocable: false
 description: Use after an Autobot build completes (success or failure), when checking past build history, when analyzing build performance trends, or when investigating why the same error keeps recurring across builds.
 ---
 

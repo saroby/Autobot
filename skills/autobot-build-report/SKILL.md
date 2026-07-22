@@ -1,5 +1,6 @@
 ---
 name: autobot-build-report
+user-invocable: false
 description: Use when an Autobot build completes (Phase 7) or when the user requests a post-build report. Also use when diagnosing why a build failed, reviewing agent performance, or identifying plugin improvements after a build.
 ---
 

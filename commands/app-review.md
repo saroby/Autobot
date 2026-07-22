@@ -25,7 +25,7 @@ allowed-tools:
 2. **Phase 5 (Integration & Build) 완료 상태여야 한다** — 아니면 `/autobot:resume` 안내 후 중단.
 3. **ASC API key 3종 필수** — `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, `ASC_API_KEY_PATH`.
 4. **질문 금지 (Auto Mode)** — 모든 결정은 `architecture.md` + `build-state.json` + `build-report.md` 에서 자동 도출. 하드 실패만 보고 후 중단.
-5. **스크린샷은 App Store iPhone 사이즈 (6.9"/6.5"/6.3"/6.1") 만 다룬다.**
+5. **스크린샷은 App Store iPhone 6.9" (1320×2868) 단일 사이즈만 다룬다.** 6.5"/6.3"/6.1" 을 함께 올리면 ASC 에서 각 슬라이드가 두 번 표시된다.
 6. **상태 전이는 `scripts/pipeline.sh` 만** — Phase 6 의 일부로 취급. `start-phase --phase 6 --detail "App Review Submission"`.
 
 ## Step 0: 사전 검증
@@ -91,7 +91,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" app-review-controller fail \
 | B | 메타데이터 생성 + **연령등급 config (2b)** + ASC 업로드 — 이원 스킵 게이트 (`.txt` 존재와 `app_store_rating_config.json` 존재를 독립 검사) | `fastlane/metadata/` |
 | C | 5-슬롯 스크린샷 narrative 계획 | `.autobot/screenshot-plan.md` |
 | D-1 | 원본 캡쳐 (`ios-marketing-capture`, 없으면 자동 설치) | `marketing/<locale>/*.png` |
-| D-2 | 4개 iPhone 사이즈 합성 (`app-store-screenshots`) | `fastlane/screenshots/<locale>/*.png` |
+| D-2 | 6.9" 단일 사이즈 합성 (`app-store-screenshots`) | `fastlane/screenshots/<locale>/*.png` (1320×2868) |
 | H | AXI-Homepage 제품 등록 (신규 앱만 — 실패해도 E/F/G 진행) | `.autobot/homepage-status.json` |
 | E | ASC 스크린샷 업로드 | `.autobot/screenshot-upload-status.json` |
 | F | 바이너리 보장 — `deployer` 에이전트 (register→archive→upload). **Step 2.5 선행 필수** | `.autobot/archive-status.json`, `.autobot/upload-status.json` |
@@ -121,7 +121,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 6
 Bundle ID:        com.axi.MyApp
 Display Name:     내 앱
 Metadata:         <META_FIELDS> fields × <LOCALES> locales (+ age rating config)
-Screenshots:      <COUNT> files × <LOCALES> locales — <SLOTS> slides × 4 sizes (6.9"/6.5"/6.3"/6.1")
+Screenshots:      <COUNT> files × <LOCALES> locales — <SLOTS> slides × 6.9" (1320×2868)
 Homepage:         https://axi-homepage.vercel.app/ko/products/<SLUG> (registered)   ← new apps only
 Build:            v<VERSION> (<BUILD_NUMBER>) — VALID
 Submission:       Waiting for Review (automatic release on approval)

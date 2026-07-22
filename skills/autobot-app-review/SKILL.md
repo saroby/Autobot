@@ -1,5 +1,6 @@
 ---
 name: autobot-app-review
+user-invocable: false
 description: Use when running the end-to-end App Store review submission pipeline for an Autobot project — generates ASO-optimized metadata (if `fastlane/metadata/` is empty), plans a screenshot narrative via `aso-skills:screenshot-optimization`, captures raw screens via the `ParthJadhav/ios-marketing-capture` skill, composites them into App Store-sized iPhone slides via `app-store-screenshots` at the single required iPhone size (6.9", 1320×2868), registers new apps on the AXI-Homepage product directory by pushing to `https://github.com/saroby/AXI-Homepage`, uploads metadata + screenshots + binary, and submits the version for App Review. Triggers on "submit for review", "app review", "앱 리뷰", "App Store 제출", "/autobot:app-review".
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: autobot-feedback
+user-invocable: false
 description: "Use when running the external signal loop for a released Autobot app — fetching App Store reviews via mcp-appstore (no ASC auth needed), extracting common complaint themes, and recording them into .autobot/learnings.json as patterns.external_feedback plus stable_id items so the existing effect_score/quarantine machinery applies. Triggered by /autobot:feedback. Also use when re-running feedback collection after new reviews accumulate, or when presenting global prevention-rule promotion candidates for operator confirmation. Project-local recording is automatic; global promotion always requires one explicit operator approval."
 ---
 
