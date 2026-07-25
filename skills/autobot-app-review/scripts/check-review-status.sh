@@ -46,7 +46,7 @@ Optional:
   --dry-run     Generate the JWT but skip all API calls; write nothing.
 
 Environment:
-  ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH (required)
+  APP_STORE_CONNECT_API_KEY_KEY_ID, APP_STORE_CONNECT_API_KEY_ISSUER_ID, APP_STORE_CONNECT_API_KEY_KEY_FILEPATH (required)
 USAGE
 }
 
@@ -84,23 +84,23 @@ done
 
 # Credentials
 MISSING=()
-[ -z "${ASC_API_KEY_ID:-}" ]    && MISSING+=("ASC_API_KEY_ID")
-[ -z "${ASC_API_ISSUER_ID:-}" ] && MISSING+=("ASC_API_ISSUER_ID")
-[ -z "${ASC_API_KEY_PATH:-}" ]  && MISSING+=("ASC_API_KEY_PATH")
+[ -z "${APP_STORE_CONNECT_API_KEY_KEY_ID:-}" ]    && MISSING+=("APP_STORE_CONNECT_API_KEY_KEY_ID")
+[ -z "${APP_STORE_CONNECT_API_KEY_ISSUER_ID:-}" ] && MISSING+=("APP_STORE_CONNECT_API_KEY_ISSUER_ID")
+[ -z "${APP_STORE_CONNECT_API_KEY_KEY_FILEPATH:-}" ]  && MISSING+=("APP_STORE_CONNECT_API_KEY_KEY_FILEPATH")
 if [ ${#MISSING[@]} -gt 0 ]; then
   log_error "missing ASC API credentials: ${MISSING[*]}"
   exit 2
 fi
 
-ASC_API_KEY_PATH_EXPANDED="${ASC_API_KEY_PATH/#\~/$HOME}"
-if [ ! -r "$ASC_API_KEY_PATH_EXPANDED" ]; then
-  log_error "ASC_API_KEY_PATH not readable: $ASC_API_KEY_PATH"
+APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED="${APP_STORE_CONNECT_API_KEY_KEY_FILEPATH/#\~/$HOME}"
+if [ ! -r "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED" ]; then
+  log_error "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH not readable: $APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"
   exit 2
 fi
 
 # JWT generation (ES256) — same helper as autobot-invite-testers/scripts/invite.sh
 make_jwt() {
-  python3 - "$ASC_API_KEY_ID" "$ASC_API_ISSUER_ID" "$ASC_API_KEY_PATH_EXPANDED" <<'PY'
+  python3 - "$APP_STORE_CONNECT_API_KEY_KEY_ID" "$APP_STORE_CONNECT_API_KEY_ISSUER_ID" "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED" <<'PY'
 import base64, json, os, subprocess, sys, time, tempfile
 key_id, issuer_id, key_path = sys.argv[1:4]
 

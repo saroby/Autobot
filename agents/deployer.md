@@ -32,7 +32,7 @@ with open('.autobot/build-state.json') as f:
 print(state.get('environment', {}).get('ascConfigured', False))
 " 2>/dev/null || echo "False")
 
-if [ "$ASC_OK" != "True" ] || [ -z "$ASC_API_KEY_ID" ] || [ -z "$ASC_API_ISSUER_ID" ] || [ -z "$ASC_API_KEY_PATH" ]; then
+if [ "$ASC_OK" != "True" ] || [ -z "$APP_STORE_CONNECT_API_KEY_KEY_ID" ] || [ -z "$APP_STORE_CONNECT_API_KEY_ISSUER_ID" ] || [ -z "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH" ]; then
   echo "⚠️ ASC 인증 미설정 — 등록/업로드/초대 건너뜀, archive 만 수행."
   ASC_UPLOAD=false
 else

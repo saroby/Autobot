@@ -52,45 +52,45 @@ class ConfigSetEnvTests(unittest.TestCase):
         return config(["get-env", k], config_dir=self.dir)
 
     def test_round_trip(self):
-        self._set("ASC_API_KEY_ID", "ABC123XYZ0")
-        r = self._get("ASC_API_KEY_ID")
+        self._set("APP_STORE_CONNECT_API_KEY_KEY_ID", "ABC123XYZ0")
+        r = self._get("APP_STORE_CONNECT_API_KEY_KEY_ID")
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.strip(), "ABC123XYZ0")
 
     def test_single_quote_in_value_round_trips(self):
-        self._set("ASC_API_ISSUER_ID", "iss'uer-x")
-        r = self._get("ASC_API_ISSUER_ID")
+        self._set("APP_STORE_CONNECT_API_KEY_ISSUER_ID", "iss'uer-x")
+        r = self._get("APP_STORE_CONNECT_API_KEY_ISSUER_ID")
         self.assertEqual(r.stdout.strip(), "iss'uer-x")
 
     def test_tilde_path_preserved_unexpanded(self):
-        self._set("ASC_API_KEY_PATH", "~/.appstoreconnect/AuthKey_X.p8")
-        r = self._get("ASC_API_KEY_PATH")
+        self._set("APP_STORE_CONNECT_API_KEY_KEY_FILEPATH", "~/.appstoreconnect/AuthKey_X.p8")
+        r = self._get("APP_STORE_CONNECT_API_KEY_KEY_FILEPATH")
         self.assertEqual(r.stdout.strip(), "~/.appstoreconnect/AuthKey_X.p8")
 
     def test_upsert_keeps_single_line(self):
-        self._set("ASC_API_KEY_ID", "FIRST00000")
-        self._set("ASC_API_KEY_ID", "SECOND1111")
+        self._set("APP_STORE_CONNECT_API_KEY_KEY_ID", "FIRST00000")
+        self._set("APP_STORE_CONNECT_API_KEY_KEY_ID", "SECOND1111")
         env_path = self.dir / ".env"
-        lines = [ln for ln in env_path.read_text().splitlines() if ln.startswith("ASC_API_KEY_ID=")]
+        lines = [ln for ln in env_path.read_text().splitlines() if ln.startswith("APP_STORE_CONNECT_API_KEY_KEY_ID=")]
         self.assertEqual(len(lines), 1, f"expected one line, got {lines}")
-        self.assertEqual(self._get("ASC_API_KEY_ID").stdout.strip(), "SECOND1111")
+        self.assertEqual(self._get("APP_STORE_CONNECT_API_KEY_KEY_ID").stdout.strip(), "SECOND1111")
 
     def test_file_is_chmod_600(self):
-        self._set("ASC_API_KEY_ID", "X000000000")
+        self._set("APP_STORE_CONNECT_API_KEY_KEY_ID", "X000000000")
         mode = stat.S_IMODE((self.dir / ".env").stat().st_mode)
         self.assertEqual(mode, 0o600, f"expected 600, got {oct(mode)}")
 
     def test_lines_are_sourceable_and_grep_detectable(self):
         # KEY='value' (no `export`) so `set -a; . file` exports AND load-learnings'
         # `^KEY=` detection matches.
-        self._set("ASC_API_KEY_ID", "DETECT0000")
+        self._set("APP_STORE_CONNECT_API_KEY_KEY_ID", "DETECT0000")
         env_path = self.dir / ".env"
         probe = subprocess.run(
-            ["bash", "-c", f'set -a; . "{env_path}"; set +a; printf "%s" "$ASC_API_KEY_ID"'],
+            ["bash", "-c", f'set -a; . "{env_path}"; set +a; printf "%s" "$APP_STORE_CONNECT_API_KEY_KEY_ID"'],
             capture_output=True, text=True,
         )
         self.assertEqual(probe.stdout, "DETECT0000")
-        grep = subprocess.run(["grep", "-Eq", "^[[:space:]]*ASC_API_KEY_ID=", str(env_path)])
+        grep = subprocess.run(["grep", "-Eq", "^[[:space:]]*APP_STORE_CONNECT_API_KEY_KEY_ID=", str(env_path)])
         self.assertEqual(grep.returncode, 0, "load-learnings ^KEY= detection must match")
 
     def test_invalid_key_rejected(self):
@@ -108,7 +108,7 @@ class ConfigSetEnvTests(unittest.TestCase):
 
 
 class DeployScriptsSourceReleaseEnvTests(unittest.TestCase):
-    """Every skills/*/scripts/*.sh that checks ASC_API_KEY_ID must load the
+    """Every skills/*/scripts/*.sh that checks APP_STORE_CONNECT_API_KEY_KEY_ID must load the
     canonical env chain (inherited env > project .env > ~/.autobot/.env) via
     release_env.sh. Otherwise ship doctor (which resolves all three layers)
     passes on .env-only setups while the script itself dies late with
@@ -119,7 +119,7 @@ class DeployScriptsSourceReleaseEnvTests(unittest.TestCase):
     def test_every_asc_credential_consumer_sources_release_env(self):
         consumers = {
             script for script in (PLUGIN_DIR / "skills").glob("*/scripts/*.sh")
-            if "ASC_API_KEY_ID" in script.read_text(encoding="utf-8")
+            if "APP_STORE_CONNECT_API_KEY_KEY_ID" in script.read_text(encoding="utf-8")
         }
         names = {script.name for script in consumers}
         # The three scripts that historically skipped the loader must be covered.

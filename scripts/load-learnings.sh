@@ -45,7 +45,7 @@ if [ -n "$ENV_FILE" ]; then
 fi
 
 ASC_CONFIGURED="false"
-if env_has_key "ASC_API_KEY_ID" && env_has_key "ASC_API_ISSUER_ID" && env_has_key "ASC_API_KEY_PATH"; then
+if env_has_key "APP_STORE_CONNECT_API_KEY_KEY_ID" && env_has_key "APP_STORE_CONNECT_API_KEY_ISSUER_ID" && env_has_key "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"; then
   ASC_CONFIGURED="true"
 fi
 
@@ -55,12 +55,17 @@ HAS_LEARNINGS="false"
 ACTIVE_LEARNINGS="false"
 ACTIVE_LEARNINGS_SUMMARY="unavailable"
 
-# Seed from the host-wide store (~/.config/autobot/learnings.json or
-# $XDG_CONFIG_HOME/autobot/learnings.json) so a brand-new project inherits
-# the learnings the previous project already validated. Silent best-effort —
-# never blocks bootstrap if the helper is missing.
+# Refresh from the host-wide store (~/.config/autobot/learnings.json or
+# $XDG_CONFIG_HOME/autobot/learnings.json) so an existing Autobot project picks
+# up learnings other projects validated since its last session. Silent
+# best-effort — never blocks bootstrap if the helper is missing.
+#
+# Gated on `.autobot/` already existing: this hook fires on EVERY SessionStart in
+# EVERY directory, and merge-global creates the dir it writes into. Ungated it
+# littered `.autobot/` into unrelated repos (AXI-Homepage). First-time seeding
+# for a brand-new Autobot project happens in cli.py init_state instead.
 IMPACT_SCRIPT="${PLUGIN_ROOT}/scripts/learning_impact.py"
-if [ -f "$IMPACT_SCRIPT" ]; then
+if [ -f "$IMPACT_SCRIPT" ] && [ -d "${PROJECT_DIR}/.autobot" ]; then
   python3 "$IMPACT_SCRIPT" merge-global --project-dir "$PROJECT_DIR" >/dev/null 2>&1 || true
 fi
 

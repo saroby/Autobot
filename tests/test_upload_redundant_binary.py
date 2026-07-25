@@ -123,7 +123,7 @@ def _run_upload(root: Path, xcodebuild_factory) -> tuple[subprocess.CompletedPro
     _make_executable(bin_dir / "codesign")
 
     env = os.environ.copy()
-    for key in ("ASC_API_KEY_ID", "ASC_API_ISSUER_ID", "ASC_API_KEY_PATH"):
+    for key in ("APP_STORE_CONNECT_API_KEY_KEY_ID", "APP_STORE_CONNECT_API_KEY_ISSUER_ID", "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"):
         env.pop(key, None)
     env.update({
         "PATH": f"{bin_dir}:{env['PATH']}",

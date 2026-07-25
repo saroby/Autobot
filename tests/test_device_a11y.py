@@ -1,0 +1,315 @@
+"""device_a11y.py — tap-candidate safety and screen signatures, offline.
+
+Both driver formats are covered: WebDriverAgent XML (real devices) and idb JSON
+(simulators). The fixtures below are shaped after real captures taken on
+2026-07-25 — a live Journal app tree over WDA and a live ATT prompt over idb —
+not from guesses about the schema. That distinction matters: the first version
+of the modal guard was written against an assumed shape and the real ATT tree
+walked straight through it.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_a11y.py"
+
+
+def run(mode: str, body: str, suffix: str) -> subprocess.CompletedProcess:
+    with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as f:
+        f.write(body)
+        fixture = f.name
+    try:
+        return subprocess.run(
+            ["python3", str(SCRIPT), mode, fixture],
+            capture_output=True, text=True,
+        )
+    finally:
+        Path(fixture).unlink()
+
+
+def idb(elements: list[dict], mode: str = "candidates") -> subprocess.CompletedProcess:
+    return run(mode, json.dumps(elements), ".json")
+
+
+def wda(inner: str, mode: str = "candidates") -> subprocess.CompletedProcess:
+    """Wrap elements in the application root WDA always reports."""
+    return run(mode, (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
+        '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+        ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+        f'{inner}</XCUIElementTypeApplication></AppiumAUT>'
+    ), ".xml")
+
+
+def el(label: str, x: int, y: int, w: int = 100, h: int = 40, **kw) -> dict:
+    return {
+        "AXLabel": label,
+        "role": kw.pop("role", "AXButton"),
+        "enabled": kw.pop("enabled", True),
+        "frame": {"x": x, "y": y, "width": w, "height": h},
+        **kw,
+    }
+
+
+ROOT = el("App", 0, 0, 393, 852, role="AXApplication")
+
+
+def node(kind: str, label: str, x: int, y: int, w: int = 100, h: int = 40, visible: str = "true") -> str:
+    return (f'<XCUIElementType{kind} type="XCUIElementType{kind}" label="{label}" name="{label}"'
+            f' enabled="true" visible="{visible}" x="{x}" y="{y}" width="{w}" height="{h}"/>')
+
+
+class TestWdaFormat(unittest.TestCase):
+    """Real-device path: WebDriverAgent GET /source."""
+
+    def test_emits_center_coordinates(self):
+        r = wda(node("Button", "계속", 38, 722, 299, 52))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("INFO: tap 187 748 | AXButton | 계속", r.stdout)
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+
+    def test_collapses_control_and_its_inner_text(self):
+        # Verified on a live Journal screen: a Button "계속" wrapping a StaticText
+        # "계속" at the same spot must yield ONE target, and the Button wins.
+        r = wda(node("Button", "계속", 38, 722, 299, 52) + node("StaticText", "계속", 40, 724, 295, 48))
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+        self.assertIn("AXButton", r.stdout)
+
+    def test_drops_invisible_and_container_and_noise(self):
+        r = wda(
+            node("Button", "숨김", 0, 100, visible="false")
+            + node("NavigationBar", "일기", 0, 40, 375, 44)
+            + node("Other", "수직 스크롤 막대, 1페이지", 350, 300, 10, 400)
+        )
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_withholds_destructive(self):
+        r = wda(node("Button", "일기 삭제", 38, 400, 299, 52))
+        self.assertNotIn("INFO: tap", r.stdout)
+        self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+
+
+class TestIdbFormat(unittest.TestCase):
+    """Simulator path: idb `ui describe-all`."""
+
+    def test_emits_center_coordinates(self):
+        r = idb([ROOT, el("보관함", 20, 100, 100, 40)])
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("INFO: tap 70 120 | AXButton | 보관함", r.stdout)
+
+    def test_skips_containers_disabled_and_offscreen(self):
+        r = idb([
+            ROOT,
+            el("Scroll", 0, 0, 393, 800, role="AXScrollArea"),
+            el("Off", 0, 3000),
+            el("Dimmed", 0, 300, enabled=False),
+            el("Zero", 0, 400, 0, 0),
+        ])
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+
+class TestDestructiveGuard(unittest.TestCase):
+    """The blacklist lives at the producer — this is the only place it is enforced."""
+
+    def test_withholds_destructive_labels(self):
+        for label in ("삭제", "Delete Account", "구독하기", "Sign Out", "결제"):
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertNotIn("INFO: tap", r.stdout)
+                self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+
+    def test_allows_plain_cancel_as_the_escape_hatch(self):
+        r = idb([ROOT, el("취소", 0, 200), el("Cancel", 0, 260)])
+        self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
+
+    def test_withholds_only_the_subscription_sense_of_cancel(self):
+        r = idb([ROOT, el("구독 취소", 0, 200), el("Cancel Subscription", 0, 260)])
+        self.assertIn("OK: 0 tappable, 2 withheld", r.stdout)
+
+
+class TestModalGuard(unittest.TestCase):
+    def test_system_consent_dialog_without_alert_role_is_suppressed(self):
+        # Shape taken from a live `idb ui describe-all` of an ATT prompt: a flat
+        # StaticText/Button tree under a blank AXApplication, no AXAlert at all.
+        # Role-based detection alone missed this and offered "Allow" as a tap.
+        r = idb([
+            el(" ", 0, 0, 402, 874, role="AXApplication"),
+            el("Allow “Foo” to track your activity?", 71, 371, 260, 64, role="AXStaticText"),
+            el("Ask App Not to Track", 57, 521, 288, 48),
+            el("Allow", 57, 577, 288, 48),
+        ])
+        self.assertIn("WARN: alert/sheet on screen", r.stdout)
+        self.assertNotIn("INFO: tap", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_alert_role_also_suppresses(self):
+        r = idb([ROOT, el("위치 접근", 0, 400, role="AXAlert"), el("나중에", 100, 500)])
+        self.assertIn("WARN: alert/sheet on screen", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_ordinary_confirm_buttons_do_not_stop_the_loop(self):
+        # 확인/계속 are too generic to mean "system dialog" — stopping there
+        # would strand exploration on ordinary app screens.
+        r = idb([ROOT, el("확인", 0, 200), el("계속", 0, 260)])
+        self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
+
+
+class TestRowCollapsing(unittest.TestCase):
+    """A real Journal screen offered 31 "targets" for ~6 real ones before this."""
+
+    ROW = node("Cell", "일기 항목", 0, 400, 375, 60)
+    INNER_TEXT = node("StaticText", "0 개의 입력 항목(올해)", 20, 415, 200, 20)
+    INNER_BUTTON = node("Button", "새로운 일기", 320, 410, 40, 40)
+
+    def test_inert_text_inside_a_row_is_dropped(self):
+        r = wda(self.ROW + self.INNER_TEXT)
+        self.assertIn("일기 항목", r.stdout)
+        self.assertNotIn("0 개의 입력 항목", r.stdout)
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+
+    def test_actionable_control_inside_a_row_survives(self):
+        # Tapping the row and tapping its trailing button do different things.
+        r = wda(self.ROW + self.INNER_BUTTON)
+        self.assertIn("새로운 일기", r.stdout)
+        self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
+
+    def test_standalone_text_is_not_dropped(self):
+        r = wda(node("StaticText", "입력 항목 없음", 100, 470, 175, 30))
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+
+
+class TestVerify(unittest.TestCase):
+    """`verify` is what makes "never tap outside candidates" mechanical.
+
+    A live run drifted past that rule as prose: after an unexpected screen the
+    next tap still used the previous tree's coordinates and walked out of the
+    target app entirely.
+    """
+
+    def _verify(self, inner: str, x: int, y: int) -> subprocess.CompletedProcess:
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
+            '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+            ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+            f'{inner}</XCUIElementTypeApplication></AppiumAUT>'
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False, encoding="utf-8") as f:
+            f.write(body)
+            fixture = f.name
+        try:
+            return subprocess.run(
+                ["python3", str(SCRIPT), "verify", fixture, str(x), str(y)],
+                capture_output=True, text=True,
+            )
+        finally:
+            Path(fixture).unlink()
+
+    def test_accepts_a_real_candidate(self):
+        r = self._verify(node("Button", "계속", 38, 722, 299, 52), 187, 748)
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+
+    def test_rejects_a_coordinate_the_screen_never_offered(self):
+        r = self._verify(node("Button", "계속", 38, 722, 299, 52), 100, 100)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not a tap candidate", r.stderr)
+
+    def test_rejects_a_withheld_destructive_target_by_name(self):
+        r = self._verify(node("Button", "일기 삭제", 38, 400, 299, 52), 187, 426)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("WITHHELD", r.stderr)
+
+    def test_rejects_everything_while_a_system_dialog_is_up(self):
+        r = self._verify(
+            node("StaticText", "‘Foo’이(가) 추적하도록 허용하겠습니까?", 71, 371, 260, 64)
+            + node("Button", "허용", 57, 577, 288, 48),
+            201, 601,
+        )
+        self.assertEqual(r.returncode, 1)
+
+
+class TestSignature(unittest.TestCase):
+    """`sig` is the exploration loop's only guard against looping forever."""
+
+    def test_same_labels_different_order_hash_equal(self):
+        a = idb([el("홈", 0, 0), el("설정", 0, 60)], mode="sig")
+        b = idb([el("설정", 0, 60), el("홈", 0, 0)], mode="sig")
+        self.assertEqual(a.returncode, 0, msg=a.stderr)
+        self.assertIn("INFO: sig ", a.stdout)
+        self.assertEqual(a.stdout.splitlines()[0], b.stdout.splitlines()[0])
+
+    def test_different_screen_hashes_differ(self):
+        a = idb([el("홈", 0, 0)], mode="sig")
+        b = idb([el("상세", 0, 0)], mode="sig")
+        self.assertNotEqual(a.stdout.splitlines()[0], b.stdout.splitlines()[0])
+
+    def test_both_formats_agree_on_the_same_label_set(self):
+        # Same screen seen through either driver must hash identically, or a
+        # driver switch would look like a brand-new screen forever.
+        a = idb([el("App", 0, 0, 375, 812, role="AXApplication"),
+                 el("홈", 0, 0, role="AXButton")], mode="sig")
+        b = wda(node("Button", "홈", 0, 0), mode="sig")  # helper supplies the same root
+        self.assertEqual(a.stdout.splitlines()[0], b.stdout.splitlines()[0])
+
+
+class TestNodeKey(unittest.TestCase):
+    """Screen identity for the flow graph — deliberately blunter than `sig`.
+
+    `sig` moves on any label change, which is what the tap guard needs. A graph
+    node must not: scrolling a list would mint a screen per scroll position and
+    the exploration frontier would never drain.
+    """
+
+    def key(self, inner: str) -> str:
+        out = wda(inner, mode="nodekey").stdout
+        return next(l.split()[-1] for l in out.splitlines() if l.startswith("INFO: nodekey"))
+
+    def test_the_same_screen_with_different_data_is_one_node(self):
+        a = self.key(node("Cell", "월요일 산책", 16, 100) + node("Cell", "화요일 회의", 16, 160))
+        b = self.key(node("Cell", "제주 여행", 16, 100) + node("Cell", "치과 예약", 16, 160))
+        self.assertEqual(a, b)
+
+    def test_scrolling_one_row_into_view_is_not_a_new_screen(self):
+        rows = [node("Cell", f"항목 {i}", 16, 100 + i * 60) for i in range(5)]
+        self.assertEqual(self.key("".join(rows)), self.key("".join(rows + [
+            node("Cell", "항목 5", 16, 400)])))
+
+    def test_empty_and_populated_are_different_screens(self):
+        # These are different layouts to reproduce, so they must stay separate.
+        empty = self.key(node("StaticText", "입력 항목 없음", 125, 462))
+        full = self.key("".join(node("Cell", f"항목 {i}", 16, 100 + i * 60) for i in range(5)))
+        self.assertNotEqual(empty, full)
+
+    def test_wrapper_churn_does_not_split_a_screen_in_two(self):
+        # Live: the same empty-list screen was captured twice minutes apart. One
+        # dump put the create button under an AXToolbar, the other under an
+        # AXOther, and the graph gained a phantom second node.
+        content = node("Button", "생성", 323, 760) + node("StaticText", "항목 없음", 125, 462)
+        wrapped = (
+            '<XCUIElementTypeToolbar type="XCUIElementTypeToolbar" label="" name=""'
+            ' enabled="true" visible="true" x="0" y="740" width="375" height="72">'
+            + node("Button", "생성", 323, 760) + '</XCUIElementTypeToolbar>'
+            + node("StaticText", "항목 없음", 125, 462)
+        )
+        self.assertEqual(self.key(content), self.key(wrapped))
+
+    def test_the_keyboard_is_not_part_of_screen_identity(self):
+        # The keyboard animates in; capturing before and after must not fork the node.
+        base = node("TextField", "제목", 20, 300)
+        keys = "".join(node("Key", c, i * 30, 600) for i, c in enumerate("ㅂㅈㄷㄱ"))
+        self.assertEqual(self.key(base), self.key(base + keys))
+
+    def test_the_navigation_title_separates_look_alike_screens(self):
+        # Two settings-style screens with identical structure are told apart by
+        # the bar that names them.
+        a = self.key(node("NavigationBar", "알림", 0, 50) + node("Cell", "항목", 16, 110))
+        b = self.key(node("NavigationBar", "개인정보", 0, 50) + node("Cell", "항목", 16, 110))
+        self.assertNotEqual(a, b)
+
+
+if __name__ == "__main__":
+    unittest.main()

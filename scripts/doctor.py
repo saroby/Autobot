@@ -45,20 +45,20 @@ def release_environment(project: Path, env: dict[str, str] | None = None) -> dic
 
 def credential_probe(project: Path, *, env: dict[str, str] | None = None) -> Probe:
     values = release_environment(project, env)
-    required = ("ASC_API_KEY_ID", "ASC_API_ISSUER_ID", "ASC_API_KEY_PATH")
+    required = ("APP_STORE_CONNECT_API_KEY_KEY_ID", "APP_STORE_CONNECT_API_KEY_ISSUER_ID", "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH")
     missing = [name for name in required if not values.get(name)]
     if missing:
-        return Probe("asc_credentials", "fail", f"missing {', '.join(missing)}", "", "Run /autobot:setup or set the three ASC_API_* values in .env.")
-    key_path = Path(values["ASC_API_KEY_PATH"]).expanduser()
+        return Probe("asc_credentials", "fail", f"missing {', '.join(missing)}", "", "Run /autobot:setup or set APP_STORE_CONNECT_API_KEY_KEY_ID, APP_STORE_CONNECT_API_KEY_ISSUER_ID, and APP_STORE_CONNECT_API_KEY_KEY_FILEPATH in .env.")
+    key_path = Path(values["APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"]).expanduser()
     if not key_path.is_file() or not os.access(key_path, os.R_OK):
-        return Probe("asc_credentials", "fail", "ASC_API_KEY_PATH is not a readable file", str(key_path), "Point ASC_API_KEY_PATH at the readable App Store Connect .p8 key.")
+        return Probe("asc_credentials", "fail", "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH is not a readable file", str(key_path), "Point APP_STORE_CONNECT_API_KEY_KEY_FILEPATH at the readable App Store Connect .p8 key.")
     try:
         key = key_path.read_text(encoding="utf-8")
     except OSError as exc:
         return Probe("asc_credentials", "fail", str(exc), str(key_path), "Fix key file permissions.")
     if "BEGIN PRIVATE KEY" not in key:
-        return Probe("asc_credentials", "fail", "key file is not a PEM private key", str(key_path), "Download the original App Store Connect API .p8 key and update ASC_API_KEY_PATH.")
-    return Probe("asc_credentials", "pass", "configured", f"keyId={values['ASC_API_KEY_ID']}, issuer={values['ASC_API_ISSUER_ID']}, path={key_path}", "")
+        return Probe("asc_credentials", "fail", "key file is not a PEM private key", str(key_path), "Download the original App Store Connect API .p8 key and update APP_STORE_CONNECT_API_KEY_KEY_FILEPATH.")
+    return Probe("asc_credentials", "pass", "configured", f"keyId={values['APP_STORE_CONNECT_API_KEY_KEY_ID']}, issuer={values['APP_STORE_CONNECT_API_KEY_ISSUER_ID']}, path={key_path}", "")
 
 
 def simulator_probe(*, required: bool) -> Probe:

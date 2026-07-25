@@ -23,9 +23,9 @@ description: Use when creating a TestFlight beta tester group on App Store Conne
 `autobot-register-app` 와 동일한 3개:
 
 ```bash
-ASC_API_KEY_ID="XXXXXXXXXX"
-ASC_API_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-ASC_API_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8"
+APP_STORE_CONNECT_API_KEY_KEY_ID="XXXXXXXXXX"
+APP_STORE_CONNECT_API_KEY_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+APP_STORE_CONNECT_API_KEY_KEY_FILEPATH="$HOME/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8"
 ```
 
 Key role 은 **App Manager** 이상.

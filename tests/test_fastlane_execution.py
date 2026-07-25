@@ -65,8 +65,10 @@ if "--api_key_path" in argv:
     copy_to = os.environ.get("FASTLANE_STUB_KEY_COPY")
     if copy_to:
         shutil.copy(key_path, copy_to)
-print("STUB_FASTLANE_OK")
-sys.exit(0)
+output = os.environ.get("FASTLANE_STUB_OUTPUT", "STUB_FASTLANE_OK")
+if output:
+    print(output)
+sys.exit(int(os.environ.get("FASTLANE_STUB_EXIT", "0")))
 '''
     _make_executable(path, body)
 
@@ -92,9 +94,9 @@ class _FastlaneScriptCase(unittest.TestCase):
             "PATH": f"{self.bin_dir}:{self.env['PATH']}",
             "AUTOBOT_CONFIG_DIR": str(self.root / "autobot-config"),
             "CLAUDE_PROJECT_DIR": str(self.root),
-            "ASC_API_KEY_ID": "FAKEKEY000",
-            "ASC_API_ISSUER_ID": "fake-issuer",
-            "ASC_API_KEY_PATH": str(self.fake_key),
+            "APP_STORE_CONNECT_API_KEY_KEY_ID": "FAKEKEY000",
+            "APP_STORE_CONNECT_API_KEY_ISSUER_ID": "fake-issuer",
+            "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH": str(self.fake_key),
             "FASTLANE_STUB_ARGV_DUMP": str(self.argv_dump),
             "FASTLANE_STUB_KEY_COPY": str(self.key_copy),
         })
@@ -106,7 +108,7 @@ class _FastlaneScriptCase(unittest.TestCase):
         return json.loads(self.argv_dump.read_text())
 
     def _assert_key_json_expanded(self) -> None:
-        # Proves the shell actually expanded ASC_API_KEY_PATH and the
+        # Proves the shell actually expanded APP_STORE_CONNECT_API_KEY_KEY_FILEPATH and the
         # script's python embed read the real file — not a literal
         # '$ASC_API_KEY_CONTENT' or similar quoting regression.
         data = json.loads(self.key_copy.read_text())
@@ -154,6 +156,57 @@ class TestUploadMetadataScript(_FastlaneScriptCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("dry-run validation passed", result.stdout)
         self.assertFalse(self.argv_dump.exists(), "dry-run must not call fastlane")
+
+    def test_first_version_workaround_does_not_skip_age_rating(self):
+        metadata = self._write_metadata()
+        (metadata / "app_store_rating_config.json").write_text("{}")
+        status_path = self.root / "metadata-status.json"
+        self.env.update({
+            "AUTOBOT_METADATA_UPLOAD_STATUS_FILE": str(status_path),
+            "FASTLANE_STUB_EXIT": "1",
+            "FASTLANE_STUB_OUTPUT": (
+                "Uploading metadata to App Store Connect for localized version 'en-US'\n"
+                "No data\n"
+                "fetch_app_store_review_detail"
+            ),
+        })
+
+        result = subprocess.run(
+            ["bash", str(self.SCRIPT), "--bundle-id", "com.example.demo",
+             "--metadata-path", str(metadata)],
+            cwd=self.root, env=self.env, capture_output=True, text=True,
+        )
+
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+        status = json.loads(status_path.read_text())
+        self.assertEqual(status["result"], "failed")
+        self.assertNotEqual(status["reason"], "first_version_review_detail_bug")
+
+    def test_first_version_workaround_requires_and_accepts_age_rating(self):
+        metadata = self._write_metadata()
+        (metadata / "app_store_rating_config.json").write_text("{}")
+        status_path = self.root / "metadata-status.json"
+        self.env.update({
+            "AUTOBOT_METADATA_UPLOAD_STATUS_FILE": str(status_path),
+            "FASTLANE_STUB_EXIT": "1",
+            "FASTLANE_STUB_OUTPUT": (
+                "Uploading metadata to App Store Connect for localized version 'en-US'\n"
+                "Setting the app's age rating...\n"
+                "No data\n"
+                "fetch_app_store_review_detail"
+            ),
+        })
+
+        result = subprocess.run(
+            ["bash", str(self.SCRIPT), "--bundle-id", "com.example.demo",
+             "--metadata-path", str(metadata)],
+            cwd=self.root, env=self.env, capture_output=True, text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        status = json.loads(status_path.read_text())
+        self.assertEqual(status["result"], "uploaded")
+        self.assertEqual(status["reason"], "first_version_review_detail_bug")
 
 
 class TestUploadScreenshotsScript(_FastlaneScriptCase):

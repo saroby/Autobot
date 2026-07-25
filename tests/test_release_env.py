@@ -24,7 +24,7 @@ class TestReleaseEnvironment(unittest.TestCase):
             config.mkdir()
             marker = root / "executed"
             (project / ".env").write_text(
-                'ASC_API_KEY_PATH="$HOME/.keys/AuthKey.p8"\n'
+                'APP_STORE_CONNECT_API_KEY_KEY_FILEPATH="$HOME/.keys/AuthKey.p8"\n'
                 f'EVIL="$(touch {marker})"\n'
                 f'BASH_ENV="{marker}"\n',
                 encoding="utf-8",
@@ -32,11 +32,11 @@ class TestReleaseEnvironment(unittest.TestCase):
             command = (
                 f'. "{PLUGIN_DIR / "scripts" / "release_env.sh"}"; '
                 f'autobot_load_release_env "{project}"; '
-                'printf "%s\\n%s" "$ASC_API_KEY_PATH" "$EVIL"'
+                'printf "%s\\n%s" "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH" "$EVIL"'
             )
             env = os.environ.copy()
             env["AUTOBOT_CONFIG_DIR"] = str(config)
-            env.pop("ASC_API_KEY_PATH", None)
+            env.pop("APP_STORE_CONNECT_API_KEY_KEY_FILEPATH", None)
             env.pop("EVIL", None)
             result = subprocess.run(
                 ["bash", "-c", command], env=env, capture_output=True, text=True,
@@ -48,7 +48,7 @@ class TestReleaseEnvironment(unittest.TestCase):
         self.assertEqual(lines[0], f"{env['HOME']}/.keys/AuthKey.p8")
         self.assertEqual(len(lines), 1)
         self.assertFalse(marker.exists())
-        self.assertEqual(parsed["ASC_API_KEY_PATH"], lines[0])
+        self.assertEqual(parsed["APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"], lines[0])
         self.assertNotIn("EVIL", parsed)
         self.assertNotIn("BASH_ENV", parsed)
 

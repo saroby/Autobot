@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clone_capture.sh — physical-device screen capture for /autobot:clone.
+# device_capture.sh — physical-device screen capture for /autobot:copy.
 #
 # Subcommands:
 #   devices                     List connected *physical* iOS devices, one per line.
@@ -68,7 +68,7 @@ for d in json.load(sys.stdin).get("result", {}).get("devices", []):
 cmd_shot() {
   local udid="${1:-}" dest="${2:-}"
   if [[ -z "$udid" || -z "$dest" ]]; then
-    echo "ERROR: usage: clone_capture.sh shot <udid> <dest.png>" >&2
+    echo "ERROR: usage: device_capture.sh shot <udid> <dest.png>" >&2
     return 1
   fi
   case "$dest" in

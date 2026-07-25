@@ -2,7 +2,7 @@
 # Export an .xcarchive to .ipa and upload to App Store Connect in one step.
 # Single responsibility: export+upload. No registration, no archive, no testers.
 #
-# Auth: API Key if ASC_API_KEY_ID + ASC_API_ISSUER_ID + ASC_API_KEY_PATH all set.
+# Auth: API Key if APP_STORE_CONNECT_API_KEY_KEY_ID + APP_STORE_CONNECT_API_KEY_ISSUER_ID + APP_STORE_CONNECT_API_KEY_KEY_FILEPATH all set.
 #       Otherwise falls back to Xcode-stored credentials.
 #
 # Status output (optional, atomic):
@@ -98,7 +98,7 @@ Optional:
   --dry-run          Validate inputs and print resolved xcodebuild invocation; do not run.
 
 Environment:
-  ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH (optional — auth via API Key)
+  APP_STORE_CONNECT_API_KEY_KEY_ID, APP_STORE_CONNECT_API_KEY_ISSUER_ID, APP_STORE_CONNECT_API_KEY_KEY_FILEPATH (optional — auth via API Key)
   AUTOBOT_UPLOAD_STATUS_FILE (optional, JSON output)
 USAGE
 }
@@ -266,11 +266,11 @@ fi
 
 # Auth selection
 AUTH_METHOD="none"
-ASC_API_KEY_PATH_EXPANDED=""
-if [ -n "${ASC_API_KEY_ID:-}" ] && [ -n "${ASC_API_ISSUER_ID:-}" ] && [ -n "${ASC_API_KEY_PATH:-}" ]; then
-  ASC_API_KEY_PATH_EXPANDED="${ASC_API_KEY_PATH/#\~/$HOME}"
-  if [ ! -r "$ASC_API_KEY_PATH_EXPANDED" ]; then
-    log_error "ASC_API_KEY_PATH not readable: $ASC_API_KEY_PATH"
+APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED=""
+if [ -n "${APP_STORE_CONNECT_API_KEY_KEY_ID:-}" ] && [ -n "${APP_STORE_CONNECT_API_KEY_ISSUER_ID:-}" ] && [ -n "${APP_STORE_CONNECT_API_KEY_KEY_FILEPATH:-}" ]; then
+  APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED="${APP_STORE_CONNECT_API_KEY_KEY_FILEPATH/#\~/$HOME}"
+  if [ ! -r "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED" ]; then
+    log_error "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH not readable: $APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"
     exit 2
   fi
   AUTH_METHOD="api_key"
@@ -409,7 +409,7 @@ log_info "auth:        $AUTH_METHOD"
 if [ "$DRY_RUN" -eq 1 ]; then
   log_info "DRY RUN — would invoke:"
   python3 - "$ARCHIVE_PATH" "$EXPORT_PATH" "$EXPORT_OPTIONS" "$AUTH_METHOD" \
-    "${ASC_API_KEY_PATH_EXPANDED:-}" "${ASC_API_KEY_ID:-}" "${ASC_API_ISSUER_ID:-}" "$TEAM_ID" <<'PY'
+    "${APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED:-}" "${APP_STORE_CONNECT_API_KEY_KEY_ID:-}" "${APP_STORE_CONNECT_API_KEY_ISSUER_ID:-}" "$TEAM_ID" <<'PY'
 import shlex, sys
 ap, ep, opt, auth, kp, kid, iid, team = sys.argv[1:9]
 parts = [
@@ -454,9 +454,9 @@ EXPORT_CMD=(
 )
 if [ "$AUTH_METHOD" = "api_key" ]; then
   EXPORT_CMD+=(
-    -authenticationKeyPath "$ASC_API_KEY_PATH_EXPANDED"
-    -authenticationKeyID "$ASC_API_KEY_ID"
-    -authenticationKeyIssuerID "$ASC_API_ISSUER_ID"
+    -authenticationKeyPath "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED"
+    -authenticationKeyID "$APP_STORE_CONNECT_API_KEY_KEY_ID"
+    -authenticationKeyIssuerID "$APP_STORE_CONNECT_API_KEY_ISSUER_ID"
   )
 fi
 [ -n "$TEAM_ID" ] && EXPORT_CMD+=("DEVELOPMENT_TEAM=$TEAM_ID")

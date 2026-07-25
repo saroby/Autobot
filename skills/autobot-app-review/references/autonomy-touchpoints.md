@@ -42,7 +42,7 @@
 
 이 다섯은 자동화가 **원천적으로 불가능**하다. Apple이 신뢰의 뿌리(root of trust)와 법적 동의를 인간에게 묶어놨기 때문. "자율 실행이 갑자기 멈췄다"의 대부분은 여기서 온다.
 
-1. **ASC API 키 발급 + Apple Developer Program 가입** — 계정당 1회. 인간이 ASC 웹에서 App Manager 이상 role의 `.p8` 키를 만들어 `ASC_API_KEY_ID` / `ASC_API_ISSUER_ID` / `ASC_API_KEY_PATH` 3종을 심어야 한다. 이 키가 이후 모든 자동화의 신뢰 뿌리이므로 자동화로 부트스트랩할 수 없다. (`/autobot:setup`이 한 번 안내)
+1. **ASC API 키 발급 + Apple Developer Program 가입** — 계정당 1회. 인간이 ASC 웹에서 App Manager 이상 role의 `.p8` 키를 만들어 `APP_STORE_CONNECT_API_KEY_KEY_ID` / `APP_STORE_CONNECT_API_KEY_ISSUER_ID` / `APP_STORE_CONNECT_API_KEY_KEY_FILEPATH` 3종을 심어야 한다. 이 키가 이후 모든 자동화의 신뢰 뿌리이므로 자동화로 부트스트랩할 수 없다. (`/autobot:setup`이 한 번 안내)
 
 2. **주기적 ASC 라이선스 약관 수락** — Apple이 새 Paid/Free Apps Agreement나 갱신된 약관을 게시하면, **인간이 ASC 웹에서 수락할 때까지 모든 제출이 차단된다.** API 우회 없음. 첫 실행뿐 아니라 **예측 불가능한 시점에** (Apple이 약관을 바꿀 때마다) 발화한다 — 잘 돌던 자율 파이프라인이 어느 날 멈추는 #1 원인. 발생 시 `deliver`가 약관 관련 에러를 뱉으며, 유일한 복구는 계정 담당자가 ASC → Agreements에서 수락하는 것.
 

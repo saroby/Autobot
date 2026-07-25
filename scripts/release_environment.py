@@ -13,10 +13,12 @@ import os
 import sys
 from pathlib import Path
 
+# Canonical env names are the fastlane `app_store_connect_api_key` action's
+# industry-standard names, so a working fastlane environment runs autobot as-is.
 ALLOWED_KEYS = {
-    "ASC_API_KEY_ID",
-    "ASC_API_ISSUER_ID",
-    "ASC_API_KEY_PATH",
+    "APP_STORE_CONNECT_API_KEY_KEY_ID",
+    "APP_STORE_CONNECT_API_KEY_ISSUER_ID",
+    "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH",
     "FASTLANE_SESSION",
     "FASTLANE_USER",
     "APPLE_ID",

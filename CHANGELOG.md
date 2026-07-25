@@ -2,7 +2,93 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
-## [Unreleased]
+## [0.13.8] — 2026-07-26
+
+### Added — `/autobot:clone` flow 우선 워크플로 (전수 탐험 → flow 맵 → 역기획 → 대상 선택)
+화면 하나를 골라 재현하면 그 화면이 앱에서 어떤 위치인지 모른 채 복제하게 된다. Step 3(측정) 앞에 네 단계를 넣었다.
+- **Step 2 전수 탐험** — `screen`/`tap` 이 `.autobot/clone/flow.jsonl` 에 전이를 **자동 기록**한다(문서 규칙이 아니라 코드). `tap` 은 탭 직후가 아니라 화면이 실제로 바뀔 때까지 폴링한 뒤 도착 화면을 적는다 — 안 기다리면 전환 애니메이션 중이라 **모든 전이가 "제자리"로 기록**된다. 끝내 안 바뀌면 `changed=false` 로 남긴다(그것도 flow 데이터다).
+- **화면 정체성을 둘로 분리** — `sig`(라벨 해시)는 탭 가드용으로 유지하고, flow 노드는 신규 `nodekey`(구조 해시: role 개수 버킷 + 내비바 제목)를 쓴다. `sig` 로 노드를 세면 목록을 스크롤할 때마다 새 화면이 생겨 **탐험이 끝나지 않는다.** 버킷 폭은 빈 상태(셀 0)와 채워진 상태(셀 5)를 다른 노드로 유지하도록 잡았다 — 그 둘은 재현해야 할 서로 다른 레이아웃이다. 실기기 검증: 세션을 새로 열어도 같은 화면이 같은 `nodekey` 로 나왔다.
+- **중단이 정상, 재개가 1급** — 실기기에서는 세션 만료·잠금·로그인 벽 중 하나에 반드시 걸린다. 신규 `scripts/device_flow.py next` 가 로그에서 미방문 후보를 복원해 이어서 탐험한다.
+- **커버리지를 숨기지 않는다** — `device_flow.py stats`. 오늘 첫 독푸딩이 후보 6개 중 1개만 탐험했다는 사실이 이 지표로 처음 드러났다.
+- **Step 2a flow 맵** — `device_flow.py map` 이 **실제 그래프**를 그린다(의존성 0, self-contained). 화면은 썸네일 노드, 전이는 노드를 잇는 SVG 곡선(라벨 = 탭한 요소), **미탐험 후보는 그 화면에 매달린 빈 노드**로 점선 연결한다 — 안 눌러본 타깃은 곧 아직 못 본 화면이므로, 개수보다 빈 카드가 그 사실을 정확히 말한다. 레이아웃은 브라우저가 아니라 파이썬이 계산하므로(엔진도 CDN 도 없다) 좌표 회귀를 테스트로 잡는다: 노드 겹침 0, 엣지 끝점이 노드 경계에 접함, 캔버스 폭 상한. 한 화면의 미탐험이 많으면 가로로 늘리지 않고 4열로 감싼다 — 51개를 한 줄로 깔았을 때 캔버스가 9012px 가 돼 읽을 수 없었다(실측).
+- **세로축은 "탐험 거리"이지 앱 계층이 아니다** — 라벨 없이 위→아래로 그리면 지도가 측정하지 않은 구조를 주장하게 된다. 실제로 이번 실행은 앱 중간(홈에서 진입한 빈 목록)에서 시작해 홈이 그 아래 행에 놓였고, 역기획이 쓴 계층(홈 → 저널 → 항목)과 정면으로 어긋났다. 행 라벨과 범례에 명시한다.
+- **미탐험 판정은 좌표 허용오차 12pt + 라벨로 한다** — 같은 화면을 다시 캡처하면 같은 버튼이 `(38,72)` → `(38,71)` 로 1pt 움직인다. 정확 일치로 비교하면 그 타깃은 영원히 미탐험으로 남아 커버리지가 과소 보고되고 `next` 가 이미 끝난 일을 계속 제안한다.
+- **Step 2b 역기획** — `.autobot/clone/reverse-brief.md` 를 `## 관찰`(로그·측정에서 그대로) / `## 해석`(왜 이렇게 만들었나, **항목마다 근거 관찰 표시**) 두 섹션으로 강제 분리한다. 섞으면 추측이 `/autobot:mvp` 의 명세로 승격된다. 읽는 범위는 flow + 측정까지 — App Store 리뷰는 `copy` 의 입력이라 끌어오지 않는다.
+- **Step 2c 재현 대상 선택** — 화면 30개를 전부 SwiftUI 로 만들지 않는다. 맵을 보고 고르고, 나머지는 스펙만 남긴다.
+- 데이터가 필요한 화면(빈 목록의 채워진 레이아웃)은 **사용자에게 항목 1개 생성을 요청**하고 재개한다. 에이전트가 대신 만들지 않는다 — 사용자의 실제 기기이고 삭제는 파괴적 라벨이라 되돌릴 수 없다.
+- 로깅은 로깅되는 동작의 판정을 바꾸지 않는다 — 로그 경로를 못 쓰면 `WARN` 을 내고 성공으로 반환한다. 실제로 일어난 탭을 실패로 보고하면 탐험 루프가 재시도해 **실기기를 두 번 탭한다.**
+- **구조 해시는 콘텐츠 role 만 센다** — 컨테이너·`AXOther`·`AXKey` 제외. 같은 빈 목록 화면이 `AXToolbar` 유무로 두 노드로 갈려 커버리지 분모가 부풀었다(실측: 9캡처가 유령 6노드 → 실제 5화면). 접근성 트리의 계층은 같은 화면에서도 재구성되므로 "무엇이 담겨 있나"만 정체성으로 쓴다.
+- 검증: 실기기 5화면(빈 항목 목록 → 홈 → 요약 상세 / 항목 작성 / 새 저널 만들기), 전이 6건 자동 기록, 커버리지 7/82 정확 보고, 재개 2회, 맵 깊이 0~2 렌더, 역기획 해석 9건 전부 근거 표시. 탐험 중 가드가 낡은 좌표 탭을 1회 거부(비활성 검색 버튼 좌표를 측정 JSON 에서 임의로 가져온 것) — 코드 가드가 실제로 작동했다. 회귀 13건 추가(`test_device_flow.py` 9 + `test_device_a11y.py` nodekey 4), 전체 1077건 green.
+
+### Changed — `/autobot:clone` 충실도 계약: 픽셀 → 레이아웃·룩앤필·기능
+- 목표를 "픽셀 단위 동일"에서 **"나란히 놓으면 같은 화면이고, 같은 조작에 같은 반응"** 으로 바꿨다(SKILL 표·frontmatter, `commands/clone.md` 표·description·철칙 2). 이 분야의 평가 관행과도 맞는다 — screenshot-to-code 연구는 픽셀 동일이 아니라 인지적 유사도(CLIP score)로 평가한다.
+- **측정 규율(철칙 1)은 그대로 유지**한다. 픽셀이 목표가 아니라고 눈대중을 허용하는 게 아니라, 측정이 그 룩앤필에 도달하는 가장 싼 길이기 때문이다. 측정 불가하지만 재현에 필요한 값(모서리 반경·그라디언트 방향)은 **근사하되 스펙에 근사라고 표시**한다.
+- **기능은 Step 4 의 "동작 계약" 표로 담는다** — 요소별로 어떤 조작이 어느 화면/상태로 가는지, 그리고 그 근거(실측 sig 전이 vs 라벨 추론). 로직 생성은 여전히 하지 않는다: 이 표를 읽어 기능을 구현하는 건 `/autobot:mvp` 다. clone 이 두 번째 앱 빌더가 되면 안 된다.
+- Step 6 에 **누락 카운트**를 추가했다. DCGen(arXiv 2406.16386)이 분류한 screenshot-to-code 실패 1,699건 중 요소 누락 85.3% / 배치 오류 12.7% / 왜곡(색·크기) 2.6% — 우리 검증은 2.6% 구간만 보고 있었다.
+
+### Added — `scripts/device_render.sh` (Step 6 을 실행 가능하게)
+- SKILL 철칙 4 는 "대조 이미지 없이 완료 선언 금지"인데, Step 5 산출물은 앱 진입점도 프로젝트 파일도 없는 낱개 `.swift` 라 **철칙을 지킬 경로가 레포에 없었다.** 프로젝트 파일 없이 `swiftc` → `.app` → `simctl install/launch/screenshot` 으로 닫았다. 새 의존성 0(xcodegen·SwiftPM 불필요).
+- 컴파일 실패 시 컴파일러 진단을 그대로 노출하고 중지한다 — 조용히 실패하면 이전 실행의 낡은 스크린샷과 대조하게 된다.
+- 생성 뷰는 **모든 프로퍼티에 기본값**이 있어야 한다(`<RootView>()` 로 띄우므로). SKILL Step 5 에 명문화.
+- 회귀 `tests/test_device_render.py` 4건 — 인자 누락 / 없는 소스 디렉토리 / `.swift` 없음(Step 5 를 지목) / 컴파일 실패 시 진단 보존.
+
+### Fixed — `/autobot:clone` 2차 독푸딩: 측정 결함 4건 (저널 앱 홈 화면 완주)
+실기기 홈 화면을 완주하니 루트 레이아웃이 `vstack spacing 147` 로 나왔다 — 실제로는 카드 4장이 16pt·10pt 간격인 단순 세로 스택이다. 원인 넷:
+- **스크롤 막대가 콘텐츠로 잡혔다** — 라벨 있는 전체 높이 요소가 카드들의 형제로 들어와 간격을 오염시켰다. 탐험 루프가 이미 쓰던 `device_a11y.NOISE` 어휘를 측정에도 적용한다.
+- **크롬의 자식이 루트로 승격됐다** — 래퍼는 자식을 조상에 재부착하는 게 맞지만, 스크롤 막대의 자식은 스크롤 막대 부품이지 콘텐츠가 아니다(라벨 없는 3pt 인디케이터). 크롬은 서브트리째 버린다.
+- **모든 요소가 두 번씩 측정됐다** — WDA 가 한 화면에 창을 둘 보고한다. 같은 role·label·rect 는 같은 것으로 본다. 이 가드는 **크롬 제거보다 뒤에 둬야 한다** — 앞에 두면 중복된 스크롤 막대가 "중복"으로 처리되며 자식이 루트로 승격돼 위 가드가 침묵한다(실제로 그렇게 뚫렸다).
+- **스택 축을 양수 간격 합으로 판정했다** — "간격 0"과 "살짝 겹침"이 같은 값이 돼, 6pt 겹친 두 줄이 `zstack` 으로 나왔다. 축은 형제가 **겹치지 않는** 쪽이고, 겹침은 요소 자신의 크기 대비로 잰다. 더불어 카드 자신의 배경(부모를 꽉 채워 모든 형제와 겹침)은 간격 계산에서 제외한다 — 한 줄의 간격이 `-343` 으로 잡히던 원인.
+- 검증: 실측 39 → 28 요소, 루트 레이아웃이 실제와 일치하는 `gaps [0, 16, 10, -1]` 로 교정. 회귀 5건 추가(`test_device_measure.py`), 전체 1064건 green.
+
+### Fixed — `/autobot:clone` 실기기 독푸딩에서 발견된 결함 7건 (일기 앱 빈 상태 화면 완주)
+Step 1~6 을 실제로 완주하며(실기기 캡처 → 측정 → 스펙 → SwiftUI → 시뮬레이터 렌더 → 대조) 나온 것들:
+- **`session` 실패 원인이 통째로 사라졌다** — `_curl` 의 `-f` 가 non-2xx 응답 본문을 버려서, Appium 이 500 과 함께 돌려준 진짜 이유(WDA 빌드 로그·automation mode 타임아웃)가 "Appium unreachable" 로 뭉개졌다. 세션 생성만 `-f` 없이 호출해 본문을 파싱한다.
+- **code 65 진단 경로 추가** — `CLONE_WDA_DEBUG=1` 이면 `appium:showXcodeLog` 를 켠다. 이 세션에서 두 번 같은 벽(UI 자동화 토글 OFF)에 부딪혔고, 힌트 문구도 그 원인을 1순위로 지목하도록 고쳤다.
+- **접근성 트리를 평평하게 버리고 있었다** — SKILL 이 "계층에서 스택 방향 추론"을 약속했는데 파서가 계층을 버렸다. `device_a11y.py` 가 `depth`/`parent` 를 함께 내고, `device_measure.py` 가 이걸로 `vstack`/`hstack`/`zstack` + 실측 간격을 계산한다.
+- **무의미한 전체화면 래퍼 21개가 스펙을 덮었다** — 라벨 없는 화면 크기 `AXOther`/`AXWindow` 는 제외하고 개수만 `droppedWrappers` 로 남긴다. 실측 39 → 18 요소.
+- **래퍼를 버리면 자식이 부모를 잃었다** — 재귀적 remap 으로 가장 가까운 살아남은 조상에 다시 붙인다. 이걸 고치기 전엔 레이아웃 추론이 1건만 살아남았다.
+- **텍스트 색이 아예 없었다** — 재현 필수값인데 측정하지 않았다. 배경과 대비가 가장 큰 격자 픽셀을 `foreground` 로 낸다.
+- **컨트롤의 fill 색을 놓쳤다** — FAB 의 파란색(`#6E7DFF`)이 모서리(뒤 캡슐 `#2B1C31`)에도 중심(흰 글리프 `#E5F3FF`)에도 없었다. 내부 격자 최빈값을 `fill` 로 낸다.
+- 신규 `scripts/device_compare.py` — 원본과 재현본을 나란히 붙인 PNG 생성(stdlib zlib 인코더). 논리 해상도가 다르면 `WARN` — 375×812 측정값을 402×874 시뮬레이터에서 렌더하면 전부 어긋나는데 사후 스케일링이 그걸 가린다. SKILL Step 6 에 "원본과 같은 크기 시뮬레이터에서 렌더" 를 명문화.
+- 검증: `tests/test_device_measure.py` 23건 + `test_device_a11y.py` 22건, 전체 1055건 green. 대조 이미지로 육안 확인 — 남은 차이는 사전에 `unmeasurable` 로 선언한 항목(번들 에셋·자리표시자 문구)뿐이다.
+
+### Added — `/autobot:clone` — 화면을 있는 그대로 재현하는 신규 스킬
+- 개명으로 비워진 `clone` 이름에 **실제 재현 스킬**을 새로 넣었다. `copy` 가 방향(기획 입력)을 뽑는다면 `clone` 은 화면 자체를 SwiftUI 로 재현한다: 화면 스펙 `.autobot/clone/screens/*.md` + 측정값 `*.json` + `Sources/*.swift` + 원본 대조 이미지 `compare/*.png`.
+- 신규 `scripts/device_measure.py` — 접근성 트리(정확한 frame)와 스크린샷(실제 픽셀)을 합쳐 재현용 수치를 낸다. 요소별 x·y·w·h, frame 모서리/중심의 **실측 색**, 글자 높이에서 역산해 iOS 텍스트 스타일로 스냅한 타이포, 빈도순 팔레트. PNG 디코딩은 zlib+struct 로 stdlib 만 쓴다(Pillow 미도입).
+  - 여러 줄 라벨의 frame 높이를 그대로 쓰면 폰트가 과대추정된다(실측: 2줄 라벨이 66.7pt "largeTitle"로 나옴) → 명시적 줄바꿈으로 나누고, 그래도 최대 스타일을 넘으면 추정값 대신 `unreliable` 로 표기한다.
+  - 측정 불가 항목(바이너리 에셋·폰트 파일·애니메이션 타이밍·반투명 뒤 색)을 `unmeasurable` 로 명시한다. **기기에서 앱 에셋 추출은 탈옥 없이 불가능**하다는 사실을 스킬·커맨드 문서에 못박았다 — 정책이 아니라 기술적 제약.
+- Step 0 소유 확인 분기: 본인 앱이면 이름·아이콘·문구를 그대로, 타사 앱이면 레이아웃·색·타이포만 재현하고 이름·로고·문구는 자리표시자. 타사 재현물의 App Store 출시는 Guideline 4.1(Copycats) 리젝이라는 사실을 결과로 명시(작업 차단은 하지 않음).
+- 탐험 루프·가드는 `copy` 와 **같은 코드**를 공유한다(`device_wda.sh`). 대조 이미지 없이 완료 선언 금지를 CRITICAL RULE 로 둠.
+- `tests/test_device_measure.py` 11건 green. ⚠️ Step 4~6(스펙 작성 → SwiftUI 생성 → 대조 검증)은 아직 실행 검증되지 않은 산문 절차다.
+
+### Changed — `/autobot:clone` → `/autobot:copy` 로 개명, 기기 드라이버 스크립트를 `device_*` 로 통일 (BREAKING)
+- 기존 clone 스킬은 대상 앱을 *복제*하지 않고 **기능·구조·훅을 재구성해 새 원본 앱의 기획 입력**을 만든다. 이름이 하는 일과 어긋나 `copy` 로 개명했다: `/autobot:copy`, 스킬 `autobot-copy-analyze`, 산출물 `.autobot/copy-analysis/brief.md`. `clone` 이라는 이름은 실제 복제 스킬에 넘긴다.
+- 기기 접근 스크립트 4종을 `clone_*` → `device_*` 로 통일(`device_wda.sh`/`device_a11y.py`/`device_idb.sh`/`device_capture.sh`). 이들은 특정 스킬이 아니라 **기기 드라이버**이고 앞으로 두 스킬이 공유한다. 테스트도 `tests/test_device_*.py` 로 동반 개명.
+- 동작 변경 없음 — 순수 개명. `scripts/verify_spec_docs.py` 문서 드리프트 게이트 PASS, 관련 테스트 42건 green.
+
+### Changed — `/autobot:copy` 자율 탐험이 기본, 실기기 연결은 하드 전제조건 (BREAKING)
+- **에이전트 주도가 기본** — 사용자가 화면을 하나씩 열어주던 "사람 주도" 기본값을 폐기하고, 에이전트가 `screen → candidates → tap/swipe` 루프로 대상 앱을 스스로 탐험한다. 사용자는 앱을 열고 기기를 잠금 해제해두는 것까지만 한다.
+- **드라이버를 idb → Appium/WebDriverAgent 로 교체** — 실기기 검증 결과 fb-idb 의 UI 명령은 **시뮬레이터 전용**이었다(`ui describe-all` → `Target doesn't conform to FBAccessibilityCommands protocol`, `ui tap` → `...FBSimulatorLifecycleCommands protocol`, `idb screenshot` → iOS 26 에서 `screenshotr 0xe8000022`; companion 재부착으로도 불변). 기존 문서는 **작성 시점부터** 존재하지 않는 능력을 1급 경로로 규정하고 있었다. 신규 `scripts/device_wda.sh` 가 WDA `GET /source`(XML 트리)·`GET /screenshot`·W3C pointer actions 로 실기기를 실제로 조작한다 — 실기기에서 캡처·탭·재방문 감지까지 end-to-end 검증 완료.
+- **기기 없으면 중지** — `device_wda.sh device`(stdout=udid 한 줄) → `session`(stdout=session id 한 줄) 두 하드 게이트. 미연결·다중 연결·Appium 미기동·서명 누락·UI 자동화 OFF 면 종료한다. `paired` 는 신뢰 기록일 뿐이라 연결로 치지 않는다(`tunnelState: connected` 만 인정). 기존 "기기 없음 → store-metadata-primary" 폴백은 **제거**.
+- **트리 해석을 드라이버에서 분리** — 신규 `scripts/device_a11y.py` 가 WDA XML 과 idb JSON 을 자동 판별해 같은 형태로 정규화하고, 탭 후보·파괴적 필터·화면 서명을 한 곳에서 계산한다. `device_idb.sh` 는 이 모듈에 위임하며 **시뮬레이터 전용**으로 명시됐다.
+- **파괴적 탭 차단을 후보 생성 지점에 배치** — `candidates` 가 탭 가능한 요소만 `INFO: tap <x> <y>` 로 내보내고 파괴적 라벨(삭제·구매·구독·로그아웃·탈퇴 / delete·purchase·subscribe·sign out…)은 `WARN: withheld` 로 제외한다. 평범한 `취소`/`Cancel` 은 시트 탈출 경로라 남기고 구독 해지 어휘만 제외. 컨테이너·비활성·비가시(WDA `visible`)·스크롤 막대 노이즈는 탈락하고, 같은 라벨이 겹친 컨트롤/내부 텍스트는 하나로 접어 실제 컨트롤을 고른다.
+- **모달은 후보 0개로 강제** — 실물 ATT 프롬프트가 `AXAlert` 없이 평평한 StaticText/Button 트리로 온다는 걸 실행 중 확인했고(role 기반 감지가 뚫려 "Allow" 가 탭 후보로 나왔다), 어휘 기반(`허용`/`Allow`/`Ask App Not to Track`/`앱을 사용하는 동안`…) 감지를 1급으로 올렸다. 일반적인 `확인`/`계속`/`취소` 는 오탐 비용이 커 제외.
+- **루프 종료 조건을 수치로 고정** — 탭 25회 예산, 동일 화면 서명 3연속(`INFO: sig <hash>`), `WARN: alert/sheet`, 임의 `ERROR:` 시 즉시 중단(재시도 루프 금지).
+- **낡은 좌표 탭을 코드로 차단** — `tap <sid> <x> <y> <tree.xml>` 로 시그니처 변경(BREAKING). 트리 인자가 필수이며 ①그 좌표가 해당 트리의 후보인지(`device_a11y.py verify`) ②지금 화면이 아직 그 트리인지(라이브 sig 대조) 둘 다 통과해야 탭한다. 실기기 실행 중 "예상과 다른 화면인데 낡은 좌표로 이어 탭" 이 발생해 탐험이 대상 앱 밖으로 나갔는데, STOP 규칙이 산문이라 막지 못했다 — 가드를 코드로 내렸다.
+- **후보 노이즈 축소** — 리스트 행과 그 안의 텍스트가 서로 다른 라벨이라 같은-라벨 접기로는 안 합쳐졌고, 실제 화면에서 후보가 31개까지 부풀었다. 이제 더 큰 후보 안에 들어 있는 비활성 요소(StaticText/Image)는 버리고 행 자체를 남긴다. 행 안의 실제 컨트롤(Button/Cell/Link 등)은 별개 타깃이라 항상 유지. 실측 31 → 12.
+- **Step 1 절차 결함 2건 보강** — `analyze_reviews` 가 리뷰 0건일 때 에러가 아니라 빈 분석 객체(`totalReviewsAnalyzed: 0`)를 돌려줘 근거 없는 훅을 쓰게 되는 문제(실측: 리뷰 3만건 앱이 us·kr 모두 0건) → 0건 감지·재시도·`> review-signal unavailable` 표기 의무화. `get_similar_apps` 가 카테고리 기반이라 무관한 앱을 주는 문제(실측: 일기 앱에 MyFitnessPal·Fitbod) → 핵심 기능 명사로 대조·폐기 후 `search_app` 로 경쟁군 재구성.
+- 회귀: `tests/test_device_a11y.py`(두 포맷·파괴적·모달·서명, `tests/test_device_wda.py`(게이트 3경로 + 셀렉터), `tests/test_device_idb.py`(타깃 파싱·게이트). 전체 스위트 1023건 green. 게이트는 macOS 기본 `/bin/bash` 3.2 에서도 확인.
+
+### Fixed — SessionStart 훅이 Autobot 과 무관한 레포에 `.autobot/` 을 만들던 문제
+- 훅은 **모든 디렉토리의 모든 세션에서** 실행되는데 `learning_impact.py merge-global` 이 전역 학습을 시딩하며 `.autobot/` 을 무조건 생성했다. 결과적으로 `AXI-Homepage` 등 Autobot 프로젝트가 아닌 레포에 `learnings.json`·`active-learnings.md`·`phase-learnings/` 만 든 껍데기 폴더가 남았다(실측: 사용자 레포 14곳).
+- `load-learnings.sh` 의 merge-global 호출을 `.autobot/` 이 **이미 있을 때**로 게이트했다. 신규 프로젝트의 최초 시딩은 `cli.py init_state`(= `pipeline.sh init-build`)로 옮겼다 — 그 시점이 "이 디렉토리는 Autobot 프로젝트다"가 처음 참이 되는 지점이다. 시딩 실패는 `WARN` 만 내고 빌드 초기화를 막지 않는다.
+- **시딩과 함께 렌더도 init-build 에서 한다** — 에이전트가 읽는 건 `learnings.json` 이 아니라 `active-learnings.md`·`phase-learnings/*.md` 인데, 훅의 렌더는 SessionStart 시점(= `.autobot/` 이 아직 없던 시점)에 이미 지나갔다. 시딩만 옮겼다면 신규 프로젝트의 **첫 빌드 전체가 학습 없이** 돌고 다음 세션에야 렌더됐을 것이다.
+- 회귀 2건: 비-Autobot 디렉토리에서 훅 실행 후 `.autobot/` 미생성, `init-build` 후 시딩 + 렌더 산출물 확인(`tests/test_learnings_cross_project.py`). 전체 1088건 green.
+
+### Changed — ASC 자격증명 env 이름을 fastlane 업계표준으로 통일 (BREAKING)
+- ASC API Key 3종의 canonical env 이름을 autobot 자체 약칭 `ASC_API_*` 에서 fastlane `app_store_connect_api_key` 액션의 **업계표준**(`APP_STORE_CONNECT_API_KEY_KEY_ID` / `APP_STORE_CONNECT_API_KEY_ISSUER_ID` / `APP_STORE_CONNECT_API_KEY_KEY_FILEPATH`)으로 전면 리네임 — 기존 fastlane 환경이 별도 설정 없이 그대로 동작한다.
+- 전 저장소 통일: deploy 스크립트 8개(`upload-metadata`/`upload-screenshots`/`submit-for-review`/`check-review-status`/`invite`/`upload`/`load-learnings` 등)·`doctor.py`·`release_environment.py`(`ALLOWED_KEYS`)·회귀 테스트·SKILL/커맨드 문서·`.env.example`.
+- **BREAKING**: 하위호환 별칭을 두지 않는다(순수 표준). 기존 `~/.autobot/.env` 의 `ASC_API_*`(및 짧은 `ASC_KEY_*`)는 더 이상 인식되지 않으므로 **표준 이름으로 갱신**해야 한다 — `/autobot:setup` 재실행 또는 `.env` 키 이름 변경으로 마이그레이션.
 
 ## [0.13.7] — 2026-07-22
 

@@ -61,9 +61,9 @@ class TestCheckReviewStatusContract(unittest.TestCase):
             self.assertEqual(gen.returncode, 0, gen.stderr)
             env = os.environ.copy()
             env.update({
-                "ASC_API_KEY_ID": "TESTKEY123",
-                "ASC_API_ISSUER_ID": "00000000-0000-0000-0000-000000000000",
-                "ASC_API_KEY_PATH": str(key_path),
+                "APP_STORE_CONNECT_API_KEY_KEY_ID": "TESTKEY123",
+                "APP_STORE_CONNECT_API_KEY_ISSUER_ID": "00000000-0000-0000-0000-000000000000",
+                "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH": str(key_path),
                 "CLAUDE_PROJECT_DIR": str(root),
                 "AUTOBOT_CONFIG_DIR": empty_config,
             })
@@ -82,7 +82,7 @@ class TestCheckReviewStatusContract(unittest.TestCase):
                 tempfile.TemporaryDirectory() as empty_config:
             root = Path(tmp)
             env = os.environ.copy()
-            for key in ("ASC_API_KEY_ID", "ASC_API_ISSUER_ID", "ASC_API_KEY_PATH"):
+            for key in ("APP_STORE_CONNECT_API_KEY_KEY_ID", "APP_STORE_CONNECT_API_KEY_ISSUER_ID", "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"):
                 env.pop(key, None)
             env.update({
                 "CLAUDE_PROJECT_DIR": str(root),

@@ -9,9 +9,9 @@
 #      (no encryption, no IDFA, has rights, no 3rd-party content).
 #
 # Required env (ASC API Key):
-#   ASC_API_KEY_ID
-#   ASC_API_ISSUER_ID
-#   ASC_API_KEY_PATH
+#   APP_STORE_CONNECT_API_KEY_KEY_ID
+#   APP_STORE_CONNECT_API_KEY_ISSUER_ID
+#   APP_STORE_CONNECT_API_KEY_KEY_FILEPATH
 #
 # Status output (optional, atomic):
 #   AUTOBOT_REVIEW_SUBMIT_STATUS_FILE
@@ -216,20 +216,20 @@ fi
 
 # ASC credentials check
 MISSING=()
-[ -z "${ASC_API_KEY_ID:-}" ]    && MISSING+=("ASC_API_KEY_ID")
-[ -z "${ASC_API_ISSUER_ID:-}" ] && MISSING+=("ASC_API_ISSUER_ID")
-[ -z "${ASC_API_KEY_PATH:-}" ]  && MISSING+=("ASC_API_KEY_PATH")
+[ -z "${APP_STORE_CONNECT_API_KEY_KEY_ID:-}" ]    && MISSING+=("APP_STORE_CONNECT_API_KEY_KEY_ID")
+[ -z "${APP_STORE_CONNECT_API_KEY_ISSUER_ID:-}" ] && MISSING+=("APP_STORE_CONNECT_API_KEY_ISSUER_ID")
+[ -z "${APP_STORE_CONNECT_API_KEY_KEY_FILEPATH:-}" ]  && MISSING+=("APP_STORE_CONNECT_API_KEY_KEY_FILEPATH")
 if [ ${#MISSING[@]} -gt 0 ]; then
   log_error "missing ASC API credentials: ${MISSING[*]}"
   exit 2
 fi
 
-ASC_API_KEY_PATH_EXPANDED="${ASC_API_KEY_PATH/#\~/$HOME}"
-if [ ! -r "$ASC_API_KEY_PATH_EXPANDED" ]; then
-  log_error "ASC_API_KEY_PATH not readable: $ASC_API_KEY_PATH"
+APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED="${APP_STORE_CONNECT_API_KEY_KEY_FILEPATH/#\~/$HOME}"
+if [ ! -r "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED" ]; then
+  log_error "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH not readable: $APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"
   exit 2
 fi
-ASC_API_KEY_PATH="$ASC_API_KEY_PATH_EXPANDED"
+APP_STORE_CONNECT_API_KEY_KEY_FILEPATH="$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH_EXPANDED"
 
 # fastlane install (skipped in dry-run)
 if [ "$DRY_RUN" -eq 0 ] && ! command -v fastlane &>/dev/null; then
@@ -278,7 +278,7 @@ API_KEY_JSON="$WORK_DIR/fastlane_api_key.json"
 # The PEM flows file → python → file only: a shell variable/argv would expose
 # the private key to same-host process listings and any future `set -x`.
 ( umask 077
-  python3 - "$ASC_API_KEY_ID" "$ASC_API_ISSUER_ID" "$ASC_API_KEY_PATH" > "$API_KEY_JSON" <<'PY'
+  python3 - "$APP_STORE_CONNECT_API_KEY_KEY_ID" "$APP_STORE_CONNECT_API_KEY_ISSUER_ID" "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH" > "$API_KEY_JSON" <<'PY'
 import json, sys
 with open(sys.argv[3], encoding="utf-8") as handle:
     key = handle.read()

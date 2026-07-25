@@ -53,7 +53,7 @@
 |------|------|------|
 | "No signing certificate" | 인증서 없음 | Xcode → Settings → Accounts → Manage Certificates |
 | "Bundle ID not available" | App Store Connect에 미등록 | fastlane produce가 자동 등록하지만, 이름 충돌 시 수동 변경 |
-| "Authentication failed" | ASC API Key 오류 | `.env`의 ASC_API_KEY_ID, ISSUER_ID, KEY_PATH 확인 |
+| "Authentication failed" | ASC API Key 오류 | `.env`의 APP_STORE_CONNECT_API_KEY_KEY_ID, APP_STORE_CONNECT_API_KEY_ISSUER_ID, APP_STORE_CONNECT_API_KEY_KEY_FILEPATH 확인 |
 | "Upload failed" | 네트워크 또는 ASC 서버 문제 | `/autobot:resume 6`로 재시도 |
 | fastlane 설치 실패 | Homebrew 없음 | `brew` 설치 후 재시도, 또는 `gem install fastlane` |
 

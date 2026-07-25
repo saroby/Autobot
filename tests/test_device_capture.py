@@ -1,4 +1,4 @@
-"""clone_capture.sh device enumeration — offline via CLONE_DEVICES_JSON fixture."""
+"""device_capture.sh device enumeration — offline via CLONE_DEVICES_JSON fixture."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "clone_capture.sh"
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_capture.sh"
 
 
 def run_devices(devices: list[dict]) -> subprocess.CompletedProcess:

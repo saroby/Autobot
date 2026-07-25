@@ -23,7 +23,7 @@ allowed-tools:
 
 1. **`.autobot/build-state.json` 이 있어야 한다** — 없으면 "이 디렉토리는 Autobot 프로젝트가 아닙니다." 출력 후 중단.
 2. **Phase 5 (Integration & Build) 완료 상태여야 한다** — 아니면 `/autobot:resume` 안내 후 중단.
-3. **ASC API key 3종 필수** — `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, `ASC_API_KEY_PATH`.
+3. **ASC API key 3종 필수** — `APP_STORE_CONNECT_API_KEY_KEY_ID`, `APP_STORE_CONNECT_API_KEY_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY_KEY_FILEPATH`.
 4. **질문 금지 (Auto Mode)** — 모든 결정은 `architecture.md` + `build-state.json` + `build-report.md` 에서 자동 도출. 하드 실패만 보고 후 중단.
 5. **스크린샷은 App Store iPhone 6.9" (1320×2868) 단일 사이즈만 다룬다.** 6.5"/6.3"/6.1" 을 함께 올리면 ASC 에서 각 슬라이드가 두 번 표시된다.
 6. **상태 전이는 `scripts/pipeline.sh` 만** — Phase 6 의 일부로 취급. `start-phase --phase 6 --detail "App Review Submission"`.

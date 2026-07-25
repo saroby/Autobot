@@ -16,16 +16,18 @@ class TestDoctor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             probe = credential_probe(Path(tmp), env={"AUTOBOT_CONFIG_DIR": tmp})
             self.assertEqual(probe.status, "fail")
-            self.assertIn("ASC_API_KEY_ID", probe.reason)
+            self.assertIn("APP_STORE_CONNECT_API_KEY_KEY_ID", probe.reason)
+            self.assertIn("APP_STORE_CONNECT_API_KEY_KEY_FILEPATH", probe.remediation)
+            self.assertNotIn("ASC_API_", probe.remediation)
 
     def test_credential_probe_validates_private_key_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             key = Path(tmp) / "AuthKey.p8"
             key.write_text("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n")
             probe = credential_probe(Path(tmp), env={
-                "ASC_API_KEY_ID": "KEY",
-                "ASC_API_ISSUER_ID": "ISSUER",
-                "ASC_API_KEY_PATH": str(key),
+                "APP_STORE_CONNECT_API_KEY_KEY_ID": "KEY",
+                "APP_STORE_CONNECT_API_KEY_ISSUER_ID": "ISSUER",
+                "APP_STORE_CONNECT_API_KEY_KEY_FILEPATH": str(key),
             })
             self.assertEqual(probe.status, "pass")
 

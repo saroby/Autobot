@@ -13,7 +13,7 @@ Autobot 빌드는 사용자별로 일정한 메타데이터 — bundle ID prefix
 두 파일을 같은 디렉토리(`~/.autobot/`, 권한 700)에 둔다 — 역할이 다르므로 절대 합치지 않는다:
 
 - **`~/.autobot/config.json`** (권한 600): **공개 가능한 식별자/기본값** — bundleIdPrefix, developmentTeam, companyName, deploymentTarget, testerEmails, gitRemotePrefix.
-- **`~/.autobot/.env`** (권한 600): **시크릿** — ASC API Key(`ASC_API_KEY_ID` / `ASC_API_ISSUER_ID` / `ASC_API_KEY_PATH`), Apple ID 비밀번호 등. `config.sh set-env`/`get-env`/`env-path` 로 관리. `KEY='value'` 형식(no `export`)이라 `set -a` source + `^KEY=` 탐지 둘 다 호환. `.p8` 파일 자체는 디스크에 두고 **경로만** 기록.
+- **`~/.autobot/.env`** (권한 600): **시크릿** — ASC API Key(`APP_STORE_CONNECT_API_KEY_KEY_ID` / `APP_STORE_CONNECT_API_KEY_ISSUER_ID` / `APP_STORE_CONNECT_API_KEY_KEY_FILEPATH`), Apple ID 비밀번호 등. `config.sh set-env`/`get-env`/`env-path` 로 관리. `KEY='value'` 형식(no `export`)이라 `set -a` source + `^KEY=` 탐지 둘 다 호환. `.p8` 파일 자체는 디스크에 두고 **경로만** 기록.
 
 - **환경변수 오버라이드**:
   - `AUTOBOT_CONFIG_DIR` — 디렉토리 변경 (config.json + .env 둘 다 따라감; 테스트/샌드박스용)

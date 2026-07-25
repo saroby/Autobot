@@ -18,9 +18,9 @@ sudo gem install fastlane -NV
 # API Key JSON 생성
 cat > fastlane_api_key.json << EOF
 {
-  "key_id": "$ASC_API_KEY_ID",
-  "issuer_id": "$ASC_API_ISSUER_ID",
-  "key_filepath": "$ASC_API_KEY_PATH"
+  "key_id": "$APP_STORE_CONNECT_API_KEY_KEY_ID",
+  "issuer_id": "$APP_STORE_CONNECT_API_KEY_ISSUER_ID",
+  "key_filepath": "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"
 }
 EOF
 
@@ -52,9 +52,9 @@ fastlane produce create \
 
 Set these environment variables:
 ```bash
-export ASC_API_KEY_ID="XXXXXXXXXX"        # Key ID from App Store Connect
-export ASC_API_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Issuer ID
-export ASC_API_KEY_PATH="~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8"
+export APP_STORE_CONNECT_API_KEY_KEY_ID="XXXXXXXXXX"        # Key ID from App Store Connect
+export APP_STORE_CONNECT_API_KEY_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Issuer ID
+export APP_STORE_CONNECT_API_KEY_KEY_FILEPATH="~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8"
 ```
 
 Export + Upload (한 단계):
@@ -64,9 +64,9 @@ xcodebuild -exportArchive \
   -exportOptionsPlist ExportOptions.plist \
   -exportPath "build/export" \
   -allowProvisioningUpdates \
-  -authenticationKeyPath "$ASC_API_KEY_PATH" \
-  -authenticationKeyID "$ASC_API_KEY_ID" \
-  -authenticationKeyIssuerID "$ASC_API_ISSUER_ID"
+  -authenticationKeyPath "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH" \
+  -authenticationKeyID "$APP_STORE_CONNECT_API_KEY_KEY_ID" \
+  -authenticationKeyIssuerID "$APP_STORE_CONNECT_API_KEY_ISSUER_ID"
 ```
 
 ExportOptions.plist에 `destination: upload`을 설정하면 IPA 생성과 업로드가 동시에 수행된다.
@@ -132,12 +132,12 @@ xcodebuild -exportArchive \
 
 ### Generate JWT Token
 ```bash
-# Requires: openssl, ASC_API_KEY_PATH, ASC_API_KEY_ID, ASC_API_ISSUER_ID
-HEADER=$(echo -n '{"alg":"ES256","kid":"'$ASC_API_KEY_ID'","typ":"JWT"}' | base64 | tr -d '=' | tr '+/' '-_')
+# Requires: openssl, APP_STORE_CONNECT_API_KEY_KEY_FILEPATH, APP_STORE_CONNECT_API_KEY_KEY_ID, APP_STORE_CONNECT_API_KEY_ISSUER_ID
+HEADER=$(echo -n '{"alg":"ES256","kid":"'$APP_STORE_CONNECT_API_KEY_KEY_ID'","typ":"JWT"}' | base64 | tr -d '=' | tr '+/' '-_')
 NOW=$(date +%s)
 EXP=$((NOW + 1200))
-PAYLOAD=$(echo -n '{"iss":"'$ASC_API_ISSUER_ID'","iat":'$NOW',"exp":'$EXP',"aud":"appstoreconnect-v1"}' | base64 | tr -d '=' | tr '+/' '-_')
-SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$ASC_API_KEY_PATH" | base64 | tr -d '=' | tr '+/' '-_')
+PAYLOAD=$(echo -n '{"iss":"'$APP_STORE_CONNECT_API_KEY_ISSUER_ID'","iat":'$NOW',"exp":'$EXP',"aud":"appstoreconnect-v1"}' | base64 | tr -d '=' | tr '+/' '-_')
+SIGNATURE=$(echo -n "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH" | base64 | tr -d '=' | tr '+/' '-_')
 JWT_TOKEN="$HEADER.$PAYLOAD.$SIGNATURE"
 ```
 
@@ -205,7 +205,7 @@ xcodebuild archive ... CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates
 - Or register the App ID in App Store Connect first
 
 ### "Unable to upload: authentication failed"
-- Verify ASC_API_KEY_ID and ASC_API_ISSUER_ID values
-- Check .p8 key file exists at ASC_API_KEY_PATH: `ls -la "$ASC_API_KEY_PATH"`
+- Verify APP_STORE_CONNECT_API_KEY_KEY_ID and APP_STORE_CONNECT_API_KEY_ISSUER_ID values
+- Check .p8 key file exists at APP_STORE_CONNECT_API_KEY_KEY_FILEPATH: `ls -la "$APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"`
 - Verify key has "App Manager" or "Admin" role in App Store Connect → Integrations
 - For Xcode account method, re-authenticate in Xcode Settings → Accounts

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +128,25 @@ def init_state(args: argparse.Namespace) -> int:
     print(f"LOCK_TOKEN={lock_token}")
 
     save_state(state_path, state)
+
+    # Seed the host-wide learnings store into this project now that it is a real
+    # Autobot project. The SessionStart hook only refreshes projects that already
+    # have `.autobot/` — seeding there would create the dir in every unrelated
+    # repo the user opens. Render immediately too: the hook renders at
+    # SessionStart, which for a brand-new project already ran BEFORE `.autobot/`
+    # existed — without this the whole first build reads no active-learnings.md.
+    # Best-effort: never fail a build init over learnings.
+    try:
+        import learning_impact
+        learning_impact.merge_global_into_project(project_root)
+        subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parent / "render-active-learnings.py"),
+             "--project-dir", str(project_root)],
+            check=False, capture_output=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - advisory only
+        print(f"WARN: could not seed global learnings — {exc}")
+
     for warning in warnings:
         print(f"WARN: {warning}")
     print(f"OK: initialized build state at {state_path}")

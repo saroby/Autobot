@@ -23,10 +23,12 @@ description: Use when uploading App Store metadata (name, subtitle, description,
 `autobot-register-app` 과 동일한 3개:
 
 ```bash
-ASC_API_KEY_ID
-ASC_API_ISSUER_ID
-ASC_API_KEY_PATH
+APP_STORE_CONNECT_API_KEY_KEY_ID
+APP_STORE_CONNECT_API_KEY_ISSUER_ID
+APP_STORE_CONNECT_API_KEY_KEY_FILEPATH
 ```
+
+fastlane `app_store_connect_api_key` 액션과 동일한 업계표준 이름이라, 기존 fastlane 환경이 그대로 동작한다.
 
 Key role 은 **App Manager** 이상.
 
@@ -96,6 +98,7 @@ bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-metadata/scripts/upload-metadata
 | `metadata is too long`, `value is too long` | `metadata_length` | `autobot-generate-metadata` 재실행, 한도 검증 |
 | `Authentication failed`, `not authorized` | `auth_failed` | API key 확인 |
 | `Could not edit App Store information` | `asc_state_locked` | 이미 심사 중인 버전이 있는지 확인 |
+| `No data` + `fetch_app_store_review_detail` (로컬라이즈 업로드 **후**, 연령 등급 적용 확인 시) | `first_version_review_detail_bug` | **성공으로 처리(exit 0)** — 첫 버전에서 fastlane 이 심사정보 조회 중 크래시하는 알려진 버그([#20538](https://github.com/fastlane/fastlane/issues/20538)). 연령 등급 설정 파일이 있으면 `Setting the app's age rating...` 로그도 확인해야 함 |
 | 그 외 | `fastlane_exit_<N>` | 로그 확인 |
 
 ## fastlane deliver invocation

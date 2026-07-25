@@ -61,9 +61,9 @@ fi
 #     이 사전 검사는 그들이 보게 될 값을 그대로 반영한다.
 . "$CLAUDE_PLUGIN_ROOT/scripts/release_env.sh"
 autobot_load_release_env .
-if [ -z "${ASC_API_KEY_ID:-}" ] || [ -z "${ASC_API_ISSUER_ID:-}" ] || [ -z "${ASC_API_KEY_PATH:-}" ]; then
+if [ -z "${APP_STORE_CONNECT_API_KEY_KEY_ID:-}" ] || [ -z "${APP_STORE_CONNECT_API_KEY_ISSUER_ID:-}" ] || [ -z "${APP_STORE_CONNECT_API_KEY_KEY_FILEPATH:-}" ]; then
   echo "ERROR: ASC API credentials not found."
-  echo "Required: ASC_API_KEY_ID, ASC_API_ISSUER_ID, ASC_API_KEY_PATH"
+  echo "Required: APP_STORE_CONNECT_API_KEY_KEY_ID, APP_STORE_CONNECT_API_KEY_ISSUER_ID, APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"
   echo "Set them once for all projects: /autobot:setup  (writes ~/.autobot/.env)"
   echo "Or per-project: create ./.env. See skills/autobot-upload-build/references/signing-guide.md"
   exit 1

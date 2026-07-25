@@ -35,9 +35,9 @@ def run(emails, bundle_id="com.axi.x"):
     then die at JWT signing (never 'invalid email')."""
     env = os.environ.copy()
     env["AUTOBOT_CONFIG_DIR"] = _SANDBOX.name
-    env["ASC_API_KEY_ID"] = "FAKEKEY000"
-    env["ASC_API_ISSUER_ID"] = "fake-issuer"
-    env["ASC_API_KEY_PATH"] = str(_FAKE_KEY)
+    env["APP_STORE_CONNECT_API_KEY_KEY_ID"] = "FAKEKEY000"
+    env["APP_STORE_CONNECT_API_KEY_ISSUER_ID"] = "fake-issuer"
+    env["APP_STORE_CONNECT_API_KEY_KEY_FILEPATH"] = str(_FAKE_KEY)
     return subprocess.run(
         ["bash", str(SCRIPT), "--bundle-id", bundle_id, "--emails", emails],
         env=env, cwd=_SANDBOX.name, capture_output=True, text=True,

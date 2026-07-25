@@ -130,9 +130,9 @@ bash "$CONFIG_SH" init --force
 
 ```bash
 # config.sh set-env 가 ~/.autobot/.env 에 KEY='value' 로 upsert (권한 600).
-bash "$CONFIG_SH" set-env ASC_API_KEY_ID    "<key id>"
-bash "$CONFIG_SH" set-env ASC_API_ISSUER_ID "<issuer id>"
-bash "$CONFIG_SH" set-env ASC_API_KEY_PATH  "<.p8 경로>"
+bash "$CONFIG_SH" set-env APP_STORE_CONNECT_API_KEY_KEY_ID    "<key id>"
+bash "$CONFIG_SH" set-env APP_STORE_CONNECT_API_KEY_ISSUER_ID "<issuer id>"
+bash "$CONFIG_SH" set-env APP_STORE_CONNECT_API_KEY_KEY_FILEPATH  "<.p8 경로>"
 ```
 
 `--force` 는 기존 파일을 덮어쓰기 위함. `--reset` 분기가 아니더라도 부분 변경 시 사용한다 (현재값이 모두 환경변수로 export 되므로 손실 없음).

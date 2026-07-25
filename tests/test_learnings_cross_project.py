@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from conftest import SCRIPTS_DIR, import_runtime_modules
+from conftest import PLUGIN_DIR, SCRIPTS_DIR, import_runtime_modules
 
 import_runtime_modules()
 
@@ -239,7 +239,7 @@ class TestLoadLearningsHookTargetsProject(unittest.TestCase):
             plugin_root.mkdir(parents=True)
             (plugin_root / "scripts").symlink_to(SCRIPTS_DIR)
             project = tmp_path / "project"
-            project.mkdir()
+            (project / ".autobot").mkdir(parents=True)  # an Autobot project
 
             env = os.environ.copy()
             env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
@@ -255,6 +255,67 @@ class TestLoadLearningsHookTargetsProject(unittest.TestCase):
             self.assertFalse((plugin_root / ".autobot").exists(),
                              "hook must not write into the plugin install dir")
             self.assertIn("has_learnings=true", result.stdout)
+
+
+class TestHookDoesNotLitterNonAutobotDirs(unittest.TestCase):
+    """SessionStart fires in EVERY directory the user opens. Seeding there
+    created `.autobot/` in unrelated repos (AXI-Homepage). Only projects that
+    already have `.autobot/` get refreshed; first seed happens at init-build."""
+
+    def test_hook_creates_nothing_in_a_plain_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            xdg = tmp_path / "xdg"
+            _write_learnings(xdg / "autobot" / "learnings.json", [
+                {"id": "g1", "phase": "4", "effect_score": 1,
+                 "last_outcome": "helped", "rule_preview": "from global"},
+            ])
+            project = tmp_path / "not-an-autobot-project"
+            project.mkdir()
+
+            env = os.environ.copy()
+            env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_DIR)
+            env["CLAUDE_PROJECT_DIR"] = str(project)
+            env["XDG_CONFIG_HOME"] = str(xdg)
+            result = subprocess.run(
+                ["bash", str(SCRIPTS_DIR / "load-learnings.sh")],
+                capture_output=True, text=True, env=env, cwd=project,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertFalse((project / ".autobot").exists(),
+                             "hook must not create .autobot/ in a non-Autobot dir")
+            self.assertIn("has_learnings=false", result.stdout)
+
+    def test_init_build_seeds_and_renders_global_learnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            xdg = tmp_path / "xdg"
+            _write_learnings(xdg / "autobot" / "learnings.json", [
+                {"id": "g1", "phase": "4", "effect_score": 1,
+                 "last_outcome": "helped", "rule_preview": "from global"},
+            ])
+            project = tmp_path / "project"
+            project.mkdir()
+
+            env = os.environ.copy()
+            env["XDG_CONFIG_HOME"] = str(xdg)
+            result = subprocess.run(
+                ["bash", str(SCRIPTS_DIR / "pipeline.sh"), "init-build",
+                 "--build-id", "build-20260726-seed",
+                 "--app-name", "Seed", "--display-name", "Seed"],
+                capture_output=True, text=True, env=env, cwd=project,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+            local = project / ".autobot" / "learnings.json"
+            self.assertTrue(local.is_file(), "init-build must seed global learnings")
+            self.assertEqual(json.loads(local.read_text())["items"][0]["id"], "g1")
+            # The phases read the RENDERED files, not learnings.json. SessionStart
+            # already ran before .autobot/ existed, so init-build must render too
+            # or the entire first build sees no learnings.
+            self.assertTrue((project / ".autobot" / "active-learnings.md").is_file(),
+                            "init-build must render active-learnings.md")
+            self.assertTrue((project / ".autobot" / "phase-learnings" / "architecture.md").is_file(),
+                            "init-build must render phase-learnings/")
 
 
 if __name__ == "__main__":

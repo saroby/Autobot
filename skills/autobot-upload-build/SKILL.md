@@ -24,9 +24,9 @@ description: 'Use when uploading an iOS `.xcarchive` to App Store Connect for Te
 `.env` 에:
 
 ```bash
-ASC_API_KEY_ID="XXXXXXXXXX"
-ASC_API_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-ASC_API_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8"
+APP_STORE_CONNECT_API_KEY_KEY_ID="XXXXXXXXXX"
+APP_STORE_CONNECT_API_KEY_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+APP_STORE_CONNECT_API_KEY_KEY_FILEPATH="$HOME/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8"
 ```
 
 3개가 모두 있으면 API Key 인증. 없으면 Xcode 저장 계정으로 fallback (Xcode → Settings → Accounts 에 Apple ID 로그인 필요).
@@ -113,7 +113,7 @@ exit 5 는 부분 성공: IPA 는 손에 있으니 Xcode Organizer 나 Apple Tra
 ### Authentication 자동 선택
 
 ```
-ASC_API_KEY_ID + ASC_API_ISSUER_ID + ASC_API_KEY_PATH 모두 설정?
+APP_STORE_CONNECT_API_KEY_KEY_ID + APP_STORE_CONNECT_API_KEY_ISSUER_ID + APP_STORE_CONNECT_API_KEY_KEY_FILEPATH 모두 설정?
 ├── Yes → API Key (-authenticationKey* 파라미터 추가) [CI/CD 권장]
 └── No  → Xcode 저장 계정 fallback
          ├── Xcode 에 Apple ID 로그인됨 → 자동 처리
@@ -142,7 +142,7 @@ status JSON 은 `python3 -c json.dumps` + temp+rename. 도중에 죽어도 orpha
 | 에러 | 원인 | 해결 |
 |------|------|------|
 | "The bundle identifier is not available" | ASC 미등록 | `autobot-register-app --bundle-id X --display-name Y` 먼저 |
-| "Authentication failed" | API Key 값 오류 | `ASC_API_KEY_ID` / `ISSUER_ID` / `.p8` 일치 확인 |
+| "Authentication failed" | API Key 값 오류 | `APP_STORE_CONNECT_API_KEY_KEY_ID` / `ISSUER_ID` / `.p8` 일치 확인 |
 | "No matching provisioning profile" | 자동 프로비저닝 실패 | `--team-id` 명시 + ASC 에 device 등록 |
 | 네트워크 타임아웃 | ASC 5xx | 재시도. archive 는 재사용 가능. |
 | Xcode 미로그인 + API Key 없음 | 자동 업로드 경로 없음 | `.env` 채우거나 Xcode → Settings → Accounts 로그인 |
