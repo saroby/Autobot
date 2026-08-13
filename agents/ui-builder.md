@@ -37,12 +37,11 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 1. **Read Style Guide**: Load `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for the authoritative iOS design patterns, API choices, and anti-patterns
 2. **Read Architecture**: Load `.autobot/architecture.md` for screen inventory, navigation structure
 3. **Read Design Spec (PRIMARY 디자인 입력)**: `.autobot/design-spec.md`를 읽는다. 이 파일이 존재하면 **최우선 시각 디자인 소스**로 사용한다:
-   - Visual design references from Stitch mockups
    - Design token mappings (colors, typography, spacing → SwiftUI)
-   - Screen-specific UI patterns and layout guidance
-   - `.autobot/designs/*.png`의 화면별 목업 이미지를 시각 참조로 활용
-   이 파일은 Phase 2 (Stitch MCP)에서 생성되며, 존재할 경우 architecture.md보다 시각적 결정에서 우선한다.
-   **Fallback**: Stitch 미설치/실패 시에도 최소 `design-spec.md`가 존재해야 한다. `.autobot/designs/*.png`가 없으면 screenshot reference만 생략하고, design-spec의 Visual Concept/Color Tokens/Typography/Spacing/Screen Layout/Interaction/States 계약은 그대로 따른다.
+   - `## Screen-by-Screen Layout`의 화면별 구조·위계·네이티브 컴포넌트 결정
+   - 커스텀 컴포넌트 결정과 그 정당화 (정당화 없는 커스텀은 시스템 컴포넌트로 대체)
+   이 파일은 Phase 2에서 ux-designer 가 직접 저작하며, 존재할 경우 architecture.md보다 시각적 결정에서 우선한다.
+   **Fallback**: Phase 2 가 fallback 이어도 최소 `design-spec.md`는 존재해야 하며, Visual Concept/Color Tokens/Typography/Spacing/Screen Layout/Interaction/States 계약은 그대로 따른다.
 4. **Read Model Files**: Read ALL `.swift` files in `<AppName>/Models/` to learn exact type names, properties, and initializers
 5. **Read Design System Module name**:
    `.autobot/architecture.json` 의 `designSystemModule` 값 (예: `InstagramDS`) 을 읽는다. Phase 3 scaffold 가 `Packages/<Module>/` 를 만들었고 design-system 에이전트가 Tokens/Components 를 채웠다. ui-builder 는 그 패키지를 **import 만 한다 — Theme.swift 를 만들지 않는다**.
@@ -74,8 +73,8 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
    - TabView with NavigationStack per tab (if tabbed app)
    - NavigationStack with navigationDestination (if stack-only)
 8. **Create Each Screen** (Layout Personality 반영): One Swift file per screen in `<AppName>/Views/Screens/`
-   - **Primary (design-spec.md 존재 시)**: 해당 화면의 디자인 토큰, 레이아웃 노트, 목업 이미지(`.autobot/designs/<ScreenName>.png`)를 참조하여 Stitch 디자인을 충실히 구현
-   - **Fallback (목업 이미지 미존재 시)**: design-spec.md의 최소 룩앤필 계약과 architecture.md의 Key UI Elements를 결합한다. 기능만 되는 기본 SwiftUI 화면으로 대체하지 않는다.
+   - **Primary (design-spec.md 존재 시)**: 해당 화면의 디자인 토큰과 `### <ScreenName>` 레이아웃 결정(구조·위계·네이티브 컴포넌트·custom 정당화)을 충실히 구현
+   - **Fallback (해당 화면 항목 미존재 시)**: design-spec.md의 최소 룩앤필 계약과 architecture.md의 Key UI Elements를 결합한다. 기능만 되는 기본 SwiftUI 화면으로 대체하지 않는다.
    - **Signature Layout 우선 (시각 동질성 방지)**: architecture.md의 `### Signature Layout` 이 정한 hero element·정보 위계·density·화면 간 차별화를 구현한다. 고정된 dashboard/feed/form/social 템플릿에서 출발하지 말고 각 화면의 목적과 Key UI Elements에서 composition을 도출한다. 최소 primary 와 2순위 화면은 시각적으로 구별되어야 하며 모든 화면을 동일한 `List`/`LazyVStack` 카드로 채우지 않는다.
 8. **Extract Components**: Reusable UI components in `<AppName>/Views/Components/`
 9. **Create ViewModels**: One ViewModel per screen in `<AppName>/ViewModels/`

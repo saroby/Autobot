@@ -5,11 +5,11 @@
 #   bash pipeline.sh init-build --build-id build-20260401-demo --app-name Demo --display-name "Demo"
 #   bash pipeline.sh start-phase --phase 1 --detail "Architecture + Contracts"
 #   bash pipeline.sh advance-phase --phase 1            # run gate, mark complete on pass
-#   bash pipeline.sh advance-phase --phase 2 --status fallback --detail "Stitch unavailable"
+#   bash pipeline.sh advance-phase --phase 2 --status fallback --detail "ux-designer failed twice"
 #   bash pipeline.sh fail-phase --phase 5 --error "xcodebuild failed" --increment-retry
 #   bash pipeline.sh run-gate --gate "4->5"             # run gate, record evidence (no phase mutation)
 #   bash pipeline.sh preflight-ship                     # fresh gate 5->6; exit 1 unless a CLEAN pass (shipping entry points)
-#   bash pipeline.sh record-environment --xcodegen true --stitch false
+#   bash pipeline.sh record-environment --xcodegen true --fastlane false
 #   bash pipeline.sh set-flag --key backend_required --value true
 #
 # Helper subcommands (delegate to focused scripts; same project-dir handling):

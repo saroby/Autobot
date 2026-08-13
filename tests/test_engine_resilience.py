@@ -93,7 +93,7 @@ class TestRetryCountResetsOnSuccess(unittest.TestCase):
     def test_fallback_also_resets_retry_count(self):
         # Phase 1 (maxRetry=2) fails once, then lands on the fallback branch.
         self._step("1", "in_progress")
-        self._step("1", "failed", error="stitch down", increment_retry=True)
+        self._step("1", "failed", error="agent down", increment_retry=True)
         self._step("1", "in_progress")
         self._step("1", "fallback")
         self.assertNotIn("retryCount", self._phases()["1"])
@@ -117,7 +117,7 @@ class TestAdvancePhaseSuccessResetsRetryCount(unittest.TestCase):
                 "5": {"status": "pending"}, "6": {"status": "pending"},
                 "7": {"status": "pending"},
             },
-            "environment": {"axiom": False, "stitch": False, "fastlane": False, "ascConfigured": False},
+            "environment": {"axiom": False, "fastlane": False, "ascConfigured": False},
         }))
         args = types.SimpleNamespace(
             phase=2, project_dir=str(proj), state_file=None,

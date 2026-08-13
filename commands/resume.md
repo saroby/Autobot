@@ -211,7 +211,7 @@ done
 
 ```
 ⚠️ Phase {N} 은 completed 로 마킹된 뒤 파이프라인 밖에서 파일이 수정된 것으로 보입니다 (input hash mismatch).
-   Phase 2 라면: 검토했던 Stitch 목업/디자인과 지금 파일이 다를 수 있습니다 → `/autobot:resume 2.5 --force` 로 preview 를 새로 만들어 다시 확인하세요.
+   Phase 2 라면: 검토했던 design-spec 과 지금 파일이 다를 수 있습니다 → `/autobot:resume 2.5 --force` 로 preview 를 새로 만들어 다시 확인하세요.
    Phase 4 라면: Views/Services 가 ui-builder 산출물과 달라졌습니다. 의도된 수동 수정이면 무시해도 되지만, 이후 `/autobot:resume 4 --force` 를 실행하면 그 수동 수정이 덮어써진다는 점을 알고 있어야 합니다.
    그 외 Phase: build-log.jsonl 에서 해당 phase 이후 이벤트가 끊겼는지 확인하세요 — 끊겼다면 수동 편집 구간입니다.
 ```
@@ -296,10 +296,8 @@ echo "$FREEZE"
 
 ### Phase 2 재개
 
-- `build-state.json.environment.stitch == true`일 때만 실행
-- ux-designer 에이전트를 다시 실행
-- 기존 `.autobot/designs/`와 `.autobot/design-spec.md`는 **덮어쓴다**
-- Stitch 프로젝트 ID가 `build-state.json.stitch.projectId`에 있으면 기존 프로젝트 재사용 시도
+- ux-designer 에이전트를 다시 실행 (design-spec 직접 저작)
+- 기존 `.autobot/design-spec.md`는 **덮어쓴다**
 - ux-designer 재실행 후 `.autobot/app-icon-1024.png`가 없으면 `autobot-app-icon` 스킬을 실행한 뒤 `advance-phase --phase 2`를 호출한다 (gate 2→3의 `app_icon_source_present`가 hard 검사).
 
 ### Phase 3 재개
@@ -353,7 +351,7 @@ echo "$FREEZE"
 # 성공 (Gate 자동 검증)
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase <N>
 
-# fallback (예: Phase 2 Stitch unavailable)
+# fallback (예: Phase 2 ux-designer 재실패 → 최소 design-spec 으로 진행)
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase <N> \
   --status fallback --detail "<reason>"
 

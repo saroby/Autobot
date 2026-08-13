@@ -47,7 +47,7 @@ HOST=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/detect-peer-ai.sh" --format env | sed -
 | data-engineer | sonnet | repository implementation behind fixed protocols |
 | backend-engineer | sonnet | FastAPI proxy, largely boilerplate |
 | design-system | sonnet | token + shared-component generation |
-| ux-designer | sonnet | Stitch orchestration + design-spec authoring |
+| ux-designer | sonnet | Native-first design direction + design-spec authoring |
 | deployer | sonnet | skill chaining + ASC error classification |
 
 Use only the bare tier alias (`opus` / `sonnet`) so the host resolves it to its current model of that tier. Never write a provider-qualified model id — a provider-prefixed string breaks host neutrality and is rejected by test. An unrecognized agent not in the table inherits the host default (omit `model`).

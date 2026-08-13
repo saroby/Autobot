@@ -83,7 +83,7 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 |-------|------|---------|--------|
 | 0 | Pre-flight & 환경 준비 | (self) | `build-state.json`, 환경 검증 |
 | 1 | 아키텍처 + 계약 | architect | `architecture.md`, `Models/*.swift`, `ServiceProtocols.swift` |
-| 2 | UX Design (필수) | ux-designer (Stitch) | `.autobot/designs/*.png`, `.autobot/design-spec.md`, `.autobot/app-icon-1024.png` |
+| 2 | UX Design (필수) | ux-designer | `.autobot/design-spec.md`, `.autobot/app-icon-1024.png` |
 | 2.5 | 기획·디자인 HTML 미리보기 (수동, /autobot:plan) | (self) + autobot-plan-preview | `.autobot/designs/preview/index.html`, 기획·디자인 critique |
 | 3 | Xcode 프로젝트 + Design System | (self) + design-system | `.xcodeproj`, `Packages/<Name>DS/`, `PrivacyInfo.xcprivacy`, `.entitlements` |
 | 4 | 병렬 코드 생성 | ui-builder + data-engineer (+ backend-engineer) | `Views/`, `ViewModels/`, `Services/`, `App/`, `backend/` |
@@ -99,7 +99,7 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 <!-- AUTOBOT_GATE_SUMMARY:START -->
 - **Gate 0→1**: 환경, 앱 이름, 초기 build state 준비가 끝났는지 검증
 - **Gate 1→2**: architecture.md 구조, Design Direction, Models/*.swift, ServiceProtocols.swift, 계약 snapshot이 준비됐는지 검증
-- **Gate 2→3**: Stitch 성공 여부와 무관하게 design-spec 룩앤필 계약이 있고, primary 경로에서는 designs 산출물이 있는지 검증 · app-icon-1024.png source 이미지 존재 필수
+- **Gate 2→3**: design-spec 룩앤필 계약 검증(필수 섹션 완결 + design-spec.json 유효) · app-icon-1024.png source 이미지 존재 필수
 - **Gate 2.5→3**: designs/preview/index.html 가 생성됐는지 검증 (critique 섹션 강제는 autobot-plan-preview 스킬 contract)
 - **Gate 3→4**: .xcodeproj, PrivacyInfo, entitlements, gitignore 등 스캐폴드 필수 파일 + Design System 패키지 스켈레톤(토큰 스텁 포함) 존재를 검증 · AppIcon.appiconset 에 적용된 PNG 존재 필수
 - **Gate 4→5**: Views/Services 산출물 존재 + Models 체크섬 무결성 + sandbox 위반 0건
@@ -198,7 +198,7 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   └── setup.md                        # /autobot:setup — 글로벌 기본값 설정
 ├── agents/
 │   ├── architect.md                    # Phase 1: 아키텍처 + 타입/통합 계약
-│   ├── ux-designer.md                  # Phase 2: Stitch 기반 UX 모형
+│   ├── ux-designer.md                  # Phase 2: 네이티브 우선 디자인 디렉션
 │   ├── ui-builder.md                   # Phase 4: SwiftUI 뷰
 │   ├── data-engineer.md                # Phase 4: 데이터 레이어
 │   ├── backend-engineer.md             # Phase 4: 백엔드 (backend_required=true 시)
@@ -218,7 +218,7 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   ├── autobot-setup/                  # 글로벌 config (~/.autobot/config.json) 읽기/쓰기 단일 진입점
 │   │   ├── SKILL.md
 │   │   └── scripts/config.sh
-│   ├── autobot-ux-design/              # Phase 2: Stitch 사용 규약 + design-spec 룩앤필 계약
+│   ├── autobot-ux-design/              # Phase 2: design-spec 직접 저작 + 룩앤필 계약
 │   │   └── SKILL.md
 │   ├── autobot-ios-scaffold/           # Phase 3: Xcode 프로젝트 생성
 │   │   ├── SKILL.md
@@ -341,7 +341,7 @@ Phase learning 파일 매핑:
 Autobot은 위험도 기준으로 동작합니다:
 
 - `autonomous`: 로컬 코드 생성, 수정, 빌드, 테스트, archive
-- `warn`: Stitch 미설치, ASC 미설정, fastlane 미설치처럼 결과만 달라지는 상황
+- `warn`: ASC 미설정, fastlane 미설치처럼 결과만 달라지는 상황
 - `require_confirmation`: 원격 저장소 생성/푸시처럼 되돌리기 어려운 외부 변경
 
 기본 build/resume 파이프라인은 원격 저장소 생성/푸시를 포함하지 않습니다.

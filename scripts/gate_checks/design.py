@@ -34,26 +34,6 @@ from ._helpers import (
 )
 
 
-def _is_fallback(state: dict, phase: str) -> bool:
-    return state.get("phases", {}).get(phase, {}).get("status") == "fallback"
-
-
-def check_design_assets_exist_or_fallback(proj: Path, app: str, state: dict) -> list[dict]:
-    designs = proj / ".autobot" / "designs"
-    matches = sorted(designs.glob("*.png")) if designs.is_dir() else []
-    if _is_fallback(state, "2"):
-        # quality-max: even a Stitch fallback must carry ≥1 real mockup, else
-        # DEGRADED (NOT hard fail — keeps the autonomous build moving, flags the gap).
-        if bool(state.get("qualityMax")) and not matches:
-            return [_ok("design_assets_fallback", True,
-                        "Phase 2 fallback with 0 mockups — quality-max requires ≥1 real "
-                        "mockup PNG; generate one or run /autobot:plan to review",
-                        skipped=True, degraded=True)]
-        return [_ok("design_assets_fallback", True,
-                    f"Phase 2 fallback ({len(matches)} mockup png)", skipped=True)]
-    return [_ok("design_png_files", len(matches) > 0, f"{len(matches)} .png in designs/")]
-
-
 def check_app_icon_source_present(proj: Path, app: str, state: dict) -> list[dict]:
     """Phase 2 must produce a 1024×1024 app-icon PNG.
 
@@ -98,7 +78,7 @@ def check_design_spec_json_valid(proj: Path, app: str, state: dict) -> list[dict
     on the fly when absent) and pass validation.
 
     Synthesis path means the gate self-heals: if Phase 2 only produced prose
-    (Stitch unavailable, no manual JSON), this check derives a deterministic
+    (no manual JSON), this check derives a deterministic
     palette + typography from architecture.md and writes design-spec.json so
     visual_contract / ui-builder have a reliable contract.
     """

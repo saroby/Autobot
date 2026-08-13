@@ -151,8 +151,8 @@
       "fromPhase": "2",
       "toPhase": "3",
       "soft": false,
-      "summary": "The look-and-feel design contract exists; Stitch screenshots are required only on the primary path.",
-      "docsSummary": "Stitch 성공 여부와 무관하게 design-spec 룩앤필 계약이 있고, primary 경로에서는 designs 산출물이 있는지 검증 · app-icon-1024.png source 이미지 존재 필수",
+      "summary": "The look-and-feel design contract exists and validates.",
+      "docsSummary": "design-spec 룩앤필 계약 검증(필수 섹션 완결 + design-spec.json 유효) · app-icon-1024.png source 이미지 존재 필수",
       "checks": [
         {
           "type": "file_exists",
@@ -163,11 +163,6 @@
           "type": "procedural",
           "name": "design_spec_sections_complete",
           "label": "design_spec_sections_complete"
-        },
-        {
-          "type": "procedural",
-          "name": "design_assets_exist_or_fallback",
-          "label": "design_assets_exist_or_fallback"
         },
         {
           "type": "procedural",

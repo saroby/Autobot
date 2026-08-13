@@ -4,7 +4,7 @@
 Until now, `design-spec.md` (prose) was the only artifact, and the visual
 contract gate had to grep for `#RRGGBB` codes near a "Primary" header. That
 works most of the time and silently passes when prose drifts. JSON makes
-both the gate strict and the Stitch-fallback path deterministic.
+both the gate strict and the prose-only synthesis path deterministic.
 
 Schema (the only fields the visual contract / ui-builder care about):
 

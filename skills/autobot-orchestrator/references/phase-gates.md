@@ -30,7 +30,6 @@ CHECK (environment_recorded):
   ✓ environment.fastlane 기록됨
   ✓ environment.ascConfigured 기록됨
   ✓ environment.axiom 기록됨
-  ✓ environment.stitch 기록됨
   ✓ environment.runtimeHost 기록됨
   ✓ environment.peerAi 기록됨
   ✓ environment.peerReviewAvailable 기록됨
@@ -88,33 +87,25 @@ DEGRADE (docker 미설치) → 빌드는 계속 진행한다. iOS 앱 + backend/
 ### Gate 2→3: UX 디자인 완료 (필수, fallback 포함)
 
 ```
-CONDITION: build-state.json.environment.stitch == true
-  → Phase 2 실행됨 (primary 경로):
-    CHECK:
-      ✓ .autobot/design-spec.md 존재
-      ✓ design-spec.md 필수 섹션 존재:
-        - Visual Concept
-        - Color Tokens
-        - Typography
-        - Spacing & Radius
-        - Screen-by-Screen Layout
-        - Interaction Feel
-        - Empty, Loading, Error States
-      ✓ .autobot/designs/ 디렉토리에 .png 파일 1개 이상 존재
-      ✓ .autobot/app-icon-1024.png 존재 (autobot-app-icon 스킬 출력)
-    FAIL → 1회 재시도
-    FAIL (재시도 후) → fallback 모드로 전환:
-      - architecture.md의 Design Direction으로 최소 design-spec.md 생성
-      - phases["2"].status = "fallback"
-      - ⚠️ 경고 출력: "Stitch 디자인 생성 실패. 최소 design-spec 계약으로 진행합니다."
-      - Phase 3로 진행
-
-CONDITION: build-state.json.environment.stitch == false
-  → architecture.md의 Design Direction으로 최소 design-spec.md 생성
-  → Phase 2 fallback (status: "fallback")
-  → CHECK: .autobot/design-spec.md + 필수 룩앤필 섹션 존재
-  → ⚠️ 경고 출력: "Stitch MCP 미설치. 최소 design-spec 계약으로 진행합니다."
-  → Phase 3로 진행
+ux-designer 에이전트가 design-spec.md 를 직접 저작한다 (목업 생성 없음):
+  CHECK:
+    ✓ .autobot/design-spec.md 존재
+    ✓ design-spec.md 필수 섹션 존재:
+      - Visual Concept
+      - Color Tokens
+      - Typography
+      - Spacing & Radius
+      - Screen-by-Screen Layout
+      - Interaction Feel
+      - Empty, Loading, Error States
+    ✓ design-spec.json 유효 (없으면 architecture.md 에서 결정론적 합성)
+    ✓ .autobot/app-icon-1024.png 존재 (autobot-app-icon 스킬 출력)
+  FAIL → 1회 재시도
+  FAIL (재시도 후) → fallback 모드로 전환:
+    - architecture.md의 Design Direction으로 최소 design-spec.md 생성
+    - phases["2"].status = "fallback"
+    - ⚠️ 경고 출력: "ux-designer 실패. 최소 design-spec 계약으로 진행합니다."
+    - Phase 3로 진행
 ```
 
 ### Gate 2.5→3: Plan Preview HTML 생성 완료 (수동, /autobot:plan)

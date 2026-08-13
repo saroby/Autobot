@@ -44,7 +44,6 @@ from gate_checks.capability import (
 from gate_checks.deploy import check_deployment_attempt_recorded
 from gate_checks.design import (
     check_app_icon_source_present,
-    check_design_assets_exist_or_fallback,
     check_design_spec_json_valid,
     check_design_spec_sections_complete,
     check_design_system_components_exist,
@@ -115,7 +114,6 @@ GATE_CHECKS: dict[str, Any] = {
     "intent_anchors_in_ui": check_intent_anchors_in_ui,
     # Gate 2→3
     "design_spec_sections_complete": check_design_spec_sections_complete,
-    "design_assets_exist_or_fallback": check_design_assets_exist_or_fallback,
     "design_spec_json_valid": check_design_spec_json_valid,
     "app_icon_source_present": check_app_icon_source_present,
     # Gate 3→4

@@ -395,7 +395,6 @@ JUDGE_SHOT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/sim_runtime.py" \
 - **`build-state.json` 의 `idea` (사용자 verbatim)** — 무엇을 만들어 달라 했는가. **최우선.**
 - 스크린샷 PNG (`JUDGE_SHOT`) — 빌드된 앱의 실제 렌더
 - `.autobot/design-spec.md` + `.autobot/design-spec.json` — 색/타이포/간격 토큰 (보조 의도)
-- `.autobot/designs/*.png` — Stitch 목업 (있으면)
 
 먼저 **사용자 원문을 원자적 절(clause)로 분해**하고(예: "윈앰프 UI 그대로" / "기존 .wsz 스킨 사용" / "탭없이" / "화면을 꽉 채우는"), 각 절을 스크린샷에서 **met / unmet** 으로 판정해 `summary` 와 `violations` 에 그대로 적는다. 명시적 사용자 절이 unmet 이면 그것은 design-spec 일치 여부와 무관하게 **HIGH severity violation** 이다 (사용자가 요구한 것을 안 했으므로).
 

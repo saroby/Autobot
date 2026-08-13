@@ -157,7 +157,7 @@ def record_environment(args: argparse.Namespace) -> int:
 
     updates: dict[str, Any] = {}
     known_keys = [
-        "xcodegen", "fastlane", "ascConfigured", "axiom", "stitch",
+        "xcodegen", "fastlane", "ascConfigured", "axiom",
         "runtimeHost", "peerAi", "peerReviewAvailable",
     ]
     for key in known_keys:
@@ -435,7 +435,6 @@ def build_parser() -> argparse.ArgumentParser:
     environment.add_argument("--fastlane")
     environment.add_argument("--ascConfigured")
     environment.add_argument("--axiom")
-    environment.add_argument("--stitch")
     environment.add_argument("--runtimeHost")
     environment.add_argument("--peerAi")
     environment.add_argument("--peerReviewAvailable")

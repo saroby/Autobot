@@ -45,7 +45,7 @@ bash scripts/smoke-e2e.sh --workdir DIR   # 임시 dir 지정
 이 smoke 는 의도적으로 **Autobot 의 LLM 의존 단계는 검증하지 않는다**:
 
 - Phase 1 architect — LLM 산출 architecture.md
-- Phase 2 ux-designer — Stitch MCP 호출
+- Phase 2 ux-designer — design-spec 직접 저작
 - Phase 4 ui-builder / data-engineer — 코드 생성
 - Phase 6 deployer — TestFlight 업로드 (ASC 자격 필요)
 

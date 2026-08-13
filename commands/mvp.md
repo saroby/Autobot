@@ -45,7 +45,6 @@ allowed-tools:
 - peer review / Axiom critical audit 가 미설치·미가용으로 skip 되면 PASS 가 아니라
   **DEGRADED** 로 기록(출하 차단). hard fail 은 retryCount→circuit breaker 를 건드려
   자율 빌드를 멈추므로 쓰지 않는다.
-- 디자인이 Stitch fallback 이어도 최소 1 개의 실제 mockup PNG 를 요구(없으면 DEGRADED).
 - P0 logic acceptance 에 대응 named 테스트가 없으면 **DEGRADED**(기본 모드는 warning).
 - backend_required 앱의 Release.xcconfig 가 아직 `$(PRODUCTION_HOST)` placeholder/localhost
   면 **DEGRADED**(배포된 서버 호스트 미설정 — AI/LLM 호출이 출하 후 실패).
@@ -64,7 +63,7 @@ orchestrator·spec·gate_checks 가 소유한다.
 | 등급 | 범위 | 동작 |
 |------|------|------|
 | `autonomous` | 로컬 생성·수정·빌드·테스트·archive·재시도 | 묻지 않고 진행 |
-| `warn` | Stitch·fastlane·ASC 미설치처럼 결과가 달라지지만 진행은 가능한 상황 | 경고 후 계속 |
+| `warn` | fastlane·ASC 미설치처럼 결과가 달라지지만 진행은 가능한 상황 | 경고 후 계속 |
 | `require_confirmation` | 원격 저장소 생성/푸시, 외부 시스템에 되돌리기 어려운 변경 | 기본 파이프라인에서 제외 |
 
 ## 실행 흐름
@@ -75,7 +74,7 @@ orchestrator·spec·gate_checks 가 소유한다.
 
 - **Phase 0** — 빌드 잠금, 환경 감지 (`pipeline.sh env-snapshot ensure`), `build-state.json` init, 앱 이름 결정. env_snapshot 은 선택된 simulator UDID (와 axe 가용성) 를 한 번 캡처해 이후 phase 가 simctl 을 다시 조회하지 않도록 한다.
 - **Phase 1** — (market-brief self-step: mcp-appstore 가용 시 유사앱 조사 → `.autobot/market-brief.json`, 미가용 시 soft-skip) → architect → `architecture.md` + `Models/` + `ServiceProtocols.swift` + peer review 게이트
-- **Phase 2** — ux-designer (Stitch primary, fallback 시 design-spec 만으로 진행) + `autobot-app-icon` 스킬로 1024 PNG 아이콘 생성 (필수, gate-enforced)
+- **Phase 2** — ux-designer 가 design-spec.md 를 직접 저작 (네이티브 우선, 목업 생성 없음) + `autobot-app-icon` 스킬로 1024 PNG 아이콘 생성 (필수, gate-enforced)
 - **Phase 3** — Xcode 프로젝트 scaffold + Composition seam + PrivacyInfo + entitlements + AppIcon.appiconset apply (gate-enforced)
 - **Phase 4** — ui-builder ∥ data-engineer ∥ (backend-engineer) 병렬 디스패치 + sandbox 사전/사후 검증
 - **Phase 5** — quality-engineer 통합 빌드 + runtime smoke + visual contract. Axiom critical audit / peer review 는 품질 sidecar 로 실행하며, 문제는 MVP 실패가 아니라 DEGRADED evidence 로 남김

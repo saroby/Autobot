@@ -60,14 +60,14 @@ architecture.md 의 Overview, Features, Screens, Navigation 을 사용자 아이
 
 **critique 축 2 — 디자인 (시각 / HIG)**
 
-PNG 화면들과 design-spec.md 의 토큰을 보고 다음을 찾는다:
+design-spec.md 의 토큰과 Screen-by-Screen Layout 결정을 보고 다음을 찾는다:
 
-- **Safe area 침범 (HIGH 우선)** — Stitch 가 만든 PNG 자체가 iPhone safe area 를 무시했는지. 상단 status bar (~47pt, PNG 의 상단 약 5.5%) 영역에 screen title / 버튼이 들어감 (시계·배터리와 겹침), 또는 하단 home indicator (~34pt, PNG 의 하단 약 4%) 영역에 탭바 / CTA 가 들어감 (home bar 와 겹침). Stitch 가 이걸 자주 무시하므로 1순위 점검. PNG 자체를 보고 침범 여부 판정 — HIGH severity 로 보고하고 어떤 element 가 침범했는지 명시 (예: "BlogEditorView 의 '저장' 버튼이 상단 status bar 영역에 있음").
-- iOS HIG 위반 (탭 바 위치, 터치 타깃 < 44pt, 텍스트 크기, contrast)
+- **네이티브 우선 위반 (HIGH 우선)** — 시스템 컴포넌트(`List`/`Form`/`.searchable()` 등)로 충분한 UX 를 정당화 없이 커스텀 뷰로 설계했는지. 커스텀 결정에 "시스템 컴포넌트로 안 되는 이유" 한 줄이 없으면 HIGH 로 보고.
+- iOS HIG 위반 소지 (탭 바 구조, 터치 타깃 < 44pt 가 될 레이아웃, 텍스트 크기, contrast)
 - 정보 계층 약함 (primary CTA 불명확, 제목/본문/메타 구분 약함)
 - empty / loading / error state 누락
 - 색 토큰의 접근성 (Primary on background 가 WCAG AA 미달)
-- 일관성 결여 (같은 컴포넌트 화면별로 다른 모양)
+- 일관성 결여 (같은 컴포넌트가 화면별로 다른 결정, 화면 전체가 같은 템플릿으로 동질화)
 - 디자인이 generic — system blue + system gray 그대로 → 앱 정체성 0 (색 정체성)
 - **레이아웃 동질성 / templated (HIGH 우선)** — 모든 화면이 같은 컨테이너(동일 `List`/카드 피드)로 보여 "다른 앱과 구별 안 됨"인지, 4종 Layout Personality 골격을 변형 없이 베꼈는지. architecture.md 의 `### Signature Layout`(hero element·정보 위계·density·화면 간 차별화)이 실제 화면 PNG 에 구현됐는지 대조한다 — primary 화면과 2순위 화면이 시각적으로 구별되지 않으면(둘 다 같은 몰드) HIGH 로 보고하고 어느 화면들이 동일한지 + 어떻게 차별화할지 명시. (위 "generic"이 *색* 정체성이라면 이 항목은 *레이아웃/구성* 정체성. 둘은 별개 축.)
 
@@ -164,13 +164,12 @@ Gate `2.5->3` 은 preview HTML 존재만 검사하므로 critique 가 부실해�
 |------|------|------|
 | `architecture.md` 없음 | Phase 1 미완 | Phase 2.5 fail — `/autobot:resume 1` 안내 |
 | `design-spec.md` 없음 | Phase 2 미완 | Phase 2.5 fail — `/autobot:resume 2` 안내 |
-| `designs/*.png` 0 개 | Stitch fallback | WARN, 갤러리는 placeholder, critique 는 design-spec.md 기반으로 작성 후 진행 |
+| `designs/*.png` 0 개 | 정상 (Phase 2 는 design-spec 직접 저작, 목업 없음) | 갤러리는 placeholder, critique 는 design-spec.md 기반으로 작성 후 진행 |
 | `app-icon-1024.png` 없음 | Phase 2 fallback | WARN, 헤더 아이콘만 생략하고 진행 |
 | `open` / `xdg-open` 둘 다 실패 | 헤드리스 환경 | 경로만 출력 후 진행 (Phase 2.5 는 success) |
 
 ## Non-goals (v1 에서 의도적으로 뺀 것)
 
-- **Stitch HTML iframe 임베드** — `fetch_screen_code` 의 Tailwind CDN 의존성이 오프라인/사내 프록시에서 깨질 위험이 있어 v1 은 PNG-only. v2 에서 격리된 inline-styled HTML 만 허용하는 형태로 재검토.
 - **critique 의 외부 LLM 위탁** — 현재 self (Claude) 가 멀티모달로 직접 분석. codex 위탁은 cost / 신뢰성 비교 후 v2.
 - **"Approve / Reject" 버튼 + watcher** — HTML 검토 결과를 자동 captures 하지 않는다. 사용자가 다음 명령 (`/autobot:resume` 또는 `/autobot:plan`) 으로 결정을 표현한다.
 
@@ -180,4 +179,4 @@ mvp 자율 흐름의 약점은 architect / ux-designer 의 **첫 패스** 결과
 
 이 스킬이 잡으려는 두 실패 모드:
 1. **컨셉 오해** — architect 가 사용자 아이디어를 잘못 해석 (시각 critique 만으로는 못 잡음 → 기획 축 critique 필수)
-2. **시각 / HIG 실패** — Stitch 가 generic / 접근성 미달 / iOS 답지 않은 디자인 생성 (시각 critique 가 잡음)
+2. **시각 / HIG 실패** — ux-designer 가 generic / 접근성 미달 / iOS 답지 않은 디자인 결정을 내림 (시각 critique 가 잡음)

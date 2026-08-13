@@ -133,7 +133,7 @@ def check_visual_judge(proj: Path, app: str, state: dict) -> list[dict]:
     (blank/monochrome → fail, colour-match → informational), this check reads the
     verdict of a *vision judge*: a multimodal agent (Phase 5 / integration-build
     Step 9) that Reads the runtime screenshot and compares it against the design
-    intent (design-spec + Stitch mockups), then records the result. The LLM work
+    intent (design-spec), then records the result. The LLM work
     is done by the agent; this gate check only reads what it recorded — the same
     "agent records metadata → deterministic check reads it" pattern as
     check_build_succeeded.

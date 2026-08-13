@@ -1,10 +1,10 @@
 """quality-max opt-in mode — gates tighten ONLY when state.qualityMax is set.
 
 The default autonomous /mvp path (no flag) must keep its exact prior behavior:
-a missing peer review / Axiom audit and a Stitch fallback are benign skips
-(green). With qualityMax, those become DEGRADED (skipped+degraded) — shipping-
-blocking but NOT a hard fail (a hard fail would increment retryCount and could
-trip the global circuit breaker, halting the autonomous build — build.py:119).
+a missing peer review / Axiom audit is a benign skip (green). With qualityMax,
+those become DEGRADED (skipped+degraded) — shipping-blocking but NOT a hard
+fail (a hard fail would increment retryCount and could trip the global circuit
+breaker, halting the autonomous build — build.py:119).
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from gate_checks.review import (  # noqa: E402
     check_axiom_critical_audit_acceptable,
     check_peer_review_acceptable,
 )
-from gate_checks.design import check_design_assets_exist_or_fallback  # noqa: E402
 from gate_checks.build import (  # noqa: E402
     check_backend_deploy_readiness,
     check_service_stubs_preserved,
@@ -78,43 +77,6 @@ class TestPeerQualityMax(unittest.TestCase):
         self.assertTrue(r["passed"])
         self.assertTrue(r.get("skipped"))
         self.assertTrue(r.get("degraded"))
-
-
-class TestDesignFallbackQualityMax(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.proj = Path(self._tmp.name)
-        (self.proj / ".autobot" / "designs").mkdir(parents=True)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _state(self, qmax: bool) -> dict:
-        st = {"phases": {"2": {"status": "fallback"}}}
-        if qmax:
-            st["qualityMax"] = True
-        return st
-
-    def _add_mockup(self):
-        (self.proj / ".autobot" / "designs" / "Home.png").write_bytes(b"\x89PNG\r\n")
-
-    def test_default_fallback_no_png_is_benign(self):
-        r = check_design_assets_exist_or_fallback(self.proj, APP, self._state(False))[0]
-        self.assertTrue(r["passed"])
-        self.assertTrue(r.get("skipped"))
-        self.assertFalse(r.get("degraded", False))
-
-    def test_qmax_fallback_no_png_is_degraded(self):
-        r = check_design_assets_exist_or_fallback(self.proj, APP, self._state(True))[0]
-        self.assertTrue(r["passed"])
-        self.assertTrue(r.get("skipped"))
-        self.assertTrue(r.get("degraded"))
-
-    def test_qmax_fallback_with_mockup_is_benign(self):
-        self._add_mockup()
-        r = check_design_assets_exist_or_fallback(self.proj, APP, self._state(True))[0]
-        self.assertTrue(r["passed"])
-        self.assertFalse(r.get("degraded", False))  # has a real mockup → satisfied
 
 
 class TestBackendDeployReadinessQualityMax(unittest.TestCase):

@@ -17,7 +17,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
 ## Safety Policy
 
 - `autonomous`: 로컬 생성·수정·빌드·테스트·archive·재시도
-- `warn`: Stitch·fastlane·ASC·axiom 미설치 — 경고 후 fallback 으로 진행
+- `warn`: fastlane·ASC·axiom 미설치 — 경고 후 fallback 으로 진행
 - `require_confirmation`: 원격 저장소 생성/푸시, 외부 시스템 비가역 변경 — 기본 파이프라인 제외
 
 ## Phase Summary (auto-rendered from spec)
@@ -27,7 +27,7 @@ Phase 0–7 dispatcher. 실제 Phase/Gate/Retry 정의는 **`spec/pipeline.json`
 |-------|------|-------|----------|------|-----------|
 | 0 | Pre-flight & 환경 준비 | (self) | No | → 환경/이름 검증 | 1 |
 | 1 | 아키텍처 + 계약 | architect | No | → 산출물 존재/구조 검증 | 2 |
-| 2 | UX Design (필수) | ux-designer | No | → Stitch 성공 필수(미설치 시 fallback) + app-icon-1024.png 존재 | 1 |
+| 2 | UX Design (필수) | ux-designer | No | → design-spec 룩앤필 계약 + app-icon-1024.png 존재 | 1 |
 | 2.5 | 기획·디자인 HTML 미리보기 (수동, /autobot:plan) | (self) + autobot-plan-preview | No | → preview HTML 존재 (critique 는 스킬 contract) | 1 |
 | 3 | Xcode 프로젝트 + Design System | (self) + design-system | No | → .xcodeproj + Package 존재 + tokens 채워짐 | 1 |
 | 4 | 병렬 코드 생성 | ui-builder + data-engineer + (backend-engineer) | **Yes** | → 파일 존재 + Models/ 무결성 + sandbox 위반 0건 | 2 |
@@ -134,7 +134,6 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" set-flag     --key backend_requir
 |---------|------|------|----------|
 | Axiom | `scripts/detect-axiom.sh` (exit 0 = 설치됨) | Phase 5 critical audit, Phase 7 health-check | `axiom-distilled` references 만으로 진행 |
 | Peer AI | `scripts/detect-peer-ai.sh` | Codex-host → Claude review, Claude-host → Codex review | `peerReview.verdict=skipped` 기록 |
-| Stitch | `mcp__stitch__list_projects` 도구 존재 | Phase 2 primary 경로 | architecture.md Design Direction → 최소 design-spec.json |
 | fastlane | `command -v fastlane` | Phase 6 metadata/upload | Phase 6 보조 도구 누락 경고 |
 
 ## Composition Seam (Phase 3 출력)

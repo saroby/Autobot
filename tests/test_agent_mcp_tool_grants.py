@@ -1,11 +1,11 @@
 """Guard: a restricted agent must GRANT every MCP tool its body tells it to call.
 
-Regression for the Stitch dogfood bug: agents/ux-designer.md instructs the agent
-to call `mcp__stitch__create_project` etc. as the primary path, with an
-`npx @_davideast/stitch-mcp ...` CLI fallback "if the MCP tools are unavailable."
-But the frontmatter restricted `tools:` to `Read, Write, Bash, Glob, Grep` — no
-MCP tools — so the agent could NEVER reach the MCP path and silently ran the npx
-fallback on every build.
+Regression for a historical dogfood bug (the since-removed Stitch integration):
+agents/ux-designer.md instructed the agent to call `mcp__stitch__create_project`
+etc. as the primary path, but the frontmatter restricted `tools:` to
+`Read, Write, Bash, Glob, Grep` — no MCP tools — so the agent could NEVER reach
+the MCP path and silently ran the CLI fallback on every build. The guard is
+generic: it applies to every agent that declares a `tools:` allowlist.
 
 Claude Code grants subagent MCP access only when each tool is listed by its full
 `mcp__<server>__<tool>` name in `tools:` (wildcards are NOT supported); omitting
@@ -158,18 +158,6 @@ class TestAgentMCPToolGrants(unittest.TestCase):
             "drift from the live server tool list:\n"
             + "\n".join(f"  {k}: {sorted(v)}" for k, v in offenders.items()),
         )
-
-    def test_ux_designer_grants_stitch_tools(self):
-        # Targeted assertion on the exact regression file.
-        text = (PLUGIN_DIR / "agents" / "ux-designer.md").read_text(encoding="utf-8")
-        fm, body = _split_frontmatter(text)
-        self.assertIsNotNone(fm)
-        granted = _granted_mcp_tools(_tools_line(fm) or "")
-        self.assertIn("mcp__stitch__create_project", granted)
-        self.assertIn("mcp__stitch__generate_screen_from_text", granted)
-        # Every Stitch tool named in the body must be granted.
-        self.assertEqual(set(), _referenced_mcp_tools(body) - granted)
-
 
 if __name__ == "__main__":
     unittest.main()

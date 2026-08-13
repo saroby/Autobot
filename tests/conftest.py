@@ -118,7 +118,6 @@ class IsolatedProjectCase(unittest.TestCase):
             "--fastlane", "false",
             "--ascConfigured", "false",
             "--axiom", "false",
-            "--stitch", "false",
             "--runtimeHost", "codex",
             "--peerAi", "claude",
             "--peerReviewAvailable", "false",

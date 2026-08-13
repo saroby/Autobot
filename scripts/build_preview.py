@@ -132,8 +132,9 @@ def _parse_navigation(arch_md: str) -> str:
 
 def _parse_screen_design_map(spec_md: str) -> dict[str, str]:
     """Authoritative screen→PNG mapping from design-spec.md's `## Screen Designs`
-    table (`Screen | Design File | Stitch ID | Description`). Returns
-    {normalized_screen_name: png_basename}. Empty if the table is absent.
+    table (`Screen | Design File | Screen ID | Description` — legacy builds with
+    generated mockups). Returns {normalized_screen_name: png_basename}. Empty if
+    the table is absent, which is the normal case for spec-only builds.
     """
     section = _slice_section(spec_md, "Screen Designs")
     rows = _parse_table_rows(section) if section else []
@@ -408,8 +409,8 @@ def _flow_html(ordered_screens: list[dict], arch_json: dict, navigation: str) ->
 
 def _gallery_html(cards: list[dict]) -> str:
     if not cards:
-        return ('<p class="muted">디자인 PNG 가 없습니다. Stitch 가 fallback 으로 진행됐을 수 있습니다 '
-                '(design-spec.md 만 확인하세요).</p>')
+        return ('<p class="muted">디자인 PNG 가 없습니다 — Phase 2 는 design-spec 직접 저작이 기본이므로 '
+                '정상입니다 (design-spec.md 를 확인하세요).</p>')
     out: list[str] = []
     for c in cards:
         n = c["n"]

@@ -76,7 +76,7 @@ SPEC_MD = """# UX Design Specification
 | Body | 17px regular | .body |
 
 ## Screen Designs
-| Screen | Design File | Stitch Screen ID | Description |
+| Screen | Design File | Screen ID | Description |
 |--------|-------------|------------------|-------------|
 | FeedView | designs/scr_feed_v2.png | s1 | the feed |
 

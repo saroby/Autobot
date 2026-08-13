@@ -220,7 +220,7 @@ def collect_schema_issues(
     environment = state.get("environment")
     if isinstance(environment, dict):
         for key in [
-            "xcodegen", "fastlane", "ascConfigured", "axiom", "stitch",
+            "xcodegen", "fastlane", "ascConfigured", "axiom",
             "runtimeHost", "peerAi", "peerReviewAvailable",
         ]:
             if key not in environment:

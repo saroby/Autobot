@@ -37,7 +37,7 @@ class TestFallbackPropagatesIntoGate(unittest.TestCase):
                 "5": {"status": "pending"}, "6": {"status": "pending"},
                 "7": {"status": "pending"},
             },
-            "environment": {"axiom": False, "stitch": False, "fastlane": False, "ascConfigured": False},
+            "environment": {"axiom": False, "fastlane": False, "ascConfigured": False},
         }))
         args = types.SimpleNamespace(
             phase=2, project_dir=str(project_dir), state_file=None,

@@ -55,15 +55,14 @@
       ],
       "docs": {
         "displayName": "UX Design (필수)",
-        "readmeAgent": "ux-designer (Stitch)",
+        "readmeAgent": "ux-designer",
         "skillAgent": "ux-designer",
         "outputs": [
-          "`.autobot/designs/*.png`",
           "`.autobot/design-spec.md`",
           "`.autobot/app-icon-1024.png`"
         ],
         "parallel": false,
-        "gateLabel": "→ Stitch 성공 필수(미설치 시 fallback) + app-icon-1024.png 존재"
+        "gateLabel": "→ design-spec 룩앤필 계약 + app-icon-1024.png 존재"
       }
     },
     "2.5": {

@@ -34,7 +34,7 @@ mvp 자율 흐름의 약점은 architect / ux-designer 의 **첫 패스** 결과
 
 이 명령이 잡으려는 두 실패 모드:
 1. **컨셉 오해** — architect 가 사용자 아이디어를 잘못 해석 → critique 의 "기획" 축이 잡음
-2. **시각 / HIG 실패** — Stitch 가 generic / 접근성 미달 / iOS 답지 않은 디자인 생성 → critique 의 "디자인" 축이 잡음
+2. **시각 / HIG 실패** — ux-designer 가 generic / 접근성 미달 / iOS 답지 않은 디자인 결정 → critique 의 "디자인" 축이 잡음
 
 ## CRITICAL RULES
 

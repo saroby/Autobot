@@ -365,7 +365,7 @@ ProjectRoot/                      ← 프로젝트 루트
 ├── .autobot/
 │   ├── architecture.md
 │   ├── build-state.json
-│   ├── design-spec.md            ← Phase 2 (Stitch 사용 시)
+│   ├── design-spec.md            ← Phase 2 (ux-designer 직접 저작)
 │   └── designs/                  ← Phase 2 (화면별 UI 목업)
 │       ├── HomeView.png
 │       └── DetailView.png

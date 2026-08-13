@@ -115,7 +115,7 @@ def check_environment_recorded(proj: Path, app: str, state: dict) -> list[dict]:
 
     results = []
     for key in (
-        "xcodegen", "fastlane", "ascConfigured", "axiom", "stitch",
+        "xcodegen", "fastlane", "ascConfigured", "axiom",
         "runtimeHost", "peerAi", "peerReviewAvailable",
     ):
         present = key in env

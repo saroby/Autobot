@@ -16,7 +16,7 @@ description: Use after an Autobot build completes (success or failure), when che
 |-------------------|---------------|------|
 | `"0"` | `preflight` | 환경 검증 |
 | `"1"` | `architecture` | 아키텍처 + 타입 계약 |
-| `"2"` | `ux_design` | UX 디자인 (Stitch) |
+| `"2"` | `ux_design` | UX 디자인 (design-spec 직접 저작) |
 | `"3"` | `scaffold` | Xcode 프로젝트 생성 |
 | `"4"` | `parallel_coding` | 병렬 코드 생성 |
 | `"5"` | `quality` | 통합 + 빌드 검증 |
