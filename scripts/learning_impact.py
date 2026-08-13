@@ -480,17 +480,24 @@ def load_global() -> dict:
 
 
 def merge_global_into_project(project_root: Path) -> dict:
-    """Bootstrap-time enrichment: when a new project has no `.autobot/learnings.json`
-    yet, seed it from the global store. When the project already has its own
-    file, merge global entries in (project wins on id collisions so per-project
-    grading isn't clobbered)."""
+    """Bootstrap-time enrichment for an EXISTING Autobot project: fill
+    `.autobot/learnings.json` from the global store, or merge global entries into
+    the project's own file (project wins on id collisions so per-project grading
+    isn't clobbered). Never creates `.autobot/` — see the invariant below."""
     glob = load_global()
     if not glob.get("items") and not glob.get("patterns"):
         return {"enriched": False, "reason": "no_global_learnings"}
 
     path = _learnings_path(project_root)
+    # Invariant: no Autobot code creates `.autobot/` before build init. This runs
+    # from the SessionStart hook, which fires in EVERY directory, so an mkdir here
+    # littered `.autobot/` into unrelated repos (AXI-Homepage). `.autobot/` is born
+    # in cli.py init_state and nowhere else. The guard lives in this shared function
+    # rather than only in load-learnings.sh so no caller can reintroduce the litter.
+    if not path.parent.is_dir():
+        return {"enriched": False, "reason": "no_autobot_dir"}
+
     if not path.is_file():
-        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(glob, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"enriched": True, "mode": "seeded_from_global",
                 "items": len(glob.get("items", []))}

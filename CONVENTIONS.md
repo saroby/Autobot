@@ -51,6 +51,21 @@ those are *visual* markers and not intended for grepping.
   renames. Snapshot files in `sandbox_runner` and `snapshot_runner` follow
   the same pattern. Never overwrite an output file in place.
 
+## `.autobot/` is born at build init, nowhere else
+
+Hooks and skills run in **every** directory the user opens, so a stray `mkdir`
+marks an unrelated repo as an Autobot project. The rule:
+
+- **Only `cli.py init_state` (= `pipeline.sh init-build`) may create `.autobot/`.**
+  That is the first moment "this directory is an Autobot project" becomes true.
+- Anything reachable **before** init — the SessionStart hook, `learning_impact
+  merge-global`, `render-active-learnings.py` — must return a no-op when
+  `.autobot/` is absent. Guard inside the shared function, not only at the call
+  site, so a new caller cannot reintroduce the litter
+  (`merge_global_into_project` → `reason: "no_autobot_dir"`).
+- Skills that write under `.autobot/` (`mkdir -p .autobot/designs`, etc.) run
+  inside a build, after init — they may assume the directory exists.
+
 ## Module dependency rules
 
 ```

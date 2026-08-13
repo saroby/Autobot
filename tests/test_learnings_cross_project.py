@@ -50,12 +50,26 @@ class TestSeedFromGlobal(_XDGFixture):
             {"id": "cta-vis-001", "phase": "4", "effect_score": 2,
              "last_outcome": "helped", "rule_preview": "outline CTA disabled"},
         ])
+        (self.proj / ".autobot").mkdir(parents=True)  # cli.py init_state creates this
         result = learning_impact.merge_global_into_project(self.proj)
         self.assertTrue(result["enriched"])
         self.assertEqual(result["mode"], "seeded_from_global")
         local = json.loads((self.proj / ".autobot" / "learnings.json").read_text())
         self.assertEqual(len(local["items"]), 1)
         self.assertEqual(local["items"][0]["id"], "cta-vis-001")
+
+    def test_never_creates_autobot_dir(self) -> None:
+        # The SessionStart hook calls this in EVERY directory the user opens.
+        # Seeding a dir that does not exist littered `.autobot/` into 14
+        # unrelated repos. `.autobot/` is born at build init, nowhere else.
+        global_path = Path(self._xdg) / "autobot" / "learnings.json"
+        _write_learnings(global_path, [
+            {"id": "cta-vis-001", "phase": "4", "rule_preview": "outline CTA disabled"},
+        ])
+        result = learning_impact.merge_global_into_project(self.proj)
+        self.assertFalse(result["enriched"])
+        self.assertEqual(result["reason"], "no_autobot_dir")
+        self.assertFalse((self.proj / ".autobot").exists())
 
     def test_missing_global_is_silent_noop(self) -> None:
         result = learning_impact.merge_global_into_project(self.proj)
