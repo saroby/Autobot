@@ -33,7 +33,6 @@ from state_store import (
     load_state,
     mutate_state_with_validation,
     parse_json_value,
-    parse_key_value,
     save_state,
     state_file_from_args,
     utc_now,
@@ -80,21 +79,20 @@ def init_state(args: argparse.Namespace) -> int:
     # Build + validate the state BEFORE acquiring the lock: a schema failure
     # here (e.g. bad app-name) must not exit while holding the lock, or the
     # corrected retry with the same build-id stays BLOCKED for the whole lease.
-    timestamp = args.started_at or utc_now()
     state: dict[str, Any] = {
         "schemaVersion": spec.get("schemaVersion"),
         "buildId": args.build_id,
         "appName": args.app_name,
         "displayName": args.display_name,
         "projectPath": args.project_path or str(Path(args.project_dir).resolve()),
-        "startedAt": timestamp,
+        "startedAt": utc_now(),
         "contracts": {
-            "modelsSnapshotPath": args.models_snapshot_path,
-            "modelsChecksumFile": args.models_checksum_file,
+            "modelsSnapshotPath": ".autobot/contracts/phase-1-models",
+            "modelsChecksumFile": ".autobot/contracts/models.sha256",
         },
         "environment": {},
         "phases": default_phases(spec),
-        "backend_required": args.backend_required,
+        "backend_required": False,
         "backend": None,
     }
     if args.bundle_id:
@@ -166,9 +164,6 @@ def record_environment(args: argparse.Namespace) -> int:
         value = getattr(args, key)
         if value is not None:
             updates[key] = parse_json_value(value)
-    for raw in args.field:
-        key, value = parse_key_value(raw)
-        updates[key] = value
 
     if not updates:
         raise SystemExit("FATAL: record-environment requires at least one field update")
@@ -277,54 +272,14 @@ def fail_phase(args: argparse.Namespace) -> int:
 # ── Gate / flag / log ──
 
 
-def record_gate_result(args: argparse.Namespace) -> int:
-    spec = load_spec()
-    state_path = state_file_from_args(args)
-    gate_id = args.gate
-    if gate_id not in spec.get("gates", {}):
-        raise SystemExit(f"FATAL: unknown gate '{gate_id}'")
-
-    timestamp = args.at or utc_now()
-    gate_spec = spec["gates"][gate_id]
-    checks: dict[str, Any] = {}
-    for raw in args.check:
-        key, value = parse_key_value(raw)
-        checks[key] = value
-
-    detail: Any = None
-    if args.detail_json:
-        detail = parse_json_value(args.detail_json)
-    elif args.detail:
-        detail = args.detail
-
-    def mutate(next_state: dict[str, Any]) -> None:
-        gates = next_state.setdefault("gates", {})
-        gate_state: dict[str, Any] = {
-            "status": args.status,
-            "checkedAt": timestamp,
-            "fromPhase": gate_spec.get("fromPhase"),
-            "toPhase": gate_spec.get("toPhase"),
-            "soft": bool(gate_spec.get("soft", False)),
-        }
-        if checks:
-            gate_state["checks"] = checks
-        if detail is not None:
-            gate_state["detail"] = detail
-        gates[gate_id] = gate_state
-
-    mutate_state_with_validation(state_path, spec, mutate)
-    print(f"OK: recorded gate {gate_id} status={args.status}")
-    return 0
-
-
 def run_gate_command(args: argparse.Namespace) -> int:
     spec = load_spec()
     project_dir = Path(args.project_dir).resolve()
     state_path = state_file_from_args(args)
-    if not args.no_record and not state_path.is_file():
+    if not state_path.is_file():
         raise SystemExit(f"FATAL: build-state.json not found at {state_path}")
 
-    state = load_json(state_path) if state_path.is_file() else {"phases": {}, "backend_required": False}
+    state = load_json(state_path)
     app_name = args.app_name or state.get("appName", "")
     if not app_name:
         raise SystemExit("FATAL: --app-name required (or appName must exist in build-state.json)")
@@ -332,7 +287,7 @@ def run_gate_command(args: argparse.Namespace) -> int:
     timestamp = args.at or utc_now()
     result = execute_and_record_gate(
         spec, state_path, project_dir, args.gate, app_name,
-        timestamp=timestamp, no_record=args.no_record,
+        timestamp=timestamp,
     )
 
     if args.format == "json":
@@ -469,11 +424,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--display-name", required=True)
     init.add_argument("--bundle-id")
     init.add_argument("--project-path")
-    init.add_argument("--idea")
-    init.add_argument("--started-at")
-    init.add_argument("--backend-required", action="store_true")
-    init.add_argument("--models-snapshot-path", default=".autobot/contracts/phase-1-models")
-    init.add_argument("--models-checksum-file", default=".autobot/contracts/models.sha256")
+    init.add_argument("--idea", help="Raw app idea; consumed from state by input-hash / capability / intent checks")
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=init_state)
 
@@ -488,19 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
     environment.add_argument("--runtimeHost")
     environment.add_argument("--peerAi")
     environment.add_argument("--peerReviewAvailable")
-    environment.add_argument("--field", action="append", default=[], metavar="KEY=VALUE")
     environment.set_defaults(func=record_environment)
-
-    gate = sub.add_parser("record-gate-result", help="Write gate execution results")
-    gate.add_argument("--project-dir", default=".")
-    gate.add_argument("--state-file")
-    gate.add_argument("--gate", required=True)
-    gate.add_argument("--status", required=True)
-    gate.add_argument("--at")
-    gate.add_argument("--check", action="append", default=[], metavar="CHECK=VALUE")
-    gate.add_argument("--detail")
-    gate.add_argument("--detail-json")
-    gate.set_defaults(func=record_gate_result)
 
     start = sub.add_parser("start-phase", help="Validate, persist, and log a phase start")
     start.add_argument("--project-dir", default=".")
@@ -519,7 +458,6 @@ def build_parser() -> argparse.ArgumentParser:
     fail.add_argument("--error", required=True)
     fail.add_argument("--at")
     fail.add_argument("--detail")
-    fail.add_argument("--retry-count", type=int)
     fail.add_argument("--increment-retry", action="store_true")
     fail.add_argument("--metadata", action="append", default=[], metavar="KEY=VALUE")
     fail.set_defaults(func=fail_phase)
@@ -531,7 +469,6 @@ def build_parser() -> argparse.ArgumentParser:
     gate_run.add_argument("--app-name")
     gate_run.add_argument("--format", choices=["text", "json"], default="text")
     gate_run.add_argument("--at")
-    gate_run.add_argument("--no-record", action="store_true")
     gate_run.set_defaults(func=run_gate_command)
 
     flag = sub.add_parser("set-flag", help="Atomically toggle a top-level state flag (e.g. backend_required)")

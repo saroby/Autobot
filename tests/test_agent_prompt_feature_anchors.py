@@ -15,7 +15,6 @@ class TestAgentPrompts(unittest.TestCase):
     def test_ui_builder_mentions_feature_spec_anchor(self):
         text = (AGENTS / "ui-builder.md").read_text(encoding="utf-8")
         self.assertIn("feature-spec.json", text)
-        self.assertIn("feature", text.lower())
         # the per-feature anchor field must be named so the agent attaches it
         self.assertIn(".accessibilityIdentifier", text)
 

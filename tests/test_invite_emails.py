@@ -47,9 +47,12 @@ def run(emails, bundle_id="com.axi.x"):
 class InviteEmailParsingTests(unittest.TestCase):
     def _assert_passed_email_validation(self, r):
         # The parser accepted the emails: the run did NOT stop with the
-        # email-validation error. (It fails later at JWT signing on the fake
-        # key — that is fine; we only assert the parser let it through.)
+        # email-validation error and DID reach JWT signing, where the fake
+        # key deterministically fails at `openssl dgst -sign`. The positive
+        # assert keeps these tests meaningful if the script ever dies earlier
+        # for an unrelated reason.
         self.assertNotIn("invalid email", r.stderr, r.stderr)
+        self.assertIn("openssl", r.stderr, r.stderr)
 
     def test_json_array_form_is_accepted(self):
         # config.sh get-or testerEmails → this exact shape.

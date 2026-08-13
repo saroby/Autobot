@@ -69,7 +69,6 @@ def execute_and_record_gate(
     app_name: str,
     *,
     timestamp: str,
-    no_record: bool = False,
 ) -> dict[str, Any]:
     """Run the gate and record its evidence into state + build-log.
 
@@ -80,7 +79,7 @@ def execute_and_record_gate(
     state = load_json(state_path) if state_path.is_file() else {"phases": {}, "backend_required": False}
     result = execute_gate(gate_id, project_dir, app_name, state, spec)
 
-    if no_record or "error" in result:
+    if "error" in result:
         return result
 
     evidence = build_gate_evidence(spec, gate_id, result, timestamp)

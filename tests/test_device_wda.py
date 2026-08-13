@@ -126,6 +126,7 @@ class TestSigningTeamResolution(unittest.TestCase):
     def test_reads_development_team_and_strips_quotes(self):
         r = self._run('DEVELOPMENT_TEAM="72J2BT27K5"\n')
         self.assertNotIn("no signing team", r.stderr)
+        self.assertIn("Appium did not answer", r.stderr)
 
     def test_fails_clearly_when_no_team_anywhere(self):
         r = self._run(None)

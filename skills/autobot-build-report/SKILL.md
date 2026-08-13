@@ -89,9 +89,9 @@ ls -R <AppName>/Views/ <AppName>/Services/ <AppName>/ViewModels/ 2>/dev/null
 |----------|------|-----------------|
 | `agent-prompt` | 에이전트 프롬프트의 지침 부족/오류 | `agents/*.md` |
 | `orchestrator-logic` | 오케스트레이터의 흐름 제어 문제 | `skills/autobot-orchestrator/` |
-| `gate-validation` | Phase 검증이 잡지 못한 문제 | `references/phase-gates.md` |
+| `gate-validation` | Phase 검증이 잡지 못한 문제 | `skills/autobot-orchestrator/references/phase-gates.md` |
 | `tooling` | 스크립트/도구의 버그 | `scripts/` |
-| `template` | 프로젝트 템플릿의 누락/오류 | `references/project-templates.md` |
+| `template` | 프로젝트 템플릿의 누락/오류 | `skills/autobot-ios-scaffold/references/project-templates.md` |
 | `style-guide` | UX 스타일 가이드 미반영 | `references/ios-ux-style.md` |
 | `fallback-missing` | 실패 시 대체 경로 부재 | 해당 스킬/에이전트 |
 | `ux-friction` | 사용자 경험 저하 (경고 부재 등) | 해당 Phase 로직 |

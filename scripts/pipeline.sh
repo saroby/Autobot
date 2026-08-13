@@ -19,11 +19,9 @@
 #   bash pipeline.sh input-hash           compute|should-skip --phase N [--force]
 #   bash pipeline.sh freeze-contracts     decide|apply --phase 1 [--regenerate]
 #   bash pipeline.sh context-pack         --phase N --agent <name> [--budget N] [--format text|json]
-#   bash pipeline.sh error-signature      check|record|normalize --phase N [--stderr-file ...|--signature ...]
 #   bash pipeline.sh build-checkpoint     save|latest|restore [--attempt N] [--exclude-signature HASH]
 #   bash pipeline.sh app-review-controller init|next|complete|fail|status
 #   bash pipeline.sh doctor               --profile local|ship --format text|json
-#   bash pipeline.sh design-spec          validate|synthesize|ensure ...
 #   bash pipeline.sh sandbox              check|set-active|clear-active ...
 #   bash pipeline.sh build-lock           acquire --build-id <id> | renew --build-id <id> | release --build-id <id> [--expected-token <token>|--force] | status
 set -euo pipefail
@@ -33,7 +31,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${SCRIPT_DIR}/runtime.py"
 
-USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|preflight-ship|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|error-signature|build-checkpoint|app-review-controller|doctor|design-spec|sandbox|build-lock> [options]"
+USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|preflight-ship|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|build-checkpoint|app-review-controller|doctor|sandbox|build-lock> [options]"
 
 if [[ -z "$MODE" ]]; then
   echo "$USAGE" >&2
@@ -147,10 +145,6 @@ raise SystemExit(1)
   context-pack)
     exec python3 "${SCRIPT_DIR}/context_pack.py" --project-dir "$PROJECT_DIR" "$@"
     ;;
-  error-signature)
-    SUBCMD="${1:-check}"; shift || true
-    exec python3 "${SCRIPT_DIR}/error_signature.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
-    ;;
   build-checkpoint)
     SUBCMD="${1:-latest}"; shift || true
     exec python3 "${SCRIPT_DIR}/build_checkpoint.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
@@ -161,10 +155,6 @@ raise SystemExit(1)
     ;;
   doctor)
     exec python3 "${SCRIPT_DIR}/doctor.py" --project-dir "$PROJECT_DIR" "$@"
-    ;;
-  design-spec)
-    SUBCMD="${1:-ensure}"; shift || true
-    exec python3 "${SCRIPT_DIR}/design_spec_validator.py" "$SUBCMD" --project-dir "$PROJECT_DIR" "$@"
     ;;
   sandbox)
     SUBCMD="${1:-check}"; shift || true
