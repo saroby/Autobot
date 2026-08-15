@@ -378,3 +378,9 @@
 - 실패 모드: 관리형 Appium의 bounded-start 테스트가 0.25초 안에 fake 프로세스의 첫 줄 기록까지 요구해, 여러 Xcode MCP가 함께 도는 호스트에서 프로세스가 스케줄되기 전에 종료되어 한 번 실패했다. 같은 테스트를 단독 실행하면 통과해 기능 결함과 구분됐다.
 - 검출 신호: 스크립트는 pid와 bounded-poll 오류를 정상 기록했지만 fake Appium의 side-effect 파일과 stdout log만 비어 있었고, 단독 재실행은 green이었다.
 - 예방 규칙: 비동기 프로세스 시작 테스트는 전체 timeout을 짧게 유지하되, CI/개발 호스트 스케줄링 지연을 흡수할 최소 wall-time을 준다. readiness의 엄격함과 첫 프로세스 instruction이 실행될 시간은 별도 계약으로 본다.
+
+## 2026-08-15 — zsh에서 변수 뒤 Git refspec을 붙일 때 변수 경계를 명시한다
+
+- 실패 모드: SHA 변수로 두 ref를 원자 push하면서 `$source_sha:refs/heads/main`을 사용하자 zsh가 콜론 뒤를 변수 modifier처럼 해석해 refspec이 `<sha>efs/heads/main`으로 훼손됐다. 원격은 두 ref를 모두 거부해 변경은 없었다.
+- 검출 신호: push 오류의 src refspec에 원래 있어야 할 `:r`이 사라졌고, push 전 출력한 live ref는 그대로였다.
+- 예방 규칙: 변수와 refspec을 연결할 때는 항상 `${source_sha}:refs/heads/<branch>`처럼 중괄호로 변수 경계를 고정한다. 실패 후에는 원격이 일부라도 바뀌었다고 추정하지 말고 `ls-remote`로 두 ref를 다시 읽는다.
