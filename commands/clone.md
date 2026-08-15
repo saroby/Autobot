@@ -1,7 +1,7 @@
 ---
 name: clone
 description: "연결된 iPhone 에서 대상 앱의 화면을 측정해(좌표·크기·실제 픽셀 색·텍스트 스타일) 레이아웃·룩앤필·동작이 같은 화면 스펙과 SwiftUI 재현 코드를 `.autobot/clone/` 에 생성합니다. 픽셀 단위 일치가 아니라 '나란히 놓으면 같은 화면'이 기준이며, 원본과 붙인 대조 이미지로 검증합니다. 실기기 연결이 필수이며 없으면 중지합니다. 기획 재구성이 목적이면 `/autobot:copy` 를 쓰세요."
-argument-hint: "<앱 이름> (기기에서 대상 앱을 열어둔 상태로 실행)"
+argument-hint: "<bundle id> (예: com.example.target; 대상 앱이 기기에 설치되어 있어야 함)"
 allowed-tools:
   - Read
   - Write
@@ -18,11 +18,11 @@ allowed-tools:
 > **이 문서는 진입점이다. 실행하지 않는다.**
 > 측정 방식·재현 범위·법적 경계·산출물 계약의 SSOT 는 **`autobot-clone-app` 스킬**이 소유한다.
 
-- **입력** — 재현할 앱 (기기에서 포그라운드로 열어둘 것)
+- **입력** — 재현할 앱의 bundle ID (Appium 세션이 이 앱에 바인딩되므로 이름이나 현재 포그라운드 상태만으로 추정하지 않는다)
 - **순서** — 전수 탐험 → **flow 맵**(브라우저) → 역기획 → 재현 대상 선택 → 측정 → 스펙 → SwiftUI → 대조
 - **결과물** — `.autobot/clone/flow-map.html`(화면 지도) + `reverse-brief.md`(역기획) + `screens/*.md`(화면 스펙) + `*.json`(측정값) + `Sources/*.swift`(SwiftUI 재현) + `compare/*.png`(원본 대조)
 
-탐험은 **중단돼도 이어서 한다** — `scripts/device_flow.py next` 가 로그에서 미방문 지점을 복원한다. 실기기에서는 세션 만료·잠금이 정상이고 완주가 예외다.
+탐험은 **중단돼도 이어서 한다** — `scripts/device_flow.py next` 가 로그에서 미방문 지점을 복원한다. 실기기에서는 세션 만료·잠금이 정상이고 완주가 예외다. `changed=true` 전이는 반드시 도착 화면을 `screen`으로 다시 캡처해야 하며, 캡처가 빠지면 `stats`는 완료가 아닌 `incomplete`로 남긴다.
 
 ## `/autobot:copy` 와의 차이
 
@@ -42,8 +42,8 @@ allowed-tools:
 
 1. **Step 0 소유 확인** — 본인 앱이면 이름·아이콘·문구를 그대로 쓴다. 타사 앱이면 레이아웃·간격·색·타이포·네비게이션만 재현하고 **이름·로고·아이콘·화면 문구는 자리표시자**로 둔다. 타사 앱 재현물을 App Store 에 내면 Guideline 4.1(Copycats)로 리젝된다 — 학습·프로토타입·자사 앱 리빌드는 정상 용도다.
 2. **측정하지 않은 값을 쓰지 않는다** — 스크린샷 눈대중으로 색·간격을 정하지 않는다. 픽셀 일치가 목표가 아니어도 측정이 룩앤필에 도달하는 가장 싼 길이다. `scripts/device_measure.py` 가 낸 JSON 에 없는데 필요하면 근사하되 스펙의 "재현 불가 항목"에 근사라고 적는다.
-3. **기기 없으면 중지** — `device_wda.sh device` → `session` 두 게이트를 통과해야 한다.
-4. **대조 이미지 없이 완료 선언 금지** — 재현본을 시뮬레이터에서 렌더해 원본과 나란히 붙인 뒤에야 완료다.
+3. **대상 앱에 바인딩되지 않으면 중지** — `device_wda.sh device` → `session <udid> <bundle_id>` 두 게이트를 통과해야 한다. 현재 foreground 앱을 타깃으로 간주하지 않는다. 입력이 필요한 화면은 Appium accessibility ID 기반 `type`을 사용하고, 입력값 자체는 로그에 남기지 않는다.
+4. **대조 이미지 없이 완료 선언 금지** — 재현본을 시뮬레이터에서 렌더해 원본과 나란히 붙인 뒤에야 완료다. 대조는 수렴 루프다: 요소 누락·구조 차이를 먼저 없애고, 남은 차이가 스펙에 선언된 재현 불가 항목뿐일 때 끝난다.
 5. **파이프라인 상태 위조 금지** — `build-state.json`/`architecture.json` 을 만들지 않는다.
 
 전체 절차는 `autobot-clone-app` 스킬을 로드해 그대로 따른다.

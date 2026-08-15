@@ -87,7 +87,8 @@ App Store 스크린샷 URL 은 `WebFetch`/curl 로 `.autobot/copy-analysis/store
 
 ```bash
 udid="$(scripts/device_wda.sh device)"    # stdout = udid 한 줄, 진단은 stderr
-sid="$(scripts/device_wda.sh session "$udid")"   # stdout = session id 한 줄
+bundle_id="<target app bundle id>"        # 설치된 대상 앱과 먼저 대조한다
+sid="$(scripts/device_wda.sh session "$udid" "$bundle_id")"   # stdout = session id 한 줄
 ```
 
 두 개가 연속된 하드 게이트다. 하나라도 실패하면 **스킬을 중지한다.** 스토어 메타만으로 대신 진행하지 않는다.
@@ -100,7 +101,7 @@ sid="$(scripts/device_wda.sh session "$udid")"   # stdout = session id 한 줄
 | `xcodebuild failed with code 65` | WDA 서명·빌드 실패 | `DEVELOPMENT_TEAM` 확인, 기기 잠금 해제 상태로 재시도 |
 | `Appium unreachable` | 서버 미기동 | `appium server --port 4723` |
 
-세션이 열렸다는 것은 **그 시점에** 기기가 잠금 해제된 채 조작 가능했다는 뜻이다 — idb 시절의 "첫 캡처" 2차 게이트를 대체한다. 다만 이후에도 계속 그렇다는 보장은 아니다: 루프 도중 어떤 명령이든 `ERROR:` 를 내면(기기 이탈·잠김·세션 만료) 그 자리에서 중단한다(Step 3 STOP 표).
+세션이 열렸다는 것은 **그 시점에** 기기가 잠금 해제된 채 조작 가능하고 Appium 세션이 대상 bundle ID에 묶였다는 뜻이다 — idb 시절의 "첫 캡처" 2차 게이트를 대체한다. 다만 이후에도 계속 그렇다는 보장은 아니다: 루프 도중 어떤 명령이든 `ERROR:` 를 내면(기기 이탈·잠김·세션 만료·다른 앱 전환) 그 자리에서 중단한다(Step 3 STOP 표).
 
 ### Step 3 — 자율 탐험 루프 (기본)
 

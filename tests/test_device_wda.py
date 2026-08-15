@@ -6,8 +6,9 @@ here. `paired` must never count as connected: a phone can hold a trust record
 for weeks after its transport is gone (observed 2026-07-25 — devicectl reported
 `pairingState: paired` with `transportType: None` on an unplugged device).
 
-Session/screen/tap/swipe are thin HTTP passthroughs to Appium and are not
-exercised here; they were verified against a real device instead.
+Screen/tap/type/swipe are thin HTTP passthroughs to Appium; the offline tests
+pin the session capability and active-app guard, while a real device is still
+required for WDA interaction itself.
 """
 
 from __future__ import annotations
@@ -16,7 +17,9 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_wda.sh"
@@ -100,7 +103,7 @@ class TestSigningTeamResolution(unittest.TestCase):
     every real run failed with "no signing team" despite the value being there.
     """
 
-    def _run(self, env_body: str | None) -> subprocess.CompletedProcess:
+    def _run(self, env_body: str | None, bundle_id: str = "com.example.target") -> subprocess.CompletedProcess:
         with tempfile.TemporaryDirectory() as home:
             if env_body is not None:
                 cfg = Path(home) / ".autobot"
@@ -114,7 +117,7 @@ class TestSigningTeamResolution(unittest.TestCase):
             env["APPIUM_URL"] = "http://127.0.0.1:1"
             env["CLONE_WDA_TIMEOUT"] = "5"
             return subprocess.run(
-                ["bash", str(SCRIPT), "session", "00008101-AAA"],
+                ["bash", str(SCRIPT), "session", "00008101-AAA", bundle_id],
                 capture_output=True, text=True, env=env,
             )
 
@@ -131,6 +134,149 @@ class TestSigningTeamResolution(unittest.TestCase):
         r = self._run(None)
         self.assertEqual(r.returncode, 1)
         self.assertIn("no signing team", r.stderr)
+
+    def test_requires_target_bundle_id(self):
+        with tempfile.TemporaryDirectory() as home:
+            env = {**os.environ, "HOME": home, "DEVELOPMENT_TEAM": "72J2BT27K5"}
+            r = subprocess.run(
+                ["bash", str(SCRIPT), "session", "00008101-AAA"],
+                capture_output=True, text=True, env=env,
+            )
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("session <udid> <bundle_id>", r.stderr)
+
+    def test_session_binds_appium_to_target_bundle_id(self):
+        received: dict = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received.update(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                body = json.dumps({"value": {"sessionId": "session-1"}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            env = {**os.environ, "DEVELOPMENT_TEAM": "72J2BT27K5",
+                   "APPIUM_URL": f"http://127.0.0.1:{server.server_port}"}
+            r = subprocess.run(
+                ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                capture_output=True, text=True, env=env,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        caps = received["capabilities"]["alwaysMatch"]
+        self.assertEqual(caps["appium:bundleId"], "com.example.target")
+
+    def test_active_app_guard_rejects_a_foreign_foreground_app(self):
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                self._reply({"value": {"capabilities": {"appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                self._reply({"value": {"bundleId": "com.example.other"}})
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                lib = Path(temp) / "wda_lib.sh"
+                lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                               encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": f"http://127.0.0.1:{server.server_port}"}
+                r = subprocess.run(
+                    ["bash", "-c", f"source '{lib}'; _assert_target session-1"],
+                    capture_output=True, text=True, env=env,
+                )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("expected com.example.target, active com.example.other", r.stderr)
+
+    def test_type_uses_accessibility_id_without_logging_input_value(self):
+        received: dict = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                self._reply({"value": {"capabilities": {"appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                elif self.path.endswith("/element"):
+                    received["find"] = payload
+                    self._reply({"value": {"element-6066-11e4-a52e-4f735466cecf": "element-1"}})
+                else:
+                    received["value"] = payload
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                lib = root / "wda_lib.sh"
+                log = root / "flow.jsonl"
+                lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                               encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": f"http://127.0.0.1:{server.server_port}",
+                       "CLONE_FLOW_LOG": str(log)}
+                r = subprocess.run(
+                    ["bash", "-c", f"source '{lib}'; cmd_type session-1 field-id sensitive-value"],
+                    capture_output=True, text=True, env=env,
+                )
+                flow = log.read_text(encoding="utf-8")
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertEqual(received["find"], {"using": "accessibility id", "value": "field-id"})
+        self.assertEqual(received["value"], {"text": "sensitive-value"})
+        self.assertNotIn("sensitive-value", flow)
+        self.assertIn('"type": "input"', flow)
+        self.assertIn('"length": "15"', flow)
 
 
 class TestFlowLogging(unittest.TestCase):
@@ -163,8 +309,9 @@ class TestFlowLogging(unittest.TestCase):
             log = Path(d) / "sub" / "flow.jsonl"   # parent created on demand
             r = self._call(str(log), Path(d))
             self.assertEqual(r.returncode, 0)
-            self.assertEqual(json.loads(log.read_text(encoding="utf-8").strip()),
-                             {"from": "a", "to": "b", "type": "tap"})
+            event = json.loads(log.read_text(encoding="utf-8").strip())
+            self.assertEqual({event["from"], event["to"], event["type"]}, {"a", "b", "tap"})
+            self.assertRegex(event["at"], r"^20\d\d-\d\d-\d\dT")
 
 
 if __name__ == "__main__":

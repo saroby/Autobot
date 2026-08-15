@@ -2,6 +2,31 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [0.13.9] — 2026-08-15
+
+### Changed — `/autobot:clone` 세션을 대상 앱에 바인딩하고, 모든 조작 앞에서 foreground 를 증명한다
+- `device_wda.sh session` 이 `<udid> <bundle_id>` 두 인자를 요구하고 `appium:bundleId` 로 세션을 대상 앱에 묶는다. bundle ID 없이 XCUITest 세션을 열면 **홈 화면이나 그때 떠 있던 다른 앱**을 대상으로 시작할 수 있다 — "현재 포그라운드가 대상 앱이겠지"는 추정이지 계약이 아니었다.
+- `screen`·`tap`·`type`·`swipe` 가 매번 `mobile: activeAppInfo` 를 세션 capability 와 대조한다(`_assert_target`). 세션은 권한 대화상자·SpringBoard 복귀·사용자의 앱 전환보다 오래 살아남으므로, 세션 생성 시점의 바인딩만으로는 **N 번째 탭이 여전히 대상 앱을 치고 있다**는 보장이 안 된다. 어긋나면 그 자리에서 중지한다.
+- 신규 `device_wda.sh type <sid> <accessibility_id> <text>` — 좌표가 아니라 accessibility id 로 입력 필드를 찾는다. flow 로그에는 **라벨과 길이만** 남기고 입력값 자체는 절대 기록하지 않는다(로그인 화면을 지나는 탐험에서 로그가 비밀을 물고 있으면 안 된다).
+- `copy` 스킬도 같은 세션 계약을 쓰도록 문서를 동기화했다 — 두 스킬은 같은 드라이버를 공유하므로 계약이 갈리면 한쪽이 반드시 낡는다.
+
+### Fixed — flow 증거의 완결성 판정, 그리고 그 판정이 만든 복구 불가 상태
+- **changed 전이는 도착 화면 캡처가 있어야 완료다.** `tap` 이 남기는 건 전이 기록이지 도착 화면의 PNG/XML 이 아니다 — 그게 없으면 측정(Step 3)도 재현(Step 5)도 못 하는데 커버리지는 "전부 탐험"이라고 말하고 있었다. `device_flow.py` 가 도착 캡처 누락·접근성 트리 누락·해석 불가 도착지를 각각 `WARN` 으로 세고 `incomplete` 로 판정한다.
+- **그 판정이 한 번 놓친 캡처를 영구 실패로 만들었다.** 도착 캡처를 "해당 tap 과 다음 tap 사이"에서만 인정했더니, 캡처를 한 번 놓친 순간 이후 어떤 재방문·재캡처로도 그 gap 을 지울 수 없었다 — `stats` 는 영원히 `incomplete`, `next` 는 영원히 exit 1. WARN 이 시키는 조치를 그대로 따라도 상태가 안 바뀌는 게이트는 게이트가 아니라 벽이다. 조건을 "tap **이후** 아무 시점의 durable 캡처"로 완화했고, 핵심 속성(캡처는 반드시 tap 보다 뒤 — 낡은 캡처가 새 전이를 만족시키지 못한다)은 그대로다.
+- **중복 탭이 커버리지 분모를 부풀렸다** — 같은 타깃을 두 번 탭하면 분모가 늘어 "2/3 탐험"처럼 보였다. 후보 목록 기준으로 센다.
+- `changed` 판정을 헬퍼 하나로 통일했다 — 셸 드라이버가 쓰는 문자열 `"true"` 와 테스트 fixture 의 bool 을 곳곳에서 다르게 비교하고 있었다.
+- flow 이벤트에 UTC 시각(`at`)을 남긴다. 재개할 때 "어디까지 갔나"는 로그 순서로 알 수 있었지만 "언제 끊겼나"는 알 수 없었다.
+
+### Added — `device_compare.py` 보조 지표 + 대조의 수렴 기준
+- 원본과 재현본이 **같은 픽셀 크기**로 렌더된 경우에 한해 mismatch 비율(안티앨리어싱 허용 오차 포함)과 평균 절대 오차를 출력한다. **통과 판정의 단독 근거가 아니다** — 의도적으로 교체한 에셋과 자리표시자가 그대로 오차에 잡히므로, 대조 이미지와 요소 표의 사람 검토를 함께 통과해야 한다.
+- Step 6 에 **차이 분류·우선순위**를 넣었다: 요소 누락·레이아웃 구조(상) → 간격·타이포·색(중) → 광택(하). 상위에 차이가 남은 동안 하위를 다듬지 않는다 — 모서리 반경을 손보는 동안 빠진 요소가 살아남는 걸 막는다.
+- 대조를 1회 통과/탈락이 아니라 **수렴 루프**로 명시하고 종료 기준을 못박았다: 상·중 차이가 0 이고 남은 차이가 전부 스펙에 미리 선언된 "재현 불가 항목"뿐일 때. 반복해도 안 좁혀지는 차이는 조용히 포기하지 않고 재현 불가 항목으로 승격해 이유를 적는다. (웹 UI 클론 스킬들의 diff 분류·수렴 루프 관행에서 차용. 관측값을 디자인 시스템 표준 스케일로 스냅하는 관행은 **차용하지 않았다** — 철칙 1 의 "측정값 그대로"와 정면 충돌한다.)
+
+### 검증
+- 전체 `python3 -m unittest discover -s tests -p 'test_*.py'` → **1101건 OK**. 회귀 추가: `test_device_wda.py`(세션 bundle 바인딩·active-app 가드·입력값 미기록), `test_device_flow.py`(늦은 캡처로 gap 복구 / 낡은 캡처 거부 유지 / unresolved 복구 / 중복 탭 분모), 신규 `test_device_compare.py`.
+- `scripts/verify_spec_docs.py` All checks passed, 두 문서 frontmatter YAML 파싱 OK, `bash -n scripts/device_wda.sh`, `git diff --check`.
+- **미검증(다음 실기기 회차 최우선)**: `_session_target` 이 세션 capability 를 `GET /session/<sid>` 로 읽는데, 이 엔드포인트는 Appium 2 에서 deprecated 이고 Appium 3 에서 제거됐을 수 있다 — 그렇다면 모든 조작의 `_assert_target` 이 실패해 스킬 전체가 막힌다. 실기기가 없어 이번 회차에서 확인하지 못했다.
+
 ## [0.13.8] — 2026-07-26
 
 ### Added — `/autobot:clone` flow 우선 워크플로 (전수 탐험 → flow 맵 → 역기획 → 대상 선택)

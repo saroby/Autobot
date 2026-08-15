@@ -56,6 +56,51 @@ def taps(events: list[dict]) -> list[dict]:
     return [e for e in events if e.get("type") == "tap"]
 
 
+def changed(tap: dict) -> bool:
+    """Accept the JSON strings emitted by the shell driver and bool fixtures."""
+    return str(tap.get("changed", "")).lower() == "true"
+
+
+def capture_gaps(events: list[dict], rows: list[dict] | None = None) -> dict[str, list]:
+    """Return missing artifacts that must keep coverage from becoming complete.
+
+    A tap records a transition, not a durable destination screenshot/tree. The
+    latter is needed by measurement and reproduction, so a changed tap whose
+    destination was never captured is an explicit gap instead of a silent
+    success. Missing source trees are handled here too: without them the
+    candidate list cannot be reconstructed for resume.
+    """
+    missing_destinations = []
+    unresolved_destinations = []
+    for index, tap in enumerate(events):
+        if tap.get("type") != "tap":
+            continue
+        if not changed(tap):
+            continue
+        destination = tap.get("to", "?")
+        unresolved = destination in ("", "?")
+        # The durable capture must postdate the tap — an older capture of the
+        # same nodekey must never satisfy a new transition (a re-transition to
+        # an already-seen screen still needs fresh evidence). It need NOT sit
+        # before the next tap, though: a gap has to be repairable by
+        # re-visiting the destination and capturing it then, which lands later
+        # in the log. Requiring "immediately after" made a once-missed capture
+        # permanently incomplete. For an unresolved destination ("?"), any
+        # durable capture after the tap is the arrival evidence.
+        destination_captured = any(
+            e.get("type") == "screen" and e.get("tree") and Path(e["tree"]).is_file()
+            and (unresolved or e.get("node") == destination)
+            for e in events[index + 1:])
+        if not destination_captured:
+            (unresolved_destinations if unresolved else missing_destinations).append(tap)
+    missing_trees = [r for r in (rows or frontier(events)) if r.get("tree_missing")]
+    return {
+        "missing_trees": missing_trees,
+        "missing_destinations": missing_destinations,
+        "unresolved_destinations": unresolved_destinations,
+    }
+
+
 def candidates_of(tree: str) -> list[tuple[int, int, str]]:
     """(x, y, label) a screen offers — the same list the tap guard enforces."""
     if not Path(tree).exists():
@@ -80,6 +125,12 @@ def frontier(events: list[dict]) -> list[dict]:
     out = []
     for key, screen in screens(events).items():
         done = tapped.get(key, [])
+        tree = screen.get("tree", "")
+        if not tree or not Path(tree).is_file():
+            out.append({"node": key, "name": screen.get("name", key),
+                        "tree": tree, "png": screen.get("png", ""),
+                        "total": 0, "todo": [], "tree_missing": True})
+            continue
         # Matched with tolerance, not equality: the same screen captured twice
         # reports the back button at (38,72) and (38,71). On exact coordinates
         # that target stays "unexplored" forever — coverage under-reports and
@@ -89,10 +140,11 @@ def frontier(events: list[dict]) -> list[dict]:
             return any((lab == c[2] or "?" in (lab, c[2]))
                        and abs(x - c[0]) <= 12 and abs(y - c[1]) <= 12
                        for lab, x, y in done)
-        todo = [c for c in candidates_of(screen.get("tree", "")) if not is_done(c)]
+        candidates = candidates_of(tree)
+        todo = [c for c in candidates if not is_done(c)]
         out.append({"node": key, "name": screen.get("name", key),
-                    "tree": screen.get("tree", ""), "png": screen.get("png", ""),
-                    "total": len(done) + len(todo), "todo": todo})
+                    "tree": tree, "png": screen.get("png", ""),
+                    "total": len(candidates), "todo": todo, "tree_missing": False})
     return out
 
 
@@ -100,7 +152,13 @@ def cmd_next(path: str) -> int:
     events = load(path)
     rows = frontier(events)
     pending = [r for r in rows if r["todo"]]
+    gaps = capture_gaps(events, rows)
     if not pending:
+        if gaps["missing_trees"] or gaps["missing_destinations"] or gaps["unresolved_destinations"]:
+            _print_capture_gaps(gaps)
+            print("WARN: frontier is empty, but durable screen evidence is incomplete; "
+                  "do not call the clone explored yet")
+            return 1
         print("OK: frontier empty — every candidate of every captured screen was tapped")
         return 0
     # Shallowest first, by the same depths the map draws: breadth-first keeps the
@@ -113,9 +171,24 @@ def cmd_next(path: str) -> int:
             print(f"INFO:   tap {x} {y} | {label}")
         print(f"INFO:   tree {r['tree']}")
     total_todo = sum(len(r["todo"]) for r in pending)
+    _print_capture_gaps(gaps)
     print(f"OK: {total_todo} unexplored targets across {len(pending)} screens — "
           "re-foreground the app, re-capture that screen, then tap from ITS fresh candidates")
     return 0
+
+
+def _print_capture_gaps(gaps: dict[str, list]) -> None:
+    if gaps["missing_trees"]:
+        print(f"WARN: {len(gaps['missing_trees'])} captured screen(s) have no accessibility tree — "
+              "re-run device_wda.sh screen before claiming coverage")
+    if gaps["missing_destinations"]:
+        nodes = sorted({t.get("to", "?") for t in gaps["missing_destinations"]})
+        print(f"WARN: {len(gaps['missing_destinations'])} changed transition(s) have no destination capture "
+              f"({', '.join(nodes)}) — run device_wda.sh screen after each changed tap, "
+              "or re-visit those screens now and capture them")
+    if gaps["unresolved_destinations"]:
+        print(f"WARN: {len(gaps['unresolved_destinations'])} changed transition(s) have no resolvable destination "
+              "— re-capture the destination screen and inspect the WDA session")
 
 
 def cmd_stats(path: str) -> int:
@@ -123,12 +196,23 @@ def cmd_stats(path: str) -> int:
     rows = frontier(events)
     total = sum(r["total"] for r in rows)
     todo = sum(len(r["todo"]) for r in rows)
-    dead = [t for t in taps(events) if t.get("changed") == "false"]
+    dead = [t for t in taps(events) if not changed(t)]
+    gaps = capture_gaps(events, rows)
     print(f"INFO: screens {len(rows)}")
     print(f"INFO: targets {total - todo}/{total} explored, {todo} left")
     if dead:
         print(f"INFO: no-op taps {len(dead)} (target changed nothing)")
-    print("OK: coverage " + ("complete" if not todo else f"partial ({todo} unexplored)"))
+    _print_capture_gaps(gaps)
+    incomplete = any(gaps.values())
+    if todo:
+        status = f"partial ({todo} unexplored)"
+        if incomplete:
+            status += "; evidence incomplete"
+    elif incomplete:
+        status = "incomplete (screen evidence missing)"
+    else:
+        status = "complete"
+    print("OK: coverage " + status)
     return 0
 
 
@@ -136,7 +220,7 @@ def _edges(events: list[dict]) -> list[tuple[str, str, str]]:
     seen, out = set(), []
     for t in taps(events):
         edge = (t.get("from", "?"), t.get("to", "?"), t.get("label", "?"))
-        if edge not in seen and t.get("changed") != "false":
+        if edge not in seen and changed(t):
             seen.add(edge)
             out.append(edge)
     return out

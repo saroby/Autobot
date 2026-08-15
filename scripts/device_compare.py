@@ -54,6 +54,27 @@ def write_png(path: str, rows: list[list[tuple[int, int, int]]]) -> None:
     )
 
 
+def visual_metrics(left: list[list[tuple[int, int, int]]],
+                   right: list[list[tuple[int, int, int]]]) -> tuple[float, float] | None:
+    """Return thresholded mismatch ratio and normalized mean absolute error.
+
+    This is advisory: anti-aliasing, system chrome, and intentionally replaced
+    assets make a pixel score insufficient on its own. It is only meaningful
+    when both captures were rendered at the same pixel dimensions.
+    """
+    if not left or not right or len(left) != len(right) or len(left[0]) != len(right[0]):
+        return None
+    pixels = len(left) * len(left[0])
+    differing = 0
+    error = 0
+    for left_row, right_row in zip(left, right):
+        for a, b in zip(left_row, right_row):
+            delta = sum(abs(x - y) for x, y in zip(a, b))
+            error += delta
+            differing += delta > 24  # tolerate small anti-aliasing drift
+    return differing / pixels, error / (pixels * 3 * 255)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print("ERROR: usage: device_compare.py <original.png> <rendered.png> <out.png>",
@@ -64,6 +85,15 @@ def main(argv: list[str]) -> int:
     except (OSError, ValueError, zlib.error) as exc:
         print(f"ERROR: cannot read images: {exc}", file=sys.stderr)
         return 1
+
+    metrics = visual_metrics(left, right)
+    if metrics is None:
+        print("INFO: visual diff metrics skipped — original and reproduction must have "
+              "the same pixel dimensions", file=sys.stderr)
+    else:
+        mismatch, mae = metrics
+        print(f"INFO: visual diff advisory — mismatch {mismatch:.2%}, mean absolute error {mae:.2%}",
+              file=sys.stderr)
 
     # Same aspect ratio is not the same layout: reproducing 375x812 numbers on a
     # 402x874 simulator shifts everything, and scaling the screenshot afterwards

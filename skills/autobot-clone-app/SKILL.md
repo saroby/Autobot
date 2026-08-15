@@ -1,6 +1,5 @@
 ---
 name: autobot-clone-app
-user-invocable: false
 description: Use when reproducing an existing iOS app's screens so they look and behave the same — same layout, spacing, colors, typography, navigation and per-screen behavior — as a buildable SwiftUI project. Not a pixel-diff exercise — the bar is "side by side it reads as the same screen, and the same taps do the same things". Drives a connected iPhone via Appium/WebDriverAgent (`scripts/device_wda.sh`), measures every element's exact frame from the accessibility tree, samples real colors from the screenshot pixels, and emits per-screen specs plus SwiftUI code under `.autobot/clone/`. Requires a connected device — aborts without one. Unlike `autobot-copy-analyze` (which extracts *direction* for an original app), this reproduces the screens themselves. Triggers on "이 앱 그대로 복제해줘", "화면 똑같이 만들어줘", "앱 클론", "/autobot:clone".
 ---
 
@@ -37,14 +36,17 @@ description: Use when reproducing an existing iOS app's screens so they look and
 
 ## Workflow
 
-### Step 1 — 기기 게이트 + 세션 (HARD)
+### Step 1 — 기기 게이트 + 대상 앱 바인딩 (HARD)
+
+대상 앱을 단순히 현재 포그라운드 앱으로 추정하지 않는다. **bundle ID를 먼저 확인하고 Appium 세션에 `appium:bundleId`로 주입**한다. XCUITest가 대상 bundle ID 없이 세션을 만들면 홈 화면/다른 활성 앱을 대상으로 시작할 수 있으므로, 이 값이 없으면 중지한다.
 
 ```bash
+bundle_id="<target app bundle id>"
 udid="$(scripts/device_wda.sh device)"
-sid="$(scripts/device_wda.sh session "$udid")"
+sid="$(scripts/device_wda.sh session "$udid" "$bundle_id")"
 ```
 
-실패 시 **중지**한다. 실패 분기와 안내는 `autobot-copy-analyze` SKILL 의 Step 2 표와 동일하다(미연결 / 다중 연결 / UI 자동화 OFF / 서명 누락 / Appium 미기동).
+실패 시 **중지**한다. 실패 분기와 안내는 `autobot-copy-analyze` SKILL 의 Step 2 표와 동일하다(미연결 / 다중 연결 / UI 자동화 OFF / 서명 누락 / Appium 미기동 / 대상 bundle ID 누락 또는 미설치). `screen`·`tap`·`type`·`swipe`는 매번 Appium의 active-app 정보를 세션 bundle ID와 대조하므로, 다른 앱·SpringBoard·권한 대화상자가 foreground면 중지한다.
 
 ### Step 2 — 전수 탐험 (flow 를 먼저 확보한다)
 
@@ -54,12 +56,13 @@ sid="$(scripts/device_wda.sh session "$udid")"
 scripts/device_wda.sh screen "$sid" .autobot/clone/raw <NN>-<screen>
 scripts/device_wda.sh candidates .autobot/clone/raw/<NN>-<screen>.xml
 scripts/device_wda.sh tap "$sid" <x> <y> .autobot/clone/raw/<NN>-<screen>.xml
+scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow에 기록하지 않음
 scripts/device_flow.py next .autobot/clone/flow.jsonl    # 아직 안 가본 곳
 ```
 
-탐험 규율·STOP 조건은 `autobot-copy-analyze` Step 3 과 **동일하며 같은 코드가 강제한다** — 파괴적 라벨은 후보에서 제외, 모달이면 후보 0개, 낡은 좌표 탭은 거부. clone 에서 달라지는 건 셋:
+탐험 규율·STOP 조건은 `autobot-copy-analyze` Step 3 과 **동일하며 같은 코드가 강제한다** — 접근성 트리를 먼저 읽고 semantic text input을 사용하며, 좌표 탭은 후보·현재 화면 서명이 일치할 때만 허용한다. 파괴적 라벨은 후보에서 제외하고, 모달이면 후보 0개로 중지한다. clone 에서 달라지는 건 셋:
 
-**① 전이가 자동으로 기록된다.** `screen` 과 `tap` 이 `.autobot/clone/flow.jsonl` 에 한 줄씩 남긴다 — 손으로 적는 게 아니다. `tap` 은 탭 직후가 아니라 **화면이 실제로 바뀔 때까지 기다렸다가** 도착 화면을 적는다(안 기다리면 전환 애니메이션 중이라 출발 화면이 도착지로 기록된다). 끝내 안 바뀌면 `changed=false` 로 남는다 — "이 버튼은 아무 데도 안 간다"도 flow 데이터다.
+**① 전이가 자동으로 기록된다.** `screen` 과 `tap` 이 `.autobot/clone/flow.jsonl` 에 한 줄씩 남긴다 — 손으로 적는 게 아니다. `tap` 은 탭 직후가 아니라 **화면이 실제로 바뀔 때까지 기다렸다가** 도착 화면을 적는다(안 기다리면 전환 애니메이션 중이라 출발 화면이 도착지로 기록된다). 끝내 안 바뀌면 `changed=false` 로 남긴다 — "이 버튼은 아무 데도 안 간다"도 flow 데이터다. `changed=true`이면 즉시 `screen`을 한 번 더 실행해 도착 화면의 PNG/XML을 영구 캡처한다. flow의 전이 기록만으로는 화면을 재현할 수 없다.
 
 **② 화면 정체성은 `sig` 가 아니라 `nodekey` 다.** `sig`(라벨 집합 해시)는 탭 가드용이라 데이터가 바뀌면 같이 바뀐다 — 그걸로 노드를 세면 목록을 스크롤할 때마다 새 화면이 생겨 탐험이 끝나지 않는다. `nodekey`(구조 해시: role 개수 버킷 + 네비바 제목)는 같은 화면의 데이터 변화와 스크롤을 흡수하되, **빈 상태와 채워진 상태는 다른 노드로 둔다** — 그 둘은 재현해야 할 서로 다른 레이아웃이다.
 
@@ -67,7 +70,7 @@ scripts/device_flow.py next .autobot/clone/flow.jsonl    # 아직 안 가본 곳
 
 **데이터가 필요한 화면**: 읽기 전용으로는 빈 상태밖에 못 보는 지점이 나온다(항목 0개인 목록의 채워진 레이아웃). 여기서 **한 번 멈춰 사용자에게 "항목 1개만 직접 만들어 주세요"라고 요청**하고 재개한다. 에이전트가 대신 만들지 않는다 — 사용자의 실제 기기이고, 삭제는 파괴적 라벨이라 되돌릴 수도 없다. 사용자가 거절하면 그 화면은 flow 맵에 `데이터 필요` 로 남기고 넘어간다.
 
-**커버리지를 숨기지 않는다.** `device_flow.py stats` 가 "후보 N개 중 M개 탐험"을 낸다. 6/30 을 탐험하고 "전수 완료"라고 말하지 않는다.
+**커버리지를 숨기지 않는다.** `device_flow.py stats` 가 "후보 N개 중 M개 탐험"을 낸다. 6/30 을 탐험하고 "전수 완료"라고 말하지 않는다. 후보가 모두 탭됐더라도 변경된 도착 화면의 캡처가 없거나 접근성 트리가 빠졌으면 `incomplete`이며, 재현 완료로 보고하지 않는다.
 
 ### Step 2a — flow 맵 (사람이 보는 지점)
 
@@ -157,9 +160,23 @@ scripts/device_measure.py .autobot/clone/raw/<NN>-<screen>.xml \
    ```
 3. 사용자에게 연다(`open .autobot/clone/compare/`)
 
-3. **누락부터 센다.** 이 작업의 지배적 실패는 색이나 간격이 아니라 **요소가 통째로 빠지는 것**이다 — screenshot-to-code 연구(DCGen, arXiv 2406.16386)가 분류한 실패 1,699건 중 누락 85.3%, 배치 오류 12.7%, 왜곡 2.6%였다. 그러니 대조할 때 눈으로 "비슷하네"부터 하지 말고 **Step 4 요소 표의 행을 하나씩 짚어** 재현본에 있는지 센다. 우리 측정 단계는 크롬을 버리므로(Step 3) 콘텐츠를 같이 버렸을 위험이 특히 크다.
+`device_compare.py`는 같은 픽셀 크기로 렌더된 경우에 한해 보조 지표(허용 오차를 둔 mismatch 비율·평균 절대 오차)도 출력한다. 이 지표는 안티앨리어싱·의도적으로 교체한 에셋을 포함하므로 통과 판정의 단독 근거가 아니다. **대조 이미지와 요소 표/동작 계약의 사람 검토를 함께 통과해야 한다.**
 
-기준은 픽셀 일치가 아니라 **"나란히 놓으면 같은 화면인가"** 다. 수치가 맞아도 눈으로 다르면 재현이 아니고, 몇 pt 어긋나도 같아 보이면 통과다. 다른 곳은 스펙의 근사 항목을 고쳐 좁힌다.
+4. **누락부터 센다.** 이 작업의 지배적 실패는 색이나 간격이 아니라 **요소가 통째로 빠지는 것**이다 — screenshot-to-code 연구(DCGen, arXiv 2406.16386)가 분류한 실패 1,699건 중 누락 85.3%, 배치 오류 12.7%, 왜곡 2.6%였다. 그러니 대조할 때 눈으로 "비슷하네"부터 하지 말고 **Step 4 요소 표의 행을 하나씩 짚어** 재현본에 있는지 센다. 우리 측정 단계는 크롬을 버리므로(Step 3) 콘텐츠를 같이 버렸을 위험이 특히 크다.
+
+5. **차이는 분류해서 무거운 것부터 고친다.** 발견한 차이를 같은 무게로 다루면 모서리 반경을 다듬는 동안 빠진 요소가 살아남는다. 순서는 고정이다:
+
+   | 우선 | 분류 | 예 |
+   |---|---|---|
+   | 상 | 요소 누락 · 레이아웃 구조 | 요소가 없다, 스택 방향·섹션 순서가 다르다 |
+   | 중 | 간격 · 타이포 · 색 | 패딩/간격 어긋남, 글자 크기·굵기·색 불일치 |
+   | 하 | 광택 | 모서리 반경, 그림자, 구분선 두께 |
+
+   상위 분류에 차이가 남아 있는 동안 하위를 다듬지 않는다.
+
+기준은 픽셀 일치가 아니라 **"나란히 놓으면 같은 화면인가"** 다. 수치가 맞아도 눈으로 다르면 재현이 아니고, 몇 pt 어긋나도 같아 보이면 통과다.
+
+대조는 1회 통과/탈락이 아니라 **수렴 루프**다: 차이를 분류하고(위 5) → 스펙의 해당 항목(대개 근사 값)을 고치고 → 재렌더(Step 6-1) → 재대조. **종료 기준** — 상·중 분류의 차이가 0이고, 남은 차이가 전부 스펙의 "재현 불가 항목"에 미리 선언된 것뿐일 때. 그 전에는 통과가 아니라 다음 반복이다. 반복해도 좁혀지지 않는 차이는 스펙의 재현 불가 항목으로 승격하고 이유를 적는다 — 조용히 포기하지 않는다.
 같은 방식으로 **동작 계약도 대조한다** — Step 4 표의 각 요소가 재현본에서 같은 화면/상태로 가는가. 여기서 빠진 것이 곧 기능 차이다.
 **비교 이미지 없이 "완료"라고 하지 않는다.**
 
@@ -167,7 +184,7 @@ scripts/device_measure.py .autobot/clone/raw/<NN>-<screen>.xml \
 
 | 산출물 | 경로 | 소비자 |
 |-------|------|--------|
-| 탐험 로그(전이·커버리지·재개 상태) | `.autobot/clone/flow.jsonl` | Step 2·2a·2b |
+| 탐험 로그(시각·전이·입력 길이·커버리지·재개 상태) | `.autobot/clone/flow.jsonl` | Step 2·2a·2b |
 | flow 맵 | `.autobot/clone/flow-map.html` | 사람 검토 (Step 2a·2c) |
 | 역기획 | `.autobot/clone/reverse-brief.md` | 사람 · `/autobot:mvp` |
 | 원본 캡처 + 트리 | `.autobot/clone/raw/*.png`, `*.xml` | Step 3 측정 |
@@ -184,8 +201,8 @@ scripts/device_measure.py .autobot/clone/raw/<NN>-<screen>.xml \
 4. **대조 이미지 없이 완료 선언 금지** (Step 6).
 5. **파이프라인 상태 위조 금지** — `build-state.json`/`architecture.json` 을 만들지 않는다. 산출물은 `/autobot:mvp`·`/autobot:plan` 의 입력이거나 독립 참고물이다.
 6. **flow 를 확보하기 전에 재현하지 않는다** — 화면 하나만 보고 코드를 쓰면 그 화면이 앱에서 어떤 위치인지 모른 채 복제하게 된다. Step 2 → 2a → 2b → 2c 를 거친 뒤 Step 3 으로 간다.
-7. **커버리지와 근거를 숨기지 않는다** — 부분 탐험은 부분이라고 말하고(`stats`), 역기획의 해석은 관찰과 분리하고, 동작 계약의 미확인 행은 `미탐험` 으로 표시한다. 셋 다 추측이 명세로 승격되는 걸 막는 같은 규칙이다.
+7. **커버리지와 근거를 숨기지 않는다** — 부분 탐험은 부분이라고 말하고(`stats`), 역기획의 해석은 관찰과 분리하고, 동작 계약의 미확인 행은 `미탐험` 으로 표시한다. 변경된 전이의 도착 캡처가 없거나 원본 트리가 빠진 경우도 `incomplete`로 남긴다. 셋 다 추측이 명세로 승격되는 걸 막는 같은 규칙이다.
 
 ## Preconditions
 
-- `autobot-copy-analyze` 와 동일: Appium + xcuitest, 기동 중인 서버, `DEVELOPMENT_TEAM`, iPhone 1대 연결 + 잠금 해제 + Developer Mode + Trust + **UI 자동화 ON**. 미충족 시 중지.
+- `autobot-copy-analyze` 와 동일: Appium + xcuitest, 기동 중인 서버, `DEVELOPMENT_TEAM`, iPhone 1대 연결 + 잠금 해제 + Developer Mode + Trust + **UI 자동화 ON**, 설치된 대상 bundle ID. 미충족 시 중지.

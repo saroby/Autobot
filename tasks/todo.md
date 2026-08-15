@@ -119,3 +119,52 @@
 - [x] 실기기 검증: 3화면(빈 목록 → 홈 → 요약 상세), 전이 2건, 커버리지 2/25, 맵 깊이 0~2, 역기획 6항목.
 - 검증: 전체 1077건 green. 설계 결정 기록: `docs/superpowers/specs/2026-07-25-clone-flow-first-design.md`.
 - 미검증: 채워진 상태(기기 데이터 0개), 긴 목록 앱에서 `nodekey` 버킷 폭, 탐험 20+화면 규모에서의 맵 가독성.
+
+# /autobot:clone 스킬 다듬기 — 2026-08-15
+
+목표: Appium으로 타깃 앱을 관찰·조작하고, 그 증거를 바탕으로 화면·상태·전이를 같은 방식으로 재현하는 clone 스킬의 실행 계약을 다듬는다. 부분 실행을 완료로 오인하거나 상태·화면 누락을 숨길 수 있는 공백도 함께 막는다.
+
+## 수용 조건
+- [x] 기존 clone 산출물 계약과 `copy` 경계를 유지한다.
+- [x] Appium 기반 대상 앱 탐험과 화면/상태/전이 재현이 스킬의 중심 계약으로 명확하다.
+- [x] 여러 화면·상태 변형을 처리할 때 무엇을 탐험/재현/검증했는지 산출물에서 판별할 수 있다.
+- [x] 스킬이 요구하는 정량 또는 구조 검증이 실제 스크립트와 회귀 테스트로 닫힌다.
+- [x] 실기기 미연결 상태에서도 문서/파서/비교 경로를 오프라인으로 검증할 수 있다.
+- [x] frontmatter·문서 검사·clone 관련 회귀가 통과하고, 전체 suite의 기존 비관련 실패를 결과에 기록한다.
+
+## 체크리스트
+- [x] clone 문서·도구·테스트의 현재 계약과 남은 위험을 조사한다.
+- [x] 온라인 Appium/모바일 자동화 선행 구현을 조사하고 차용 항목을 결정한다.
+- [x] 최소 수정 설계와 acceptance evidence를 기록한다.
+- [x] 실행 절차와 산출물 계약을 보완한다.
+- [x] 회귀 테스트를 추가/수정한다.
+- [x] 문서 검증·테스트·diff 검사를 실행한다.
+- [x] Results에 변경 사항과 검증 결과를 기록한다.
+
+## Working Notes
+- 기준 SSOT: `skills/autobot-clone-app/SKILL.md`; 진입점은 `commands/clone.md`.
+- 핵심 실행 경로: Appium + WebDriverAgent로 실기기 대상 앱을 관찰하고 조작한다.
+- 스크립트가 실제로 제공하지 않는 능력을 문서에 약속하지 않는다.
+- 기존의 실기기 하드 게이트, flow 우선, 소유 확인, 대조 이미지 게이트는 유지한다.
+
+## Results
+
+- 온라인 조사 결론: Appium으로 타깃 앱을 그대로 복제하는 단일 목적의 공개 스킬은 확인하지 못했다. 대신 Appium 공식 XCUITest 문서와 `ios-simulator-skill`, `mobile-mcp`의 공통 패턴을 차용했다: 접근성 트리 우선, semantic locator 입력, bundle ID 기반 lifecycle, active-app 확인, 단계별 screenshot/tree 기록, 사람 검토를 보완하는 visual diff, 재개 가능한 구조화된 flow.
+- 구현: `device_wda.sh session`은 `appium:bundleId`를 필수로 받고, `screen`/`tap`/`type`/`swipe` 실행 전 `mobile: activeAppInfo`와 세션 capability를 대조한다. `type`은 accessibility id로 요소를 찾고 입력값 대신 label·길이만 flow에 기록한다.
+- 구현: flow 이벤트에 UTC 시각을 추가하고, `device_flow.py`가 changed 전이의 도착 캡처·접근성 트리 누락을 `incomplete`로 판정한다. 중복 탭은 coverage 분모를 부풀리지 않는다. `device_compare.py`는 동일 크기 이미지의 mismatch/MAE를 advisory로 출력한다.
+- 호환성: 공용 `copy` 스킬도 새 세션 계약을 사용하도록 문서를 동기화했다.
+- 검증 통과: 관련 회귀 63건, `scripts/verify_spec_docs.py`, clone skill frontmatter 검사, `bash -n scripts/device_wda.sh`, `git diff --check`.
+- 전체 검증: `python3 -m unittest discover -s tests`는 1097건 중 3건 실패했다. 모두 이번 변경 파일과 무관한 기존 `test_visual_contract.py`의 palette/dark-mode 판정 실패이며, clone 관련 회귀는 통과했다. 실기기는 연결되어 있지 않아 WDA 실기기 세션·실제 앱 전이 검증은 수행하지 못했다.
+
+## 후속 수정 (2026-08-15, 2차 검토)
+- `capture_gaps`의 복구 불가 dead-end 제거: 도착 캡처를 "해당 tap ~ 다음 tap 사이"에서만 인정하던 조건이, 한 번 놓친 캡처를 영구 `incomplete`로 만들었다(재방문·재캡처로도 못 지움 → `next`가 영원히 exit 1). 조건을 "tap 이후 아무 시점의 durable 캡처"로 완화 — 낡은 캡처가 새 전이를 만족시키지 못하는 속성(캡처가 tap보다 뒤여야 함)은 유지. `to="?"`(unresolved)도 같은 규칙으로 복구 가능해짐. 회귀 3건 추가.
+- `cmd_stats`의 no-op 집계를 새 `changed()` 헬퍼로 통일(문자열 `"false"` 비교 잔재 제거).
+- SKILL.md 가드 목록에 `swipe` 누락 보완.
+- 검증: flow/wda/compare 38건 green, `verify_spec_docs.py` All checks passed.
+- 실기기 검증 필요(미해결 리스크): `_session_target`이 `GET /session/<sid>`로 세션 caps를 읽는데 이 엔드포인트는 Appium 2에서 deprecated고 Appium 3에서 제거됐을 수 있다 — 그러면 모든 action의 `_assert_target`이 실패해 스킬 전체가 막힌다. 실기기 회차에서 최우선 확인.
+
+## 동일 목적 스킬 온라인 조사 + 차용 반영 (2026-08-15, 3차)
+- 조사 결론: 타깃 모바일 앱을 기기에서 탐험해 네이티브 UI로 재현하는 동일 목적 공개 스킬은 없음. 인접 3계열 — ① `ui-cloner`(kensleDev/dotfiles, 웹사이트 클론 스킬, 목적 최유사) ② `agent-device`(callstack, 기기 구동 스킬) ③ AI 앱 크롤러(ai-mobile-ui-crawler·LLM-Explorer·UI-KOBE, 목적=테스트 커버리지). ③은 차용보다 검증: 접근성 트리 우선·화면 해시 dedupe·JSONL 전이 기록·target-app 가드·step 상한 모두 기존 설계와 일치.
+- 차용 반영(문서): SKILL Step 6에 ui-cloner의 차이 분류·우선순위 표(누락/구조 → 간격/타이포/색 → 광택, 상위 미해결 시 하위 금지)와 수렴 루프 종료 기준(상·중 차이 0 + 남은 차이는 선언된 재현 불가 항목뿐; 안 좁혀지는 차이는 재현 불가 항목으로 승격) 추가. `commands/clone.md` CRITICAL RULES #4에 종료 기준 한 줄 동기화.
+- 차용 보류: Tailwind식 표준 스케일 스냅핑(철칙 1 "측정값 그대로"와 충돌), agent-device식 selector-first tap(중간 규모 코드 변경 — 다음 실기기 회차에서 12pt 버킷이 실제 문제를 일으키는지 본 뒤 결정).
+- 검증: `verify_spec_docs.py` All checks passed, 두 문서 frontmatter YAML 파싱 OK. (문서 전용 diff — 런타임 테스트 해당 없음)

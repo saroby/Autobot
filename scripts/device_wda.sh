@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# device_wda.sh — real-device app exploration for /autobot:copy, over Appium/WDA.
+# device_wda.sh — real-device app exploration for /autobot:copy and /autobot:clone,
+# over Appium/WDA.
 #
 # Why not idb: fb-idb's `ui tap`/`ui describe-all` are SIMULATOR-ONLY. On a
 # physical device they fail with "Target doesn't conform to
@@ -9,18 +10,20 @@
 #
 # Subcommands:
 #   device [<udid|name>]              Print THE connected device udid, or fail.
-#   session <udid>                    Start a WDA session; prints the session id.
+#   session <udid> <bundle_id>        Start a WDA session bound to the target app.
 #   screen <sid> <outdir> <name>      Capture <name>.png + <name>.xml + signature.
 #   candidates <tree>                 Safe tap targets (delegates to device_a11y.py).
 #   sig <tree>                        Screen signature (delegates to device_a11y.py).
 #   tap <sid> <x> <y> <tree.xml>      Tap a candidate — refuses stale/non-candidate points.
+#   type <sid> <accessibility_id> <text>  Type into a semantic text field.
 #   swipe <sid> <x1> <y1> <x2> <y2>   Swipe between two points.
 #   quit <sid>                        End the session.
 #
 # `device` and `session` are the two hard gates: no connected iPhone, or no WDA
-# session, means /autobot:copy stops instead of degrading to store metadata.
+# session bound to the target bundle, means /autobot:clone stops instead of
+# exploring whichever app happens to be in the foreground.
 # stdout of both is the bare id and nothing else, so callers can do
-# `udid="$(device_wda.sh device)"` / `sid="$(device_wda.sh session "$udid")"`.
+# `udid="$(device_wda.sh device)"` / `sid="$(device_wda.sh session "$udid" "$bundle_id")"`.
 #
 # Output follows CONVENTIONS.md prefixes (OK:/INFO:/WARN:/ERROR:).
 #
@@ -79,9 +82,10 @@ cmd_device() {
 }
 
 cmd_session() {
-  local udid="${1:-}" team body sid err
-  if [[ -z "$udid" ]]; then
-    echo "ERROR: usage: device_wda.sh session <udid>" >&2
+  local udid="${1:-}" bundle_id="${2:-}" team body sid err
+  if [[ -z "$udid" || -z "$bundle_id" ]]; then
+    echo "ERROR: usage: device_wda.sh session <udid> <bundle_id>" >&2
+    echo "ERROR:   <bundle_id> is the installed target app identifier; do not rely on whichever app is foreground." >&2
     return 1
   fi
   team="$(_team)"
@@ -96,6 +100,7 @@ print(json.dumps({'capabilities': {'alwaysMatch': {
     'platformName': 'iOS',
     'appium:automationName': 'XCUITest',
     'appium:udid': sys.argv[1],
+    'appium:bundleId': sys.argv[3],
     'appium:xcodeOrgId': sys.argv[2],
     'appium:xcodeSigningId': 'Apple Development',
     'appium:newCommandTimeout': 900,
@@ -106,7 +111,7 @@ print(json.dumps({'capabilities': {'alwaysMatch': {
     # code 65 is opaque on its own; this puts the real xcodebuild error in the
     # Appium log. Opt-in because it is very verbose.
     'appium:showXcodeLog': bool(os.environ.get('CLONE_WDA_DEBUG')),
-}}}))" "$udid" "$team")"
+}}}))" "$udid" "$team" "$bundle_id")"
 
   # NOT _curl: `-f` throws the response body away on a non-2xx, and Appium puts
   # the actual reason (WDA build log, automation-mode timeout, bad caps) in the
@@ -137,7 +142,7 @@ else:
   if [[ -z "$sid" ]]; then
     return 1
   fi
-  echo "OK: WDA session on $udid" >&2
+  echo "OK: WDA session on $udid (target $bundle_id)" >&2
   echo "$sid"
 }
 
@@ -147,6 +152,7 @@ cmd_screen() {
     echo "ERROR: usage: device_wda.sh screen <sid> <outdir> <name>" >&2
     return 1
   fi
+  _assert_target "$sid" || return 1
   mkdir -p "$outdir"
   local png="$outdir/$name.png" xml="$outdir/$name.xml" base="$APPIUM_URL/session/$sid"
   if ! _curl "$base/screenshot" | python3 -c "
@@ -178,6 +184,45 @@ _actions() {
     echo "ERROR: input failed — session dead, device locked, or unplugged. Stop the loop." >&2
     return 1
   fi
+}
+
+# XCUITest's active-app detection is the final target guard. A WDA session can
+# outlive a permission dialog, SpringBoard, or a user switching apps, so the
+# session's bundle capability alone is not enough for every subsequent action.
+_session_target() {
+  local sid="$1"
+  _curl "$APPIUM_URL/session/$sid" | python3 -c '
+import json, sys
+caps = json.load(sys.stdin).get("value", {})
+caps = caps.get("capabilities", caps)
+print(caps.get("appium:bundleId") or caps.get("bundleId") or "")
+' 2>/dev/null
+}
+
+_active_target() {
+  local sid="$1"
+  _curl -X POST "$APPIUM_URL/session/$sid/execute/sync" \
+    -H 'Content-Type: application/json' \
+    -d '{"script":"mobile: activeAppInfo","args":[]}' | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("value", {})
+print(value.get("bundleId", "") if isinstance(value, dict) else "")
+' 2>/dev/null
+}
+
+_assert_target() {
+  local sid="$1" expected actual
+  expected="$(_session_target "$sid" || true)"
+  actual="$(_active_target "$sid" || true)"
+  if [[ -z "$expected" || -z "$actual" ]]; then
+    echo "ERROR: cannot prove the active Appium app (expected '$expected', active '$actual') — stop and inspect the WDA session" >&2
+    return 1
+  fi
+  if [[ "$expected" != "$actual" ]]; then
+    echo "ERROR: target app is not foreground (expected $expected, active $actual) — re-activate the target and re-capture" >&2
+    return 1
+  fi
+  echo "INFO: active target $actual" >&2
 }
 
 # Dump the CURRENT screen's tree to $1. Callers derive sig/nodekey from it —
@@ -217,9 +262,11 @@ _flow_event() {
 _flow_write() {
   CLONE_FLOW_LOG="${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}" python3 -c "
 import json, os, sys
+from datetime import datetime, timezone
 path = os.environ['CLONE_FLOW_LOG']
 event = dict(a.split('=', 1) for a in sys.argv[2:])
 event['type'] = sys.argv[1]
+event['at'] = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
 os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
 with open(path, 'a', encoding='utf-8') as fh:
     fh.write(json.dumps(event, ensure_ascii=False) + '\n')
@@ -238,6 +285,7 @@ cmd_tap() {
     echo "ERROR: no such tree '$tree' — capture the screen first with 'screen'" >&2
     return 1
   fi
+  _assert_target "$sid" || return 1
   # (1) Provenance: the point must be a target this tree offered.
   python3 "$_HERE/device_a11y.py" verify "$tree" "$x" "$y" || return 1
   # (2) Freshness: the device must still be showing that screen. This is the
@@ -279,12 +327,47 @@ cmd_tap() {
   [[ "$changed" == true ]] || echo "INFO: screen did not change — this target is a no-op or opened nothing"
 }
 
+cmd_type() {
+  local sid="${1:-}" accessibility_id="${2:-}" text="${3:-}" response element
+  if [[ -z "$sid" || -z "$accessibility_id" || -z "$text" ]]; then
+    echo "ERROR: usage: device_wda.sh type <sid> <accessibility_id> <text>" >&2
+    echo "ERROR:   use a unique accessibility id from the current Appium accessibility tree; never log secrets." >&2
+    return 1
+  fi
+  _assert_target "$sid" || return 1
+  response="$(_curl -X POST "$APPIUM_URL/session/$sid/element" \
+    -H 'Content-Type: application/json' \
+    -d "$(python3 -c 'import json, sys; print(json.dumps({"using":"accessibility id", "value":sys.argv[1]}))' "$accessibility_id")")" || {
+      echo "ERROR: accessibility id '$accessibility_id' was not found" >&2
+      return 1
+    }
+  element="$(python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("value", {})
+if isinstance(value, dict):
+    print(value.get("element-6066-11e4-a52e-4f735466cecf") or value.get("ELEMENT") or "")
+' <<<"$response")"
+  if [[ -z "$element" ]]; then
+    echo "ERROR: Appium returned no element for accessibility id '$accessibility_id'" >&2
+    return 1
+  fi
+  _curl -X POST "$APPIUM_URL/session/$sid/element/$element/value" \
+    -H 'Content-Type: application/json' \
+    -d "$(python3 -c 'import json, sys; print(json.dumps({"text":sys.argv[1]}))' "$text")" >/dev/null || {
+      echo "ERROR: Appium could not type into '$accessibility_id'" >&2
+      return 1
+    }
+  _flow_event input "label=$accessibility_id" "length=${#text}"
+  echo "OK: typed ${#text} characters into $accessibility_id"
+}
+
 cmd_swipe() {
   local sid="${1:-}" x1="${2:-}" y1="${3:-}" x2="${4:-}" y2="${5:-}"
   if [[ -z "$sid" || -z "$x1" || -z "$y1" || -z "$x2" || -z "$y2" ]]; then
     echo "ERROR: usage: device_wda.sh swipe <sid> <x1> <y1> <x2> <y2>" >&2
     return 1
   fi
+  _assert_target "$sid" || return 1
   _actions "$sid" "$(printf '{"actions":[{"type":"pointer","id":"finger1","parameters":{"pointerType":"touch"},"actions":[{"type":"pointerMove","duration":0,"x":%s,"y":%s},{"type":"pointerDown","button":0},{"type":"pause","duration":100},{"type":"pointerMove","duration":600,"x":%s,"y":%s},{"type":"pointerUp","button":0}]}]}' "$x1" "$y1" "$x2" "$y2")"
   echo "OK: swiped $x1,$y1 -> $x2,$y2"
 }
@@ -309,9 +392,10 @@ main() {
     candidates) python3 "$_HERE/device_a11y.py" candidates "$@" ;;
     sig)        python3 "$_HERE/device_a11y.py" sig "$@" ;;
     tap)        cmd_tap "$@" ;;
+    type)       cmd_type "$@" ;;
     swipe)      cmd_swipe "$@" ;;
     quit)       cmd_quit "$@" ;;
-    *) echo "ERROR: unknown subcommand '${sub:-}'. Use: device | session | screen | candidates | sig | tap | swipe | quit" >&2; return 1 ;;
+    *) echo "ERROR: unknown subcommand '${sub:-}'. Use: device | session | screen | candidates | sig | tap | type | swipe | quit" >&2; return 1 ;;
   esac
 }
 

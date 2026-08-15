@@ -84,11 +84,22 @@ class TestFrontier(FlowCase):
 
     def test_a_fully_explored_screen_reports_an_empty_frontier(self):
         self.write([self.screen()] + [
-            {"type": "tap", "from": "n1", "to": "n2", "label": lab, "x": "50", "y": str(y),
-             "changed": "true"}
+            {"type": "tap", "from": "n1", "to": "n1", "label": lab, "x": "50", "y": str(y),
+             "changed": "false"}
             for lab, y in (("가", 120), ("나", 220))])
         r = self.run_flow("next", str(self.log))
         self.assertIn("frontier empty", r.stdout)
+
+    def test_duplicate_taps_do_not_inflate_coverage_denominator(self):
+        self.write([self.screen()] + [
+            {"type": "tap", "from": "n1", "to": "n2", "label": "가",
+             "x": "50", "y": "120", "changed": "true"},
+            {"type": "tap", "from": "n1", "to": "n2", "label": "가",
+             "x": "50", "y": "120", "changed": "true"},
+        ])
+        r = self.run_flow("stats", str(self.log))
+        self.assertIn("1/2 explored", r.stdout)
+        self.assertNotIn("2/3 explored", r.stdout)
 
 
 class TestCoverage(FlowCase):
@@ -105,6 +116,62 @@ class TestCoverage(FlowCase):
                      "x": "50", "y": "120", "changed": "false"}])
         r = self.run_flow("stats", str(self.log))
         self.assertIn("no-op taps 1", r.stdout)
+
+    def test_changed_destination_without_capture_is_incomplete(self):
+        self.write([self.screen(),
+                    {"type": "tap", "from": "n1", "to": "n2", "label": "가",
+                     "x": "50", "y": "120", "changed": "true"}])
+        r = self.run_flow("stats", str(self.log))
+        self.assertIn("destination capture", r.stdout)
+        self.assertIn("incomplete", r.stdout)
+
+    def test_changed_transition_to_existing_node_still_requires_new_capture(self):
+        self.write([self.screen(),
+                    {"type": "tap", "from": "n1", "to": "n1", "label": "가",
+                     "x": "50", "y": "120", "changed": "true"}])
+        r = self.run_flow("stats", str(self.log))
+        self.assertIn("destination capture", r.stdout)
+        self.assertIn("incomplete", r.stdout)
+
+    def test_a_missed_capture_is_repairable_by_a_later_capture(self):
+        # A gap must never be a life sentence: the WARN tells the agent to
+        # re-visit the destination and capture it, so a durable capture that
+        # lands LATER in the log (after other taps) has to clear the gap.
+        self.write([self.screen(),
+                    {"type": "tap", "from": "n1", "to": "n2", "label": "가",
+                     "x": "50", "y": "120", "changed": "true"},
+                    {"type": "tap", "from": "n1", "to": "n2", "label": "나",
+                     "x": "50", "y": "220", "changed": "true"},
+                    self.screen(node="n2", name="02-detail")])
+        r = self.run_flow("stats", str(self.log))
+        self.assertNotIn("destination capture", r.stdout)
+        self.assertNotIn("incomplete", r.stdout)
+
+    def test_an_older_capture_never_satisfies_a_new_transition(self):
+        self.write([self.screen(),
+                    self.screen(node="n2", name="02-detail"),
+                    {"type": "tap", "from": "n2", "to": "n1", "label": "가",
+                     "x": "50", "y": "120", "changed": "true"}])
+        r = self.run_flow("stats", str(self.log))
+        self.assertIn("destination capture", r.stdout)
+        self.assertIn("incomplete", r.stdout)
+
+    def test_an_unresolved_destination_is_cleared_by_a_capture_after_the_tap(self):
+        self.write([self.screen(),
+                    {"type": "tap", "from": "n1", "to": "?", "label": "가",
+                     "x": "50", "y": "120", "changed": "true"},
+                    self.screen(node="n2", name="02-detail")])
+        r = self.run_flow("stats", str(self.log))
+        self.assertNotIn("no resolvable destination", r.stdout)
+        self.assertNotIn("incomplete", r.stdout)
+
+    def test_missing_tree_is_incomplete(self):
+        event = self.screen()
+        event["tree"] = str(self.dir / "missing.xml")
+        self.write([event])
+        r = self.run_flow("stats", str(self.log))
+        self.assertIn("no accessibility tree", r.stdout)
+        self.assertIn("incomplete", r.stdout)
 
 
 class TestMap(FlowCase):
