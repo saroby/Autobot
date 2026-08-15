@@ -1,5 +1,29 @@
 # Lessons — Autobot 구조 개선 (2026-04-27)
 
+## 2026-08-15 clone target app listing
+
+- **실패 모드**: `devicectl device info apps`의 기본 목록을 전체 설치 앱 목록으로 해석하고, 다른 릴리스에서 본 Threads bundle ID를 고정해 WDA 대상 앱을 잘못 지정했다.
+- **검출 신호**: 같은 UDID의 프로세스에는 `/Threads.app/Threads`가 있었지만 기본 앱 목록에는 없었고, `--include-all-apps --search Threads`에서 `com.burbn.barcelona`가 확인됐다. `com.instagram.barcelona` 세션은 `unknown`으로 거부됐다.
+- **방지 규칙**: 항상 target UDID를 먼저 고정하고 그 UDID에서 `--include-all-apps`로 정확한 bundle ID를 조회한다. 대상 앱은 Release/App Store 설치여도 되며, Debug 서명이 필요한 것은 WDA runner뿐이다.
+
+## 2026-08-15 WDA runner signature diagnosis
+
+- **실패 모드**: Appium의 `xcodebuild code 65`를 대상 Threads 앱의 Debug/Release 제약으로 오인했다.
+- **검출 신호**: 기기 상태·Developer Mode·provisioning profile은 유효했지만, WDA runner에 `codesign --verify --deep --strict`를 실행하면 `invalid Info.plist`가 났고, WDA scheme post-action의 재서명 단계에서 같은 이름의 개발 인증서가 2개 발견됐다. SHA-1 인증서를 명시해 생성된 WDA 앱을 재서명하면 설치는 통과했다.
+- **방지 규칙**: 대상 앱 바인딩과 WDA helper 서명 진단을 분리한다. `0xe8008001`이면 Appium 로그와 WDA 산출물 서명을 먼저 검사하고, 원본 앱에 Debug 빌드를 요구하지 않는다.
+
+## 2026-08-15 clone swipe fixture
+
+- **실패 모드**: `device_wda.sh`를 임시 디렉터리에 복사해 swipe 테스트를 만들었지만, 스크립트가 `_HERE/device_a11y.py`를 실행하므로 settle 시그니처/노드키 계산이 조용히 실패했다.
+- **검출 신호**: HTTP fixture와 명령은 성공했는데 flow 이벤트가 `from=?`, `to=?`, `changed=false`로 기록되고 stderr에 임시 경로의 `device_a11y.py` 미존재가 남는다.
+- **방지 규칙**: 스크립트를 임시 경로에서 source하는 테스트는 인접 helper 스크립트·상대 경로·환경 변수를 함께 재현하고, 액션 성공뿐 아니라 flow 이벤트의 식별자/changed 값까지 assertion한다.
+
+## 2026-08-15 clone workspace test file
+
+- **실패 모드**: 패치 결과가 성공으로 반환됐지만 새 회귀 테스트 파일이 worktree에 존재하지 않아 테스트 수집 단계에서 import 오류가 났다.
+- **검출 신호**: `ModuleNotFoundError: No module named 'tests.test_clone_workspace'` 및 `git status --short`에 테스트 파일이 나타나지 않음.
+- **방지 규칙**: 새 파일을 추가한 뒤 대상 경로·git status를 즉시 확인하고, 테스트 실행 전 import 가능한지 확인한다.
+
 ## 2026-07-24 리뷰 수정
 
 ### 표준 테스트 러너 우선
@@ -313,3 +337,44 @@
 - 실패 모드: 온라인 자동화 사례를 조사하면서 일반 모바일 자동화·시각 검증 패턴이 목표처럼 보일 수 있었다.
 - 검출 신호: 사용자가 "목표는 Appium"이라고 다시 강조했다.
 - 예방 규칙: `/autobot:clone`의 모든 실행 절차와 acceptance evidence는 Appium 세션, WDA 접근성 트리, Appium 입력/전이 결과를 기준으로 설명하고, 다른 도구는 보조 아이디어로만 취급한다.
+
+## 2026-08-15 — WDA의 서명 후 post-action은 전역 Appium 설치와 분리한다
+- 실패 모드: 대상 Threads bundle ID는 정확했지만 WDA 설치가 `0xe8008001`/`invalid Info.plist`로 실패했다. Appium WDA scheme의 icon post-action이 이미 서명된 Runner.app을 다시 서명했고, 키체인에 같은 표시명의 개발 인증서가 2개라 `codesign --sign "Apple Development"`가 모호해졌다.
+- 검출 신호: `xcodebuild code 65`만으로는 원인이 숨겨졌고, `CLONE_WDA_DEBUG=1` 로그와 `codesign --verify --deep --strict --verbose=4`에서만 Runner.app 산출물 변조·서명 상태를 분리해 볼 수 있었다. 대상 앱의 Debug/Release 상태를 바꿔도 해결되지 않았다.
+- 예방 규칙: clone 세션은 Appium 패키지의 WDA를 `.autobot/clone/wda`에 복사하고 서명 후 bundle을 변형하는 선택적 post-action을 no-op으로 격리한다. 전역 `~/.appium` 패키지를 패치하지 말고, 격리 경로·갱신 플래그·원본 비변경을 회귀 테스트로 고정한다.
+
+## 2026-08-15 — 실측 좌표는 SwiftUI의 가변 레이아웃 오작동을 바로 드러낸다
+- 실패 모드: 추천 화면의 콘텐츠를 intrinsic-height `VStack`으로 감싼 뒤 중앙 정렬해, 원본의 상단 시트가 생성본에서 화면 중앙에 떠 버렸다. 빌드와 렌더는 성공했지만 구조가 달랐다.
+- 검출 신호: 원본 접근성 트리의 절대 프레임(`손잡이 y45`, 헤더 `y94`, 검색 `y168`, 행 `y214`, 하단 버튼 `y728`)과 대조 이미지의 시트 시작 위치가 달랐다.
+- 예방 규칙: measured frame을 색·폰트에만 쓰지 말고 시트의 상단 고정점과 하단 여백에도 적용한다. 먼저 구조 차이를 없앤 뒤 색·모서리 같은 광택을 조정하고, 원본/생성본 대조 이미지를 남긴다.
+
+## 2026-08-15 — clone 전용 빌드는 공통 scaffold의 불필요한 패키지를 의심한다
+- 실패 모드: clone workspace를 기본 scaffold 그대로 빌드하자 사용하지 않는 로컬 디자인 시스템 패키지의 Swift 모듈 그래프가 디스크 압박(최종 0바이트) 상황에서 `Unable to resolve module dependency`와 `database or disk is full`을 연쇄시켰다. 최초 메시지만 보면 SwiftUI 코드 오류처럼 보였다.
+- 검출 신호: `df -h`가 여유 117MiB였고, 로그 끝에 `No space left on device`가 있었다. 화면 소스에는 해당 패키지 import가 없었다.
+- 예방 규칙: clone 산출물은 실제 생성 화면이 사용하는 의존성만 남긴다. 빌드 실패 시 마지막 오류보다 저장공간·패키지 그래프를 먼저 확인하고, 생성된 실패 DerivedData만 정리한 뒤 최소 타깃으로 재빌드한다.
+
+## 2026-08-15 — 타사 자산 정책은 연구용과 배포용을 분리한다
+
+- 실패 모드: 타사 앱의 원본 자산 사용을 일괄적으로 금지해, 사용자가 명시한 연구용 clone 범위까지 자리표시자로 제한했다.
+- 검출 신호: 사용자가 연구용이며 자산 사용 책임을 부담한다고 범위를 다시 명시했다. 이때 정책 판단과 실제 기기에서 원본 번들에 접근할 수 있는 기술적 사실을 같은 문제로 취급하고 있었다.
+- 예방 규칙: Step 0에서 `본인 앱`, `타사 연구 전용`, `타사 외부 공유·배포`를 분리한다. 연구 전용은 사용자 승인과 provenance manifest를 전제로 접근 가능한 파일·payload/export·공개 원본·화면 crop을 허용하되, 샌드박스·암호화·서명 경계는 우회하지 않는다. 배포 분기는 원본 자산 승계를 다시 심사한다.
+
+## 2026-08-15 — tappable 후보 수는 안전성도 커버리지도 아니었다
+
+- 실패 모드: clone 문서는 파괴적 라벨이 후보에서 제외된다고 했지만 실제 Threads frontier에는 `팔로우`, `모두 팔로우`, `추천 무시` 같은 계정 변경 동작과 키보드 키·FAQ 설명문이 함께 들어갔다. `6/59`의 분모는 실제 사용자 행동 수가 아니라 접근성 트리의 라벨 노이즈에 가까웠다.
+- 검출 신호: `device_flow.py next`의 후보를 역할·부작용 기준으로 읽자 키보드와 정적 문구가 탐험 대상으로 출력됐고, 한국어 follow 계열은 `DESTRUCTIVE` 정규식에 없었다.
+- 예방 규칙: 후보 생성은 `enabled + label`이 아니라 actionability metadata·키보드 조상·역할·부작용 분류를 함께 사용한다. raw target coverage와 반복 행을 정규화한 behavior-class coverage를 별도로 보고하고, 실기기 캡처 fixture에 계정 변경 동작이 withheld 되는 회귀를 둔다.
+- 추가 검출: iOS 키보드의 globe/dictation 버튼은 `AXKeyboard` 자식이 아닌 형제 `AXButton`으로 나오고 중앙점도 키보드 프레임 밖이라, 조상·기하 검사만으로는 후보에 남았다.
+- 추가 예방: WDA의 `KeyboardKey` trait도 키보드 판정 근거로 사용하고 실제 sibling 구조를 회귀 fixture로 고정한다.
+
+## 2026-08-15 — CoreDevice connected와 Appium RemoteXPC ready는 다른 게이트다
+
+- 실패 모드: Xcode 자동 복구 뒤 `devicectl`과 doctor는 물리 iPhone을 connected로 확인했지만 Appium 3/xcuitest 11은 `Available real devices: {}`와 `Unknown device UDID`로 세션 생성을 거부했다.
+- 검출 신호: Appium 로그에 `Tunnel registry at 127.0.0.1:42314 is not reachable`가 먼저 나오고, `appium driver run xcuitest list-real-devices -- --devicectl`에는 같은 기기가 정상 표시됐다.
+- 예방 규칙: iOS 18+ 실기기는 CoreDevice 연결과 별도로 RemoteXPC registry에 대상 UDID가 있는지 preflight한다. tunnel 생성은 macOS TUN 권한 때문에 sudo가 필요하므로 비대화형 스크립트가 암묵 실행하지 않고, 정확한 공식 명령을 제시한 뒤 세션 전에 중지한다.
+
+## 2026-08-15 — 프로세스 시작 회귀 테스트는 스케줄링 지연을 readiness 실패와 혼동하지 않는다
+
+- 실패 모드: 관리형 Appium의 bounded-start 테스트가 0.25초 안에 fake 프로세스의 첫 줄 기록까지 요구해, 여러 Xcode MCP가 함께 도는 호스트에서 프로세스가 스케줄되기 전에 종료되어 한 번 실패했다. 같은 테스트를 단독 실행하면 통과해 기능 결함과 구분됐다.
+- 검출 신호: 스크립트는 pid와 bounded-poll 오류를 정상 기록했지만 fake Appium의 side-effect 파일과 stdout log만 비어 있었고, 단독 재실행은 green이었다.
+- 예방 규칙: 비동기 프로세스 시작 테스트는 전체 timeout을 짧게 유지하되, CI/개발 호스트 스케줄링 지연을 흡수할 최소 wall-time을 준다. readiness의 엄격함과 첫 프로세스 instruction이 실행될 시간은 별도 계약으로 본다.

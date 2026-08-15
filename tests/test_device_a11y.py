@@ -10,6 +10,7 @@ walked straight through it.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import tempfile
@@ -17,6 +18,10 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_a11y.py"
+SPEC = importlib.util.spec_from_file_location("device_a11y_under_test", SCRIPT)
+DEVICE_A11Y = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(DEVICE_A11Y)
 
 
 def run(mode: str, body: str, suffix: str) -> subprocess.CompletedProcess:
@@ -59,9 +64,48 @@ def el(label: str, x: int, y: int, w: int = 100, h: int = 40, **kw) -> dict:
 ROOT = el("App", 0, 0, 393, 852, role="AXApplication")
 
 
-def node(kind: str, label: str, x: int, y: int, w: int = 100, h: int = 40, visible: str = "true") -> str:
+def node(kind: str, label: str, x: int, y: int, w: int = 100, h: int = 40,
+         visible: str = "true", **metadata) -> str:
+    attrs = "".join(
+        f' {key}="{str(value).lower() if isinstance(value, bool) else value}"'
+        for key, value in metadata.items()
+    )
     return (f'<XCUIElementType{kind} type="XCUIElementType{kind}" label="{label}" name="{label}"'
-            f' enabled="true" visible="{visible}" x="{x}" y="{y}" width="{w}" height="{h}"/>')
+            f' enabled="true" visible="{visible}" x="{x}" y="{y}" width="{w}" height="{h}"'
+            f'{attrs}/>')
+
+
+class TestActionabilityMetadata(unittest.TestCase):
+    def test_wda_retains_optional_metadata(self):
+        parsed = DEVICE_A11Y._parse_wda(
+            '<AppiumAUT>'
+            + node("StaticText", "Custom action", 10, 20, accessible=True,
+                   traits="Button, Selected", focused=False, selected=True)
+            + '</AppiumAUT>'
+        )
+        action = next(e for e in parsed if e["label"] == "Custom action")
+        self.assertTrue(action["accessible"])
+        self.assertEqual(action["traits"], ["Button", "Selected"])
+        self.assertFalse(action["focused"])
+        self.assertTrue(action["selected"])
+
+    def test_idb_retains_optional_metadata(self):
+        parsed = DEVICE_A11Y._parse_idb(json.dumps([el(
+            "Search", 10, 20, role="AXTextField", AXAccessible=True,
+            AXTraits=["TextField"], AXFocused=True, AXSelected=False,
+        )]))
+        action = parsed[0]
+        self.assertTrue(action["accessible"])
+        self.assertEqual(action["traits"], ["TextField"])
+        self.assertTrue(action["focused"])
+        self.assertFalse(action["selected"])
+
+    def test_old_fixtures_get_non_breaking_unknown_defaults(self):
+        action = DEVICE_A11Y._parse_idb(json.dumps([el("계속", 10, 20)]))[0]
+        self.assertIsNone(action["accessible"])
+        self.assertEqual(action["traits"], [])
+        self.assertIsNone(action["focused"])
+        self.assertIsNone(action["selected"])
 
 
 class TestWdaFormat(unittest.TestCase):
@@ -112,6 +156,20 @@ class TestIdbFormat(unittest.TestCase):
         ])
         self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
 
+    def test_preserves_legitimate_links_cells_and_text_inputs(self):
+        r = idb([
+            ROOT,
+            el("프로필", 0, 100, role="AXLink"),
+            el("추천 계정", 0, 160, role="AXCell"),
+            el("검색", 0, 220, role="AXSearchField"),
+            el("설명", 0, 280, role="AXStaticText"),
+        ])
+        self.assertIn("AXLink | 프로필", r.stdout)
+        self.assertIn("AXCell | 추천 계정", r.stdout)
+        self.assertIn("AXSearchField | 검색", r.stdout)
+        self.assertNotIn("AXStaticText | 설명", r.stdout)
+        self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)
+
 
 class TestDestructiveGuard(unittest.TestCase):
     """The blacklist lives at the producer — this is the only place it is enforced."""
@@ -130,6 +188,41 @@ class TestDestructiveGuard(unittest.TestCase):
     def test_withholds_only_the_subscription_sense_of_cancel(self):
         r = idb([ROOT, el("구독 취소", 0, 200), el("Cancel Subscription", 0, 260)])
         self.assertIn("OK: 0 tappable, 2 withheld", r.stdout)
+
+
+class TestStateChangingGuard(unittest.TestCase):
+    def test_threads_like_account_mutations_are_categorized_and_withheld(self):
+        cases = {
+            "팔로우": "social-follow",
+            "Unfollow user.one": "social-follow",
+            "좋아요": "social-like",
+            "Like post": "social-like",
+            "리포스트": "social-repost",
+            "Repost thread": "social-repost",
+            "게시": "publishing",
+            "Post reply": "publishing",
+            "보내기": "communication",
+            "Send message": "communication",
+            "추천 숨기기": "recommendation",
+            "Dismiss suggestion": "recommendation",
+        }
+        for label, effect in cases.items():
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertIn("WARN: withheld", r.stdout)
+                self.assertIn("category=state-changing", r.stdout)
+                self.assertIn(f"effect={effect}", r.stdout)
+                self.assertIn("withheld=true", r.stdout)
+
+    def test_follow_suggestions_navigation_is_not_misclassified(self):
+        r = idb([ROOT, el("팔로우 추천", 0, 200), el("Follow suggestions", 0, 260)])
+        self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
+        self.assertNotIn("category=state-changing", r.stdout)
+
+    def test_switch_is_retained_but_withheld_as_a_toggle(self):
+        r = idb([ROOT, el("비공개 프로필", 0, 200, role="AXSwitch")])
+        self.assertIn("WARN: withheld", r.stdout)
+        self.assertIn("effect=toggle", r.stdout)
 
 
 class TestModalGuard(unittest.TestCase):
@@ -178,9 +271,67 @@ class TestRowCollapsing(unittest.TestCase):
         self.assertIn("새로운 일기", r.stdout)
         self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
 
-    def test_standalone_text_is_not_dropped(self):
+    def test_inert_standalone_text_is_dropped(self):
         r = wda(node("StaticText", "입력 항목 없음", 100, 470, 175, 30))
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_static_text_with_button_trait_is_actionable(self):
+        r = wda(node("StaticText", "프로필 열기", 100, 470, 175, 30, traits="Button"))
+        self.assertIn("INFO: tap", r.stdout)
         self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+
+    def test_repeated_data_rows_share_a_behavior_fingerprint(self):
+        rows = (
+            '<XCUIElementTypeCell type="XCUIElementTypeCell" label="user.one" name="user.one"'
+            ' enabled="true" visible="true" x="0" y="300" width="375" height="60"/>'
+            '<XCUIElementTypeCell type="XCUIElementTypeCell" label="user.two" name="user.two"'
+            ' enabled="true" visible="true" x="0" y="360" width="375" height="60"/>'
+        )
+        r = wda(rows)
+        fingerprints = [part.split("behavior=", 1)[1].split(" | ", 1)[0]
+                        for part in r.stdout.splitlines() if "behavior=" in part]
+        self.assertEqual(len(fingerprints), 2)
+        self.assertEqual(fingerprints[0], fingerprints[1])
+
+
+class TestKeyboardFiltering(unittest.TestCase):
+    def test_axkey_is_never_a_generic_candidate(self):
+        r = wda(node("Key", "ㅂ", 0, 600))
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_keyboard_descendants_are_never_generic_candidates(self):
+        keyboard = (
+            '<XCUIElementTypeKeyboard type="XCUIElementTypeKeyboard" label="키보드" name="키보드"'
+            ' enabled="true" visible="true" x="0" y="500" width="375" height="312">'
+            + node("Button", "완료", 300, 510, 60, 40, traits="Button")
+            + '</XCUIElementTypeKeyboard>'
+        )
+        r = wda(keyboard)
+        self.assertNotIn("완료", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_flat_idb_keyboard_geometry_suppresses_children(self):
+        r = idb([
+            ROOT,
+            el("키보드", 0, 500, 393, 352, role="AXKeyboard"),
+            el("완료", 300, 510, 60, 40, role="AXButton", AXTraits=["Button"]),
+        ])
+        self.assertNotIn("완료", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_keyboard_key_trait_suppresses_wda_siblings_outside_keyboard_frame(self):
+        # iOS may expose globe/dictation buttons as AXButton siblings whose
+        # centers fall below the AXKeyboard container's reported frame.
+        tree = (
+            '<XCUIElementTypeKeyboard type="XCUIElementTypeKeyboard" enabled="true" '
+            'visible="true" x="0" y="512" width="375" height="242"/>'
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="다음 키보드" '
+            'enabled="true" visible="true" x="9" y="740" width="74" height="75" '
+            'traits="KeyboardKey, Button"/>'
+        )
+        r = wda(tree)
+        self.assertNotIn("다음 키보드", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
 
 
 class TestVerify(unittest.TestCase):
@@ -309,6 +460,61 @@ class TestNodeKey(unittest.TestCase):
         a = self.key(node("NavigationBar", "알림", 0, 50) + node("Cell", "항목", 16, 110))
         b = self.key(node("NavigationBar", "개인정보", 0, 50) + node("Cell", "항목", 16, 110))
         self.assertNotEqual(a, b)
+
+
+class TestStateKey(unittest.TestCase):
+    def key(self, mode: str, inner: str) -> str:
+        out = wda(inner, mode=mode).stdout
+        return next(line.split()[-1] for line in out.splitlines()
+                    if line.startswith(f"INFO: {mode}"))
+
+    def test_keyboard_changes_state_but_not_coarse_node(self):
+        base = node("TextField", "검색", 20, 120, 335, 44)
+        keyboard = (
+            '<XCUIElementTypeKeyboard type="XCUIElementTypeKeyboard" label="키보드" name="키보드"'
+            ' enabled="true" visible="true" x="0" y="500" width="375" height="312">'
+            + node("Key", "ㅂ", 0, 600)
+            + node("Button", "완료", 300, 510, 60, 40, traits="Button")
+            + '</XCUIElementTypeKeyboard>'
+        )
+        self.assertEqual(self.key("nodekey", base), self.key("nodekey", base + keyboard))
+        self.assertNotEqual(self.key("statekey", base), self.key("statekey", base + keyboard))
+
+    def test_focused_input_changes_state(self):
+        idle = node("TextField", "검색", 20, 120, 335, 44, focused=False)
+        focused = node("TextField", "검색", 20, 120, 335, 44, focused=True)
+        self.assertEqual(self.key("nodekey", idle), self.key("nodekey", focused))
+        self.assertNotEqual(self.key("statekey", idle), self.key("statekey", focused))
+
+    def test_selected_tab_identity_is_preserved(self):
+        def tabs(home: bool) -> str:
+            return (
+                '<XCUIElementTypeTabBar type="XCUIElementTypeTabBar" label="탭" name="탭"'
+                ' enabled="true" visible="true" x="0" y="740" width="375" height="72">'
+                + node("Button", "홈", 0, 740, 187, 72, selected=home)
+                + node("Button", "검색", 188, 740, 187, 72, selected=not home)
+                + '</XCUIElementTypeTabBar>'
+            )
+        self.assertEqual(self.key("nodekey", tabs(True)), self.key("nodekey", tabs(False)))
+        self.assertNotEqual(self.key("statekey", tabs(True)), self.key("statekey", tabs(False)))
+
+    def test_modal_changes_state_but_not_coarse_node(self):
+        base = node("Button", "도움말", 320, 60, 44, 44)
+        sheet = (
+            '<XCUIElementTypeSheet type="XCUIElementTypeSheet" label="정보" name="정보"'
+            ' enabled="true" visible="true" x="0" y="200" width="375" height="612">'
+            + node("Button", "닫기", 300, 220, 60, 40)
+            + '</XCUIElementTypeSheet>'
+        )
+        self.assertEqual(self.key("nodekey", base), self.key("nodekey", base + sheet))
+        self.assertNotEqual(self.key("statekey", base), self.key("statekey", base + sheet))
+
+    def test_list_data_churn_does_not_change_state(self):
+        first = node("Cell", "user.one", 0, 200, 375, 60) + node("Cell", "user.two", 0, 260, 375, 60)
+        second = (node("Cell", "another.user", 0, 200, 375, 60)
+                  + node("Cell", "new.user", 0, 260, 375, 60)
+                  + node("Cell", "third.user", 0, 320, 375, 60))
+        self.assertEqual(self.key("statekey", first), self.key("statekey", second))
 
 
 if __name__ == "__main__":

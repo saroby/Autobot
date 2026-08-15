@@ -9,10 +9,12 @@ Single source of the exploration safety logic, shared by both drivers:
 The format is auto-detected, normalized to one element shape, and then the same
 guards apply to both. Modes:
 
-  candidates <file>   Tappable elements with tap centers. Destructive labels are
-                      withheld; a system dialog suppresses the list entirely.
+  candidates <file>   Tappable elements with tap centers. State-changing labels
+                      are withheld; a system dialog suppresses the list entirely.
   sig <file>          Screen signature (hash of the label set) — the exploration
                       loop's termination primitive.
+  nodekey <file>      Coarse structural identity for screens.
+  statekey <file>     Interaction-state identity layered on top of nodekey.
 
 Output follows CONVENTIONS.md prefixes (OK:/INFO:/WARN:/ERROR:).
 """
@@ -66,9 +68,83 @@ NOISE = re.compile("스크롤 막대|scroll bar|페이지 컨트롤|page control
 # When one label sits at one spot under several roles, tap the real control.
 ROLE_RANK = {"AXButton": 3, "AXCell": 3, "AXLink": 3, "AXSwitch": 2, "AXStaticText": 1}
 
+TEXT_INPUT_ROLES = {"AXTextField", "AXTextArea", "AXSearchField", "AXSecureTextField"}
+ACTIONABLE_ROLES = {
+    "AXButton", "AXCell", "AXLink", "AXSwitch", "AXSlider", "AXSegment",
+    "AXRadioButton", "AXCheckBox", "AXMenuItem", "AXDisclosureTriangle",
+    *TEXT_INPUT_ROLES,
+}
+ACTIONABLE_TRAITS = re.compile(
+    r"\b(button|link|adjustable|switch|toggle|text\s*field|search\s*field)\b", re.I
+)
+
+# Blind exploration must not mutate the user's account or publish content. Keep
+# these categories narrower than ordinary navigation labels: "팔로우 추천" and
+# "Follow suggestions" are screens, while "팔로우" and "Follow all" are actions.
+STATE_CHANGING = (
+    ("social-follow", re.compile(
+        r"(?:^|\s)(?:모두\s+)?(?:언)?팔로우(?:\s*(?:취소|해제))?$"
+        r"|^(?:follow|unfollow)(?:\s+(?!suggestions?\b|recommendations?\b).+)?$"
+        r"|^following$", re.I)),
+    ("social-like", re.compile(
+        r"(?:^|\s)좋아요(?:\s*(?:취소|해제))?$"
+        r"|^(?:like|unlike)(?:\s+(?:post|thread|reply))?$", re.I)),
+    ("social-repost", re.compile(
+        r"(?:^|\s)(?:리포스트|재게시)(?:\s*(?:취소|삭제))?$"
+        r"|^(?:repost|undo repost)(?:\s+(?:post|thread))?$", re.I)),
+    ("publishing", re.compile(
+        r"(?:^|\s)(?:게시|게시하기|포스트)$|^(?:post|publish)(?:\s+(?:reply|thread))?$", re.I)),
+    ("communication", re.compile(
+        r"(?:^|\s)(?:보내기|전송)$|^send(?:\s+(?:message|reply|post|thread))?$", re.I)),
+    ("recommendation", re.compile(
+        r"추천\s*(?:숨기기|제거|무시|안\s*함)|관심\s*없음"
+        r"|(?:hide|dismiss)\s+(?:this\s+)?(?:suggestion|recommendation)"
+        r"|not interested", re.I)),
+)
+
 
 def _clean(value: object) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _optional_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1", "yes"):
+            return True
+        if lowered in ("false", "0", "no"):
+            return False
+    return None
+
+
+def _traits(value: object) -> list[str]:
+    """Normalize traits without requiring newer fields in old fixtures."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return _traits(json.loads(raw))
+            except json.JSONDecodeError:
+                pass
+        return [item.strip() for item in re.split(r"[,|]", raw) if item.strip()]
+    return [str(value)]
+
+
+def _first(mapping: dict, *keys: str) -> object:
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
 
 
 def _parse_wda(raw: str) -> list[dict]:
@@ -100,6 +176,10 @@ def _parse_wda(raw: str) -> list[dict]:
                 "frame": frame,
                 "depth": depth + 1,
                 "parent": parent,
+                "accessible": _optional_bool(node.get("accessible")),
+                "traits": _traits(node.get("traits") or node.get("accessibilityTraits")),
+                "focused": _optional_bool(node.get("focused")),
+                "selected": _optional_bool(node.get("selected")),
             })
         for child in reversed(list(node)):
             stack.append((child, depth + 1, index if index >= 0 else parent))
@@ -126,8 +206,14 @@ def _parse_idb(raw: str) -> list[dict]:
             "visible": None,  # idb does not report it — fall back to a bounds check
             "frame": {k: float(f.get(k, 0) or 0) for k in ("x", "y", "width", "height")},
             # idb's dump is already flat: no hierarchy to recover.
-            "depth": None,
-            "parent": -1,
+            "depth": e.get("depth") if isinstance(e.get("depth"), int) else None,
+            "parent": e.get("parent") if isinstance(e.get("parent"), int) else -1,
+            "accessible": _optional_bool(_first(
+                e, "accessible", "AXAccessible", "isAccessibilityElement",
+                "is_accessibility_element")),
+            "traits": _traits(_first(e, "AXTraits", "traits", "accessibilityTraits")),
+            "focused": _optional_bool(_first(e, "AXFocused", "focused")),
+            "selected": _optional_bool(_first(e, "AXSelected", "selected")),
         })
     return out
 
@@ -158,8 +244,26 @@ def _bucket(n: int) -> str:
     return "16+"
 
 
+def _node_identity(els: list[dict]) -> tuple[str, list[str]]:
+    counts = Counter(e["role"] for index, e in enumerate(els)
+                     if e["frame"]["width"] > 0
+                     and e["role"] not in CONTAINERS
+                     and e["role"] not in ("AXOther", "AXKey")
+                     and e["role"] != "AXCell"
+                     and _ancestor_index(els, index, {"AXCell"}) is None
+                     and not _inside_keyboard(els, index)
+                     and not _inside_modal(els, index))
+    shape = [f"{role}:{_bucket(n)}" for role, n in sorted(counts.items())]
+    if any(e["role"] == "AXCell" and e["frame"]["width"] > 0 for e in els):
+        shape.append("AXCell:present")
+    titles = sorted({e["label"] for e in els
+                     if e["role"] in ("AXNavigationBar", "AXTabBar") and e["label"]})
+    digest = hashlib.sha1("\n".join(titles + shape).encode()).hexdigest()[:12]
+    return digest, shape
+
+
 def nodekey(els: list[dict]) -> None:
-    """Structural screen identity — the node key for the flow graph.
+    """Structural screen identity — the coarse node key for the flow graph.
 
     `sig` hashes the label set, which is right for the tap guard (any change
     means the screen moved) but wrong for a graph: the same list with different
@@ -172,16 +276,152 @@ def nodekey(els: list[dict]) -> None:
     # two nodes because one dump carried an AXToolbar wrapper and the other put
     # the same button under an AXOther — a graph that doubles its nodes on
     # wrapper churn cannot report coverage.
-    counts = Counter(e["role"] for e in els
-                     if e["frame"]["width"] > 0
-                     and e["role"] not in CONTAINERS
-                     and e["role"] not in ("AXOther", "AXKey"))
-    shape = [f"{role}:{_bucket(n)}" for role, n in sorted(counts.items())]
-    titles = sorted({e["label"] for e in els
-                     if e["role"] in ("AXNavigationBar", "AXTabBar") and e["label"]})
-    digest = hashlib.sha1("\n".join(titles + shape).encode()).hexdigest()[:12]
+    digest, shape = _node_identity(els)
     print(f"INFO: nodekey {digest}")
     print(f"INFO: shape {' '.join(shape)}")
+
+
+def _ancestor_index(els: list[dict], index: int, roles: set[str]) -> int | None:
+    seen = set()
+    parent = els[index].get("parent", -1)
+    while isinstance(parent, int) and 0 <= parent < len(els) and parent not in seen:
+        if els[parent]["role"] in roles:
+            return parent
+        seen.add(parent)
+        parent = els[parent].get("parent", -1)
+    return None
+
+
+def _inside_keyboard(els: list[dict], index: int) -> bool:
+    e = els[index]
+    traits = " ".join(e.get("traits", []))
+    if (e["role"] == "AXKey" or re.search(r"\bkeyboard\s*key\b", traits, re.I)
+            or _ancestor_index(els, index, {"AXKeyboard"}) is not None):
+        return True
+    # idb is usually flat. When it still reports the keyboard container, use
+    # geometry to suppress its descendants without pretending hierarchy exists.
+    f = e["frame"]
+    cx, cy = f["x"] + f["width"] / 2, f["y"] + f["height"] / 2
+    return any(
+        i != index and keyboard["role"] == "AXKeyboard"
+        and keyboard["frame"]["width"] > 0 and keyboard["frame"]["height"] > 0
+        and keyboard["frame"]["x"] <= cx <= keyboard["frame"]["x"] + keyboard["frame"]["width"]
+        and keyboard["frame"]["y"] <= cy <= keyboard["frame"]["y"] + keyboard["frame"]["height"]
+        for i, keyboard in enumerate(els)
+    )
+
+
+def _inside_modal(els: list[dict], index: int) -> bool:
+    role = els[index]["role"].lower()
+    if "alert" in role or "sheet" in role:
+        return True
+    parent = els[index].get("parent", -1)
+    seen = set()
+    while isinstance(parent, int) and 0 <= parent < len(els) and parent not in seen:
+        parent_role = els[parent]["role"].lower()
+        if "alert" in parent_role or "sheet" in parent_role:
+            return True
+        seen.add(parent)
+        parent = els[parent].get("parent", -1)
+    return False
+
+
+def _normalized_label(label: str) -> str:
+    value = label.casefold().strip()
+    value = re.sub(r"https?://\S+|@[\w.]+", "<data>", value)
+    value = re.sub(r"\d+(?:[.,:]\d+)*", "#", value)
+    return re.sub(r"\s+", " ", value)
+
+
+def _state_control_id(els: list[dict], index: int) -> str:
+    e = els[index]
+    row = index if e["role"] == "AXCell" else _ancestor_index(els, index, {"AXCell"})
+    if row is not None:
+        return f"row:{e['role']}"
+    f = e["frame"]
+    return f"{e['role']}@{int(f['x']) // 44}:{int(f['y']) // 44}"
+
+
+def statekey(els: list[dict]) -> None:
+    """Interaction identity: coarse node plus keyboard/focus/selection/modal state."""
+    node, _shape = _node_identity(els)
+    tokens = []
+    keyboard_visible = any(
+        e["role"] in ("AXKeyboard", "AXKey") and e["visible"] is not False
+        and e["frame"]["width"] > 0 and e["frame"]["height"] > 0
+        for e in els
+    )
+    if keyboard_visible:
+        tokens.append("keyboard")
+    for index, e in enumerate(els):
+        if e.get("focused") is True:
+            tokens.append("focus:" + _state_control_id(els, index))
+        if e.get("selected") is True:
+            parent_is_tab = _ancestor_index(els, index, {"AXTabBar", "AXNavigationBar"}) is not None
+            identity = _normalized_label(e["label"]) if parent_is_tab else _state_control_id(els, index)
+            tokens.append("selected:" + identity)
+        if "alert" in e["role"].lower() or "sheet" in e["role"].lower() or SYSTEM_DIALOG.match(e["label"]):
+            tokens.append("modal:" + e["role"])
+    state = hashlib.sha1("\n".join([node] + sorted(set(tokens))).encode()).hexdigest()[:12]
+    print(f"INFO: statekey {state}")
+    print(f"INFO: state {' '.join(sorted(set(tokens))) or 'base'}")
+
+
+def _classification(e: dict) -> dict:
+    label = e["label"]
+    if DESTRUCTIVE.search(label):
+        return {"category": "state-changing", "effect": "destructive", "state_changing": True}
+    for effect, pattern in STATE_CHANGING:
+        if pattern.search(label):
+            return {"category": "state-changing", "effect": effect, "state_changing": True}
+    if e["role"] == "AXSwitch":
+        return {"category": "state-changing", "effect": "toggle", "state_changing": True}
+    if e["role"] in TEXT_INPUT_ROLES:
+        return {"category": "input", "effect": "none", "state_changing": False}
+    return {"category": "navigation", "effect": "none", "state_changing": False}
+
+
+def _action_rank(e: dict) -> int:
+    traits = " ".join(e.get("traits", []))
+    if e["role"] == "AXStaticText":
+        return 2 if ACTIONABLE_TRAITS.search(traits) else 0
+    if e["role"] in ROLE_RANK:
+        return ROLE_RANK[e["role"]]
+    if e["role"] in ACTIONABLE_ROLES or ACTIONABLE_TRAITS.search(traits):
+        return 2
+    return 0
+
+
+def _behavior_fingerprint(els: list[dict], index: int, classification: dict) -> str:
+    e = els[index]
+    row = index if e["role"] == "AXCell" else _ancestor_index(els, index, {"AXCell"})
+    if classification["effect"] != "none":
+        subject = classification["effect"]
+    elif row is not None and e["role"] == "AXCell":
+        subject = "row-item"
+    elif row is not None:
+        row_frame, frame = els[row]["frame"], e["frame"]
+        width, height = max(row_frame["width"], 1), max(row_frame["height"], 1)
+        relative_x = (frame["x"] + frame["width"] / 2 - row_frame["x"]) / width
+        relative_y = (frame["y"] + frame["height"] / 2 - row_frame["y"]) / height
+        column = max(0, min(4, int(relative_x * 5)))
+        band = max(0, min(2, int(relative_y * 3)))
+        subject = f"row-control:{column}:{band}"
+    else:
+        subject = _normalized_label(e["label"])
+    source = "|".join((e["role"], classification["category"], subject))
+    return hashlib.sha1(source.encode()).hexdigest()[:12]
+
+
+def _candidate_meta(item: dict, withheld: bool) -> str:
+    state_changing = str(item["classification"]["state_changing"]).lower()
+    return (
+        f"INFO: candidate-meta {item['x']} {item['y']}"
+        f" | category={item['classification']['category']}"
+        f" | effect={item['classification']['effect']}"
+        f" | behavior={item['behavior']}"
+        f" | state_changing={state_changing} | withheld={str(withheld).lower()}"
+    )
 
 
 def candidates(els: list[dict]) -> None:
@@ -201,9 +441,14 @@ def candidates(els: list[dict]) -> None:
     bw, bh = bounds.get("width", 0), bounds.get("height", 0)
 
     picked = {}
-    for e in els:
+    for index, e in enumerate(els):
         f, w, h = e["frame"], e["frame"]["width"], e["frame"]["height"]
         if not e["label"] or not e["enabled"] or e["role"] in CONTAINERS:
+            continue
+        if _inside_keyboard(els, index):
+            continue
+        rank = _action_rank(e)
+        if rank == 0:
             continue
         if w <= 0 or h <= 0 or e["visible"] is False or NOISE.search(e["label"]):
             continue
@@ -215,9 +460,8 @@ def candidates(els: list[dict]) -> None:
         # (verified: a WDA Button "계속" wrapping a StaticText "계속"). Collapse
         # them into one target and keep the most actionable role.
         key = (e["label"], cx // 12, cy // 12)
-        rank = ROLE_RANK.get(e["role"], 0)
         if key not in picked or rank > picked[key][0]:
-            picked[key] = (rank, cx, cy, e["role"], e["label"], w * h, f)
+            picked[key] = (rank, cx, cy, e["role"], e["label"], w * h, f, index)
 
     # A list row and each line of text inside it are separate elements with
     # DIFFERENT labels, so the same-label collapse above cannot merge them —
@@ -227,7 +471,7 @@ def candidates(els: list[dict]) -> None:
     # a row (e.g. "새로운 일기") is its own target.
     kept = []
     for c in sorted(picked.values(), key=lambda c: -c[5]):
-        rank, cx, cy, _role, _lab, area, _f = c
+        rank, cx, cy, _role, _lab, area, _f, _index = c
         if rank < 2 and any(
             area < k[5]
             and k[6]["x"] <= cx <= k[6]["x"] + k[6]["width"]
@@ -238,13 +482,22 @@ def candidates(els: list[dict]) -> None:
         kept.append(c)
 
     taps, withheld = [], []
-    for _, cx, cy, role, lab, _area, _f in sorted(kept, key=lambda c: (c[2], c[1])):
-        (withheld if DESTRUCTIVE.search(lab) else taps).append((cx, cy, role, lab))
+    for _, cx, cy, role, lab, _area, _f, index in sorted(kept, key=lambda c: (c[2], c[1])):
+        classification = _classification(els[index])
+        item = {"x": cx, "y": cy, "role": role, "label": lab,
+                "classification": classification,
+                "behavior": _behavior_fingerprint(els, index, classification)}
+        (withheld if classification["state_changing"] else taps).append(item)
 
-    for cx, cy, role, lab in taps:
-        print(f"INFO: tap {cx} {cy} | {role} | {lab}")
-    for cx, cy, role, lab in withheld:
-        print(f"WARN: withheld {cx} {cy} | {role} | {lab} — destructive; ask the user instead of tapping")
+    for item in taps:
+        print(f"INFO: tap {item['x']} {item['y']} | {item['role']} | {item['label']}")
+        print(_candidate_meta(item, False))
+    for item in withheld:
+        reason = ("destructive" if item["classification"]["effect"] == "destructive"
+                  else f"state-changing/{item['classification']['effect']}")
+        print(f"WARN: withheld {item['x']} {item['y']} | {item['role']} | {item['label']}"
+              f" — {reason}; ask the user instead of tapping")
+        print(_candidate_meta(item, True))
     print(f"OK: {len(taps)} tappable, {len(withheld)} withheld")
 
 
@@ -268,7 +521,7 @@ def verify(els: list[dict], x: int, y: int) -> int:
                 return 0
     for line in buf.getvalue().splitlines():
         if line.startswith("WARN: withheld ") and tuple(map(int, line.split()[2:4])) == (x, y):
-            print(f"ERROR: {x},{y} is a WITHHELD target (destructive) — ask the user instead",
+            print(f"ERROR: {x},{y} is a WITHHELD target (state-changing) — ask the user instead",
                   file=sys.stderr)
             return 1
     print(f"ERROR: {x},{y} is not a tap candidate of this screen — "
@@ -278,12 +531,12 @@ def verify(els: list[dict], x: int, y: int) -> int:
 
 def main(argv: list[str]) -> int:
     mode = argv[1] if len(argv) > 1 else ""
-    if mode in ("candidates", "sig", "nodekey") and len(argv) == 3:
+    if mode in ("candidates", "sig", "nodekey", "statekey") and len(argv) == 3:
         pass
     elif mode == "verify" and len(argv) == 5:
         pass
     else:
-        print("ERROR: usage: device_a11y.py candidates|sig|nodekey <tree> "
+        print("ERROR: usage: device_a11y.py candidates|sig|nodekey|statekey <tree> "
               "| verify <tree> <x> <y>", file=sys.stderr)
         return 1
     try:
@@ -297,7 +550,7 @@ def main(argv: list[str]) -> int:
         except ValueError:
             print("ERROR: verify needs integer <x> <y>", file=sys.stderr)
             return 1
-    {"sig": sig, "nodekey": nodekey}.get(mode, candidates)(els)
+    {"sig": sig, "nodekey": nodekey, "statekey": statekey}.get(mode, candidates)(els)
     return 0
 
 

@@ -168,3 +168,131 @@
 - 차용 반영(문서): SKILL Step 6에 ui-cloner의 차이 분류·우선순위 표(누락/구조 → 간격/타이포/색 → 광택, 상위 미해결 시 하위 금지)와 수렴 루프 종료 기준(상·중 차이 0 + 남은 차이는 선언된 재현 불가 항목뿐; 안 좁혀지는 차이는 재현 불가 항목으로 승격) 추가. `commands/clone.md` CRITICAL RULES #4에 종료 기준 한 줄 동기화.
 - 차용 보류: Tailwind식 표준 스케일 스냅핑(철칙 1 "측정값 그대로"와 충돌), agent-device식 selector-first tap(중간 규모 코드 변경 — 다음 실기기 회차에서 12pt 버킷이 실제 문제를 일으키는지 본 뒤 결정).
 - 검증: `verify_spec_docs.py` All checks passed, 두 문서 frontmatter YAML 파싱 OK. (문서 전용 diff — 런타임 테스트 해당 없음)
+# Threads 타사 앱 clone 실기기 실행 및 스킬 보완 — 2026-08-15
+
+## 목표
+
+기기에 설치된 Threads(`com.burbn.barcelona`)를 `autobot-clone-app`의 실기기/Appium 경로로 탐험하고, 실제 실행에서 확인된 결함만 최소 수정으로 스킬·보조 스크립트에 반영한다.
+
+## 수용 조건
+
+- [x] Threads bundle ID로 WDA 세션이 실제 대상 앱에 바인딩된다.
+- [x] 탐험 가능한 범위의 raw 캡처, flow, stats, map을 남기고 미탐험·로그인/권한/데이터 장벽을 숨기지 않는다.
+- [x] 타사 앱 분기를 지켜 원문 로고·이름·카피를 재현 산출물에 고정하지 않는다.
+- [x] 실제로 발견한 재현/탐험 결함에 회귀 테스트와 스킬 문서 보완을 추가한다.
+- [x] 가능한 경우 측정·스펙·SwiftUI·원본 대조 이미지까지 생성하고, 불가능한 단계는 정확한 증거와 다음 조치를 기록한다.
+- [x] 관련 테스트, 문서 검사, 셸 문법 검사, diff 검증을 수행한다.
+
+## 체크리스트
+
+- [x] 현재 clone SSOT·스크립트·테스트·과거 미해결 리스크 조사
+- [x] 기기/Appium/DEVELOPMENT_TEAM/Threads 설치 preflight (기기 게이트 실패: 연결된 물리 iPhone 0대, Appium 서버 미기동)
+- [x] clone 전용 Xcode workspace 생성과 CoreDevice 자동 복구 경로 추가
+- [x] Threads 세션 생성 및 진입 화면 캡처
+- [x] flow 우선 탐험, 안전 후보 탭, stats/map 생성
+- [x] 도달 화면 측정 및 타사 앱 역기획/스펙 기록
+- [x] 선택 화면 SwiftUI 생성 및 원본 대조 검증
+- [x] 실행에서 확인된 결함 수정 + 회귀 테스트 (실기기 대신 오프라인 재현 fixture로 스크롤/swipe 공백 검증)
+- [x] 관련 검증 실행
+- [x] Results와 Working Notes 기록
+
+## Results (2026-08-15)
+
+- 실기기 실행은 하드 게이트에서 중지했다. `scripts/device_wda.sh device`는 `ERROR: no connected iPhone`을 반환했고, Appium은 `3.5.2`/xcuitest `11.17.7`이 설치되어 있지만 `127.0.0.1:4723` 서버가 없어 Threads의 WDA 세션·bundle ID 설치 여부·화면 캡처를 검증하지 못했다. `xcrun devicectl list devices`에서도 물리 기기는 `available (paired)` 또는 `unavailable`이었고 `connected` 물리 기기는 없었다.
+- 보완: `device_wda.sh swipe`가 현재 화면을 기준으로 settle을 기다리고 `swipe` 이벤트를 flow에 기록한다. 변경된 swipe 뒤 캡처 누락은 `device_flow.py`에서 `incomplete`로 유지한다.
+- 보완: 동일 `nodekey`의 모든 durable screen 캡처에서 후보를 합치고, `next`가 후보별 원본 XML을 출력한다. 스크롤 피드에서 새 후보가 첫 캡처만 읽는 기존 큐에서 사라지던 문제를 막았다.
+- 검증: 관련 회귀 75건 green, `scripts/verify_spec_docs.py` All checks passed, `bash -n scripts/clone_workspace.sh scripts/device_wda.sh`, `git diff --check`. 최종 전체 `bash tests/run_tests.sh`는 1107건 중 3건 실패했으며 모두 기존 `tests/test_visual_contract.py` palette/dark-mode 판정이다. 실제 Threads 캡처·측정·SwiftUI·대조 이미지는 기기 연결 후 재개해야 한다.
+
+## Working Notes
+
+- 이번 환경에서 Threads 앱 이름/카피/로고를 산출물에 넣지 않았다. 타사 앱 분기는 기기 캡처를 시작할 때도 유지한다.
+- `cmd_swipe` 회귀 fixture는 임시 복사한 `device_wda.sh`가 `_HERE/device_a11y.py`를 참조한다는 실행 계약을 드러냈으므로 보조 스크립트까지 fixture에 복사했다.
+- Threads는 사용자 소유 앱이라는 정보가 없으므로 타사 앱 분기를 적용한다.
+- 실제 기기 증거와 시뮬레이터 렌더/비교 증거는 별개로 기록한다.
+- `tasks/lessons.md`에 이번 회차의 fixture 실패 모드와 방지 규칙을 기록했다.
+
+## 후속 설계 — clone 전용 Xcode workspace + CoreDevice 복구 (2026-08-15)
+
+- 결정: clone 시작 시 `.autobot/clone/project/CloneWorkspace.xcodeproj`를 기존 `autobot-ios-scaffold`로 idempotently 준비한다. 이후 `device_wda.sh device`가 이 프로젝트를 Xcode로 열고 연결을 최대 30초 재조회한다.
+- 의도적 제한: workspace를 먼저 빌드·설치·실행하지 않는다. 관찰 전에 foreground 앱이 바뀌면 Threads bundle ID 바인딩과 원본 전이 증거가 오염될 수 있다.
+- 성공 기준: 물리 기기가 `connected`로 바뀌면 기존 WDA bundle ID 게이트로 진행하고, 계속 `paired`/`unavailable`이면 자동 복구 성공으로 보고하지 않고 Devices and Simulators/USB/잠금/Developer Mode/Trust 조치를 안내한다.
+- 오프라인 증거: workspace 생성 멱등성, Xcode project open 호출, open 이후 connected UDID 재조회까지 회귀로 고정했다.
+
+## 재시도 결과 (2026-08-15, 정정 전 기록)
+
+- `heewook의 iPhone`(`00008101-000D38542180001E`)은 `connected`로 복구되었고 clone workspace 생성 및 device gate를 통과했다.
+- (이전 판정은 잘못됨) 기본 `devicectl device info apps` 목록은 developer 앱만 포함하므로 Threads가 빠졌다. `--include-all-apps --search Threads`로 같은 기기의 Threads와 `com.burbn.barcelona`를 확인했다.
+- Threads가 있을 것으로 보이는 `iPhone 14 Pro`(`00008120-001869921E90201E`)는 Xcode 프로젝트 open 및 **Window > Devices and Simulators** 자동 open 뒤에도 30초간 `unavailable`이었다. CoreDevice 앱 조회도 error 4016으로 실패했다.
+- 당시에는 잘못된 기기 판정으로 탐험·캡처를 시작하지 않았다. 이 결론과 iPhone 14 Pro 재개 조건은 아래 정정으로 대체한다.
+
+## 대상 앱 목록 판정 정정 (2026-08-15)
+
+- `heewook의 iPhone`(`00008101-000D38542180001E`)이 `connected`로 복구된 뒤, `xcrun devicectl device info processes`에서 Threads 실행 프로세스를 확인했다.
+- `xcrun devicectl device info apps --device <udid> --include-all-apps --search Threads` 결과는 `Threads / com.burbn.barcelona / 442.0.0`이었다. 대상 앱은 Debug 앱이 아니어도 된다.
+- `com.instagram.barcelona`는 이 기기의 정확한 bundle ID가 아니므로 폐기했다. 올바른 ID로 WDA를 재시도했지만 WDA runner 설치 단계에서 `0xe8008001` 코드 서명 검증 오류로 중지됐다. 기기는 `connected`, Developer Mode enabled였고 provisioning profile에도 UDID가 포함됐다. WDA 산출물의 `codesign --verify --deep --strict`가 `invalid Info.plist`였으며, WDA scheme post-action의 재서명에서 동일 표시명의 개발 인증서 2개가 모호하게 선택되는 정황을 확인했다. 생성된 WDA 앱을 SHA-1 인증서로 수동 재서명하면 `devicectl device install app`은 통과했지만 Appium preinstalled 경로는 RemoteXPC tunnel 부재로 기동되지 않았다.
+- 스킬 보완: clone Step 1에 `--include-all-apps` 조회와 target UDID 고정 규칙을 추가했다.
+
+## Results (2026-08-15 실기기 재시도 및 생성본 검증)
+
+- `heewook의 iPhone`(`00008101-000D38542180001E`)이 `connected`, Developer Mode enabled 상태임을 확인했다. 같은 UDID에서 `xcrun devicectl device info apps --include-all-apps --search Threads`로 Threads `com.burbn.barcelona` (442.0.0)를 확인했고, Appium/WDA 세션을 실제 대상 bundle ID에 바인딩했다.
+- WDA의 `0xe8008001`/`invalid Info.plist` 원인은 대상 앱의 Debug 여부가 아니라, 중복 개발 인증서 표시명과 서명 후 Runner.app을 변형하는 post-action 조합이었다. `scripts/device_wda.sh`가 WDA를 `.autobot/clone/wda`에 격리 복사하고 no-op post-action을 주입하도록 보완했으며, 회귀 테스트를 추가했다. 격리 복사본으로 새 WDA 세션과 대상 앱 foreground guard를 통과했다.
+- raw 캡처 8개, flow map, stats(`6/59`, partial), 화면 측정 4개, 역기획·스펙 4개를 남겼다. Follow/모두 팔로우/차단 같은 계정 상태 변경과 검색어 입력은 실행하지 않았고, 미탐험 후보 53개는 산출물에 남아 있다.
+- 타사 앱 분기로 선택한 추천 화면·안내 화면만 generic placeholder 카피·이미지로 재현했다. 생성 SwiftUI를 clone Xcode 프로젝트에 연결했고, `xcodebuild` 빌드(exit 0), 시뮬레이터 설치·실행, 원본/생성본 대조 이미지 2개를 확인했다. 대조 캡처는 12 mini 원본과 17 Pro 시뮬레이터가 달라 정량 mismatch는 advisory로 계산하지 않았고, 나란히 검토 가능한 증거로만 사용했다.
+- 검증: `bash -n`(WDA/post-action), 관련 unittest 43건, `verify_spec_docs.py`, `git diff --check`, clone Xcode `xcodebuild` 통과. 전체 suite는 1108건 중 3건 실패했으며 모두 기존 `tests/test_visual_contract.py`의 palette/dark-mode 판정(`paletteMatch`, `paletteWarning`, monochrome dark render)이고 이번 변경과 무관하다.
+
+## Working Notes (latest)
+
+- WDA 격리 복사본은 관찰 대상 앱이 아니라 자동화 runner만 대상으로 한다. 전역 Appium 설치물을 수정하지 않는다.
+- 생성 Xcode 프로젝트의 미사용 로컬 디자인 시스템 패키지는 이번 빌드에서 디스크 압박과 불필요한 모듈 그래프를 만들었으므로 clone 산출물에서 제외했다. 소스 화면은 패키지 없이 SwiftUI만으로 빌드된다.
+- 실기기 탐험은 `6/59`로 완료가 아니다. 추가 안전 후보를 탐험하려면 기존 flow에서 재개하고, 계정 상태를 바꾸는 후보는 사용자 승인 없이는 실행하지 않는다.
+
+## 연구용 타사 자산 분기 보완 (2026-08-15)
+
+- [x] 타사 앱을 연구 전용과 외부 공유·배포용으로 분리
+- [x] 사용자 승인만으로 기술적 추출 가능성을 과장하지 않고, 접근 가능한 파일·payload/export·공개 원본·화면 crop만 허용
+- [x] 연구용 자산의 출처·획득 방법·원본 프레임을 `assets/manifest.json`에 기록하도록 스킬 계약 보완
+- [x] 자산 미확보·배포용 분기는 자리표시자/대체 자산으로 유지하고 샌드박스 우회를 금지
+- [x] `verify_spec_docs.py`, frontmatter YAML, diff 검증
+
+# clone 속도·품질 전면 개선 — 2026-08-15
+
+## 목표와 수용 조건
+
+실기기 왕복과 잘못된 탭 후보를 줄이고, 관찰된 화면 상태·전이를 실제 clone 앱이 재생하며, 자산·측정·렌더 검증을 반복 가능한 파이프라인으로 만든다.
+
+- [x] 키보드·정적 설명문을 탭 후보에서 제외하고 계정 상태 변경 동작을 자동 탭하지 않는다.
+- [x] 반복 데이터 행을 행동 클래스로 묶되 원시 후보 커버리지와 행동 클래스 커버리지를 모두 보고한다.
+- [x] coarse 화면 키와 interaction 상태 키를 분리해 검색 포커스·키보드·선택 상태를 잃지 않는다.
+- [x] 한 명령이 탭·settle·도착 PNG/XML·flow 기록을 원자적으로 완료한다.
+- [x] Appium 준비, 세션 재사용, 대상 bundle 캐시, WDA 호출 계측과 디스크 preflight를 제공한다.
+- [x] 캡처 자산 crop·xcassets·provenance manifest와 병렬/캐시 후처리를 제공한다.
+- [x] flow에서 관찰된 전이 상태 머신을 생성해 clone 화면 콜백과 연결할 수 있다.
+- [x] 반복 렌더에서 컴파일 결과를 캐시하고 고정 sleep 대신 안정 프레임을 기다린다.
+- [x] 저장소 SSOT와 설치된 clone 스킬의 drift를 탐지·동기화할 수 있다.
+- [x] 관련 단위 테스트, 셸 문법, 문서 검사, diff 검사와 가능한 런타임 검증을 통과한다.
+
+## 체크리스트
+
+- [x] 후보·상태 그래프 구현 및 회귀 테스트
+- [x] WDA 원자 step·세션/서버/metrics 구현 및 회귀 테스트
+- [x] 자산·후처리 구현 및 회귀 테스트
+- [x] flow codegen·렌더 캐시 구현 및 회귀 테스트
+- [x] 스킬·command 문서 및 설치본 sync 계약 갱신
+- [x] 통합 검증과 Results/Working Notes 기록
+
+## Results
+
+- 후보 품질: Threads 검색 상태의 실제 접근성 트리에서 정적 문구와 `KeyboardKey` trait를 제거했다. 현재 flow는 화면 3개, raw target 5/26, behavior class 5/16이며 상태 변경 후보 13개는 `withheld`로 남겼다.
+- 실기기 경로: `heewook의 iPhone`을 clone workspace로 Xcode 자동 기동 후 약 6초 안에 다시 연결했고, iPhone 12 mini / iOS 26.5.2 profile과 Threads `com.burbn.barcelona`를 확인했다. Appium 자동 시작도 확인했으며, iOS 18+ RemoteXPC tunnel 부재와 2 GB 미만 디스크는 세션 전에 명시적으로 차단한다. 최종 doctor에서 디스크 3369 MB는 통과하고 RemoteXPC tunnel 하나만 blocker로 남았다.
+- 속도: `step`이 탭·settle·최종 XML·PNG·flow를 한 번에 기록하고, 동일 세션 재사용과 HTTP metrics를 지원한다. 후처리는 raw pair 8개를 첫 실행에 8개 처리하고 두 번째 실행에는 8개 모두 cache hit했다.
+- 품질: capture crop/중복 제거/xcassets/provenance, interaction state key, flow router 생성, simulator 자동 선택, 컴파일 cache, 안정 프레임 대기, 영역별 비교·mask·heatmap을 추가했다.
+- 계약: 저장소 clone SSOT는 0.13.9이고 설치본은 0.13.8뿐이라 `clone_skill_sync.py check`가 의도대로 drift를 차단했다. 서로 다른 버전의 문서와 runtime을 자동 혼합하지 않는다.
+- 검증: clone 통합 회귀 176건 통과. `verify_spec_docs.py`, Python compile, shell syntax, frontmatter YAML, `git diff --check`를 통과했다. 공간 복구 후 `bash tests/run_tests.sh` 전체 1180건도 통과했다.
+
+## Working Notes
+
+- CoreDevice `connected`만으로 Appium 실기기 자동화가 준비된 것은 아니다. iOS 18+에서는 별도 터미널에서 `sudo appium driver run xcuitest tunnel-creation -- --udid <udid>`를 계속 실행해야 한다.
+- 첫 전체 suite 시도는 루트 여유 공간이 118 MB까지 내려가 임시 파일 생성 오류로 무효화됐다. `/private/tmp/autobot-wda-deriveddata*`와 `.autobot/clone/deriveddata`처럼 이 작업이 만든 재생성 가능한 WDA/clone 빌드 cache만 제거했고, 원본 캡처·flow·비교 이미지·소스는 보존했다. 최종 여유 공간은 3.3 GB이며 doctor의 2 GB gate를 통과했다.
+- 설치본을 갱신하려면 0.13.9 플러그인 패키지를 설치/reload한 뒤 `clone_skill_sync.py check`를 다시 통과시킨다.
+
+---

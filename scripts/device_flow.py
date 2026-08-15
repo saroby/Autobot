@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """device_flow.py — the exploration run, read back.
 
-`device_wda.sh` appends one JSON line per screen capture and per tap to
+`device_wda.sh` appends one JSON line per screen capture, tap, and swipe to
 `.autobot/clone/flow.jsonl`. That log is the whole state of an exploration, which
 is what makes the three things below possible:
 
@@ -22,6 +22,7 @@ the difference between "reproduced the app" and "reproduced what we could reach"
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import os
@@ -33,22 +34,95 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
+class FlowContractError(ValueError):
+    pass
+
+
+# Flow v2 contract. These names are intentionally singular: accepting aliases
+# would let the WDA producer and offline reader silently disagree.
+UNOFFICIAL_STATE_FIELDS = {
+    "state", "state_key", "from_state", "to_state", "fromState", "toState",
+}
+
+
+def _validate_event(event: object, line_number: int) -> dict:
+    if not isinstance(event, dict):
+        raise FlowContractError(f"line {line_number}: event must be a JSON object")
+    aliases = sorted(UNOFFICIAL_STATE_FIELDS.intersection(event))
+    if aliases:
+        raise FlowContractError(
+            f"line {line_number}: unsupported state field(s) {', '.join(aliases)}; "
+            "use statekey/from_statekey/to_statekey"
+        )
+    event_type = event.get("type")
+    if event_type == "screen" and not event.get("node"):
+        raise FlowContractError(
+            f"line {line_number}: screen event requires coarse node, including when statekey is present"
+        )
+    if event_type in ("tap", "swipe"):
+        has_from_state = bool(event.get("from_statekey"))
+        has_to_state = bool(event.get("to_statekey"))
+        if has_from_state != has_to_state:
+            raise FlowContractError(
+                f"line {line_number}: {event_type} event must provide both "
+                "from_statekey and to_statekey"
+            )
+    return event
+
+
 def load(path: str) -> list[dict]:
     events = []
     with open(path, encoding="utf-8") as fh:
-        for line in fh:
+        for line_number, line in enumerate(fh, 1):
             line = line.strip()
             if line:
-                events.append(json.loads(line))
+                events.append(_validate_event(json.loads(line), line_number))
     return events
 
 
+def _first_value(event: dict, *keys: str) -> str:
+    for key in keys:
+        value = event.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def screen_identity(event: dict) -> str:
+    """Official statekey first; legacy node-only logs remain readable."""
+    return _first_value(event, "statekey", "node")
+
+
+def action_source(event: dict) -> str:
+    return _first_value(event, "from_statekey", "from")
+
+
+def action_destination(event: dict) -> str:
+    return _first_value(event, "to_statekey", "to") or "?"
+
+
 def screens(events: list[dict]) -> "OrderedDict[str, dict]":
-    """node key → the first capture of that screen (name, tree, png)."""
+    """state key (or legacy node key) → first capture of that state."""
     out: OrderedDict[str, dict] = OrderedDict()
     for e in events:
-        if e.get("type") == "screen" and e.get("node") and e["node"] not in out:
-            out[e["node"]] = e
+        key = screen_identity(e)
+        if e.get("type") == "screen" and key and key not in out:
+            out[key] = e
+    return out
+
+
+def screen_captures(events: list[dict]) -> "OrderedDict[str, list[dict]]":
+    """state key (or legacy node key) → every durable capture.
+
+    ``nodekey`` deliberately absorbs scrolling so a feed does not become an
+    unbounded graph. Candidates still need to be unioned across those captures,
+    otherwise controls revealed by a swipe disappear from resume.
+    """
+    out: OrderedDict[str, list[dict]] = OrderedDict()
+    for e in events:
+        key = screen_identity(e)
+        if e.get("type") == "screen" and key:
+            out.setdefault(key, []).append(e)
     return out
 
 
@@ -64,20 +138,20 @@ def changed(tap: dict) -> bool:
 def capture_gaps(events: list[dict], rows: list[dict] | None = None) -> dict[str, list]:
     """Return missing artifacts that must keep coverage from becoming complete.
 
-    A tap records a transition, not a durable destination screenshot/tree. The
-    latter is needed by measurement and reproduction, so a changed tap whose
+    A tap or swipe records a transition, not a durable destination screenshot/tree.
+    The latter is needed by measurement and reproduction, so a changed action whose
     destination was never captured is an explicit gap instead of a silent
     success. Missing source trees are handled here too: without them the
     candidate list cannot be reconstructed for resume.
     """
     missing_destinations = []
     unresolved_destinations = []
-    for index, tap in enumerate(events):
-        if tap.get("type") != "tap":
+    for index, action in enumerate(events):
+        if action.get("type") not in ("tap", "swipe"):
             continue
-        if not changed(tap):
+        if not changed(action):
             continue
-        destination = tap.get("to", "?")
+        destination = action_destination(action)
         unresolved = destination in ("", "?")
         # The durable capture must postdate the tap — an older capture of the
         # same nodekey must never satisfy a new transition (a re-transition to
@@ -89,10 +163,10 @@ def capture_gaps(events: list[dict], rows: list[dict] | None = None) -> dict[str
         # durable capture after the tap is the arrival evidence.
         destination_captured = any(
             e.get("type") == "screen" and e.get("tree") and Path(e["tree"]).is_file()
-            and (unresolved or e.get("node") == destination)
+            and (unresolved or screen_identity(e) == destination)
             for e in events[index + 1:])
         if not destination_captured:
-            (unresolved_destinations if unresolved else missing_destinations).append(tap)
+            (unresolved_destinations if unresolved else missing_destinations).append(action)
     missing_trees = [r for r in (rows or frontier(events)) if r.get("tree_missing")]
     return {
         "missing_trees": missing_trees,
@@ -101,8 +175,8 @@ def capture_gaps(events: list[dict], rows: list[dict] | None = None) -> dict[str
     }
 
 
-def candidates_of(tree: str) -> list[tuple[int, int, str]]:
-    """(x, y, label) a screen offers — the same list the tap guard enforces."""
+def candidate_records_of(tree: str) -> list[dict]:
+    """Candidates plus behavior/category metadata emitted by device_a11y."""
     if not Path(tree).exists():
         return []
     proc = subprocess.run([sys.executable, str(HERE / "device_a11y.py"), "candidates", tree],
@@ -110,41 +184,128 @@ def candidates_of(tree: str) -> list[tuple[int, int, str]]:
     found = []
     for line in proc.stdout.splitlines():
         if line.startswith("INFO: tap "):
-            parts = line[len("INFO: tap "):].split(" | ")
+            parts = line[len("INFO: tap "):].split(" | ", 2)
             xy = parts[0].split()
-            found.append((int(xy[0]), int(xy[1]), parts[-1]))
+            found.append({"x": int(xy[0]), "y": int(xy[1]), "role": parts[1],
+                          "label": parts[2], "withheld": False})
+        elif line.startswith("WARN: withheld "):
+            parts = line[len("WARN: withheld "):].split(" | ", 2)
+            xy = parts[0].split()
+            label = parts[2].rsplit(" — ", 1)[0]
+            found.append({"x": int(xy[0]), "y": int(xy[1]), "role": parts[1],
+                          "label": label, "withheld": True})
+        elif line.startswith("INFO: candidate-meta "):
+            parts = line[len("INFO: candidate-meta "):].split(" | ")
+            xy = tuple(map(int, parts[0].split()))
+            metadata = dict(part.split("=", 1) for part in parts[1:] if "=" in part)
+            record = next((item for item in reversed(found)
+                           if (item["x"], item["y"]) == xy and "behavior" not in item), None)
+            if record is not None:
+                record.update(metadata)
+                record["withheld"] = metadata.get("withheld", "false") == "true"
+                record["state_changing"] = metadata.get("state_changing", "false") == "true"
+    for record in found:
+        if "behavior" not in record:
+            source = f"{record['role']}|{record['label']}"
+            record["behavior"] = hashlib.sha1(source.encode()).hexdigest()[:12]
+        record.setdefault("category", "state-changing" if record["withheld"] else "navigation")
+        record.setdefault("effect", "unknown" if record["withheld"] else "none")
+        record.setdefault("state_changing", record["withheld"])
     return found
 
 
+def candidates_of(tree: str) -> list[tuple[int, int, str]]:
+    """Legacy tuple view: only safe targets that the tap guard permits."""
+    return [(record["x"], record["y"], record["label"])
+            for record in candidate_records_of(tree) if not record["withheld"]]
+
+
 def frontier(events: list[dict]) -> list[dict]:
-    """Per screen: which of its targets were never tapped."""
+    """Per state: raw target and normalized behavior-class coverage."""
     tapped: dict[str, list] = {}
     for t in taps(events):
-        tapped.setdefault(t.get("from", ""), []).append(
-            (t.get("label", "?"), int(t["x"]), int(t["y"])))
+        tapped.setdefault(action_source(t), []).append(
+            (t.get("label", "?"), int(t["x"]), int(t["y"]), t.get("behavior")))
     out = []
+    captures_by_node = screen_captures(events)
     for key, screen in screens(events).items():
         done = tapped.get(key, [])
-        tree = screen.get("tree", "")
-        if not tree or not Path(tree).is_file():
-            out.append({"node": key, "name": screen.get("name", key),
-                        "tree": tree, "png": screen.get("png", ""),
-                        "total": 0, "todo": [], "tree_missing": True})
+        captures = captures_by_node.get(key, [screen])
+        valid_captures = [
+            capture for capture in captures
+            if capture.get("tree") and Path(capture["tree"]).is_file()
+        ]
+        tree_missing = any(
+            not capture.get("tree") or not Path(capture["tree"]).is_file()
+            for capture in captures
+        )
+        if not valid_captures:
+            out.append({"key": key, "node": screen["node"],
+                        "statekey": screen.get("statekey", ""),
+                        "name": screen.get("name", key),
+                        "tree": screen.get("tree", ""), "png": screen.get("png", ""),
+                        "total": 0, "raw_todo": [], "behavior_total": 0,
+                        "todo": [], "todo_groups": [], "withheld": 0,
+                        "tree_missing": True})
             continue
         # Matched with tolerance, not equality: the same screen captured twice
         # reports the back button at (38,72) and (38,71). On exact coordinates
         # that target stays "unexplored" forever — coverage under-reports and
         # `next` keeps proposing work already done. Same 12pt bucket the tap
         # candidate list already uses to collapse duplicates.
-        def is_done(c, done=done):
-            return any((lab == c[2] or "?" in (lab, c[2]))
-                       and abs(x - c[0]) <= 12 and abs(y - c[1]) <= 12
-                       for lab, x, y in done)
-        candidates = candidates_of(tree)
-        todo = [c for c in candidates if not is_done(c)]
-        out.append({"node": key, "name": screen.get("name", key),
-                    "tree": tree, "png": screen.get("png", ""),
-                    "total": len(candidates), "todo": todo, "tree_missing": False})
+        def is_done(candidate, done=done):
+            return any((lab == candidate["label"] or "?" in (lab, candidate["label"]))
+                       and abs(x - candidate["x"]) <= 12 and abs(y - candidate["y"]) <= 12
+                       for lab, x, y, _behavior in done)
+        # A feed/list may have the same nodekey before and after a swipe. Keep
+        # the union of candidates, along with the capture that produced each
+        # one, so resume can re-capture and tap the right visible variant.
+        candidates_with_tree = []
+        withheld_with_tree = []
+        for capture in valid_captures:
+            tree = capture["tree"]
+            for candidate in candidate_records_of(tree):
+                collection = withheld_with_tree if candidate["withheld"] else candidates_with_tree
+                if not any(
+                    (previous[0]["label"] == candidate["label"]
+                     or "?" in (previous[0]["label"], candidate["label"]))
+                    and abs(previous[0]["x"] - candidate["x"]) <= 12
+                    and abs(previous[0]["y"] - candidate["y"]) <= 12
+                    for previous in collection
+                ):
+                    collection.append((candidate, tree))
+        candidates = [candidate for candidate, _tree in candidates_with_tree]
+        raw_todo_records = [candidate for candidate in candidates if not is_done(candidate)]
+        done_behaviors = {str(behavior) for _lab, _x, _y, behavior in done if behavior}
+        legacy_done = [item for item in done if not item[3]]
+        done_behaviors.update(
+            candidate["behavior"] for candidate in candidates
+            if any((lab == candidate["label"] or "?" in (lab, candidate["label"]))
+                   and abs(x - candidate["x"]) <= 12 and abs(y - candidate["y"]) <= 12
+                   for lab, x, y, _behavior in legacy_done)
+        )
+        behavior_representatives: OrderedDict[str, tuple[dict, str]] = OrderedDict()
+        for candidate, tree in candidates_with_tree:
+            behavior_representatives.setdefault(candidate["behavior"], (candidate, tree))
+        todo_with_tree = [item for behavior, item in behavior_representatives.items()
+                          if behavior not in done_behaviors]
+        todo = [(candidate["x"], candidate["y"], candidate["label"])
+                for candidate, _tree in todo_with_tree]
+        todo_groups = []
+        for candidate, tree in todo_with_tree:
+            if not todo_groups or todo_groups[-1][0] != tree:
+                todo_groups.append((tree, []))
+            todo_groups[-1][1].append((candidate["x"], candidate["y"], candidate["label"]))
+        out.append({"key": key, "node": screen["node"],
+                    "statekey": screen.get("statekey", ""),
+                    "name": screen.get("name", key),
+                    "tree": screen.get("tree", ""), "png": screen.get("png", ""),
+                    "total": len(candidates),
+                    "raw_todo": [(candidate["x"], candidate["y"], candidate["label"])
+                                 for candidate in raw_todo_records],
+                    "behavior_total": len(behavior_representatives), "todo": todo,
+                    "todo_groups": todo_groups, "tree_missing": tree_missing})
+        out[-1]["withheld"] = len(withheld_with_tree)
     return out
 
 
@@ -159,20 +320,28 @@ def cmd_next(path: str) -> int:
             print("WARN: frontier is empty, but durable screen evidence is incomplete; "
                   "do not call the clone explored yet")
             return 1
-        print("OK: frontier empty — every candidate of every captured screen was tapped")
+        raw_left = sum(len(r["raw_todo"]) for r in rows)
+        suffix = f"; {raw_left} repeated raw target(s) unvisited" if raw_left else ""
+        print("OK: frontier empty — every safe behavior class was explored" + suffix)
         return 0
     # Shallowest first, by the same depths the map draws: breadth-first keeps the
     # upper levels complete when the run is cut short, which it usually is.
-    depth = _depths([r["node"] for r in rows], _edges(events))
-    pending.sort(key=lambda r: depth.get(r["node"], 0))
+    depth = _depths([r["key"] for r in rows], _edges(events))
+    pending.sort(key=lambda r: depth.get(r["key"], 0))
     for r in pending:
-        print(f"INFO: screen {r['name']} ({r['node']}) — {len(r['todo'])}/{r['total']} unexplored")
-        for x, y, label in r["todo"]:
-            print(f"INFO:   tap {x} {y} | {label}")
-        print(f"INFO:   tree {r['tree']}")
+        print(f"INFO: screen {r['name']} ({r['key']}) — "
+              f"{len(r['todo'])}/{r['behavior_total']} behavior classes unexplored; "
+              f"{len(r['raw_todo'])}/{r['total']} raw targets unexplored")
+        groups = r.get("todo_groups") or [(r["tree"], r["todo"])]
+        for tree, candidates in groups:
+            for x, y, label in candidates:
+                print(f"INFO:   tap {x} {y} | {label}")
+            print(f"INFO:   tree {tree}")
     total_todo = sum(len(r["todo"]) for r in pending)
+    raw_todo = sum(len(r["raw_todo"]) for r in rows)
     _print_capture_gaps(gaps)
-    print(f"OK: {total_todo} unexplored targets across {len(pending)} screens — "
+    print(f"OK: {total_todo} unexplored behavior classes ({raw_todo} raw targets) "
+          f"across {len(pending)} screens — "
           "re-foreground the app, re-capture that screen, then tap from ITS fresh candidates")
     return 0
 
@@ -182,9 +351,9 @@ def _print_capture_gaps(gaps: dict[str, list]) -> None:
         print(f"WARN: {len(gaps['missing_trees'])} captured screen(s) have no accessibility tree — "
               "re-run device_wda.sh screen before claiming coverage")
     if gaps["missing_destinations"]:
-        nodes = sorted({t.get("to", "?") for t in gaps["missing_destinations"]})
-        print(f"WARN: {len(gaps['missing_destinations'])} changed transition(s) have no destination capture "
-              f"({', '.join(nodes)}) — run device_wda.sh screen after each changed tap, "
+        nodes = sorted({action_destination(t) for t in gaps["missing_destinations"]})
+        print(f"WARN: {len(gaps['missing_destinations'])} changed action(s) have no destination capture "
+              f"({', '.join(nodes)}) — run device_wda.sh screen after each changed tap/swipe, "
               "or re-visit those screens now and capture them")
     if gaps["unresolved_destinations"]:
         print(f"WARN: {len(gaps['unresolved_destinations'])} changed transition(s) have no resolvable destination "
@@ -195,23 +364,31 @@ def cmd_stats(path: str) -> int:
     events = load(path)
     rows = frontier(events)
     total = sum(r["total"] for r in rows)
-    todo = sum(len(r["todo"]) for r in rows)
+    raw_todo = sum(len(r["raw_todo"]) for r in rows)
+    behavior_total = sum(r["behavior_total"] for r in rows)
+    behavior_todo = sum(len(r["todo"]) for r in rows)
+    withheld = sum(r["withheld"] for r in rows)
     dead = [t for t in taps(events) if not changed(t)]
     gaps = capture_gaps(events, rows)
     print(f"INFO: screens {len(rows)}")
-    print(f"INFO: targets {total - todo}/{total} explored, {todo} left")
+    print(f"INFO: targets {total - raw_todo}/{total} explored, {raw_todo} left")
+    print(f"INFO: behavior classes {behavior_total - behavior_todo}/{behavior_total} explored, "
+          f"{behavior_todo} left")
+    if withheld:
+        print(f"INFO: withheld state-changing {withheld} (not safe pending work)")
     if dead:
         print(f"INFO: no-op taps {len(dead)} (target changed nothing)")
     _print_capture_gaps(gaps)
     incomplete = any(gaps.values())
-    if todo:
-        status = f"partial ({todo} unexplored)"
+    if behavior_todo:
+        status = f"partial ({behavior_todo} behavior classes unexplored)"
         if incomplete:
             status += "; evidence incomplete"
     elif incomplete:
         status = "incomplete (screen evidence missing)"
     else:
-        status = "complete"
+        status = (f"complete (behavior classes; {raw_todo} repeated raw targets unvisited)"
+                  if raw_todo else "complete")
     print("OK: coverage " + status)
     return 0
 
@@ -219,7 +396,7 @@ def cmd_stats(path: str) -> int:
 def _edges(events: list[dict]) -> list[tuple[str, str, str]]:
     seen, out = set(), []
     for t in taps(events):
-        edge = (t.get("from", "?"), t.get("to", "?"), t.get("label", "?"))
+        edge = (action_source(t) or "?", action_destination(t), t.get("label", "?"))
         if edge not in seen and changed(t):
             seen.add(edge)
             out.append(edge)
@@ -301,7 +478,7 @@ def _layout(scr: dict, rows: dict, edges: list, depth: dict, out_dir: Path) -> t
             box["png"] = (os.path.relpath(Path(png).resolve(), out_dir)
                           if png and Path(png).exists() else "")
             box["todo_count"] = len(rows.get(key, {}).get("todo", []))
-            box["total"] = rows.get(key, {}).get("total", 0)
+            box["total"] = rows.get(key, {}).get("behavior_total", 0)
 
     links = [(src, dst, label) for src, dst, label in edges if src in placed and dst in placed]
     links += [(box["parent"], key, box["label"]) for key, box in placed.items()
@@ -331,7 +508,7 @@ def _svg_edges(links: list) -> str:
 def cmd_map(path: str, out: str) -> int:
     events = load(path)
     scr = screens(events)
-    rows = {r["node"]: r for r in frontier(events)}
+    rows = {r["key"]: r for r in frontier(events)}
     edges = _edges(events)
     depth = _depths(list(scr), edges)
     out_path = Path(out)
@@ -364,10 +541,16 @@ def cmd_map(path: str, out: str) -> int:
             f'<div class="node screen" style="{style}"><div class="shot">{shot}</div>'
             f'<div class="meta"><strong>{esc(b["label"])}</strong>{badge}</div></div>')
 
-    total = sum(r["total"] for r in rows.values())
-    left = sum(len(r["todo"]) for r in rows.values())
-    banner = (f'화면 {len(scr)}개 · 탭 후보 {total - left}/{total} 탐험'
-              + (f' · <strong>미탐험 {left}</strong> (점선 노드)' if left else ' · 전수 완료'))
+    raw_total = sum(r["total"] for r in rows.values())
+    raw_left = sum(len(r["raw_todo"]) for r in rows.values())
+    behavior_total = sum(r["behavior_total"] for r in rows.values())
+    behavior_left = sum(len(r["todo"]) for r in rows.values())
+    withheld = sum(r["withheld"] for r in rows.values())
+    banner = (f'화면 {len(scr)}개 · 탭 후보 {raw_total - raw_left}/{raw_total} 탐험'
+              f' · 행동 클래스 {behavior_total - behavior_left}/{behavior_total} 탐험'
+              + (f' · <strong>미탐험 {behavior_left}</strong> (점선 노드)'
+                 if behavior_left else ' · 행동 클래스 완료')
+              + (f' · 상태 변경 보류 {withheld}' if withheld else ''))
 
     out_path.write_text(f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -451,6 +634,9 @@ def main(argv: list[str]) -> int:
         return 1
     except json.JSONDecodeError as exc:
         print(f"ERROR: corrupt exploration log {argv[2]}: {exc}", file=sys.stderr)
+        return 1
+    except FlowContractError as exc:
+        print(f"ERROR: invalid exploration log {argv[2]}: {exc}", file=sys.stderr)
         return 1
     print("ERROR: usage: device_flow.py next|stats <flow.jsonl> | map <flow.jsonl> <out.html>",
           file=sys.stderr)

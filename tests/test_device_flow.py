@@ -11,6 +11,8 @@ elements: silent truncation reads as "explored everything" when it wasn't.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -19,6 +21,10 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_flow.py"
+FLOW_SPEC = importlib.util.spec_from_file_location("device_flow_under_test", SCRIPT)
+DEVICE_FLOW = importlib.util.module_from_spec(FLOW_SPEC)
+assert FLOW_SPEC.loader is not None
+FLOW_SPEC.loader.exec_module(DEVICE_FLOW)
 
 TREE = (
     '<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
@@ -48,9 +54,12 @@ class FlowCase(unittest.TestCase):
     def run_flow(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["python3", str(SCRIPT), *args], capture_output=True, text=True)
 
-    def screen(self, node="n1", name="01-home") -> dict:
-        return {"type": "screen", "node": node, "sig": "s1", "name": name,
-                "tree": str(self.tree), "png": ""}
+    def screen(self, node="n1", name="01-home", statekey=None, tree=None) -> dict:
+        event = {"type": "screen", "node": node, "sig": "s1", "name": name,
+                 "tree": str(tree or self.tree), "png": ""}
+        if statekey is not None:
+            event["statekey"] = statekey
+        return event
 
 
 class TestFrontier(FlowCase):
@@ -100,6 +109,129 @@ class TestFrontier(FlowCase):
         r = self.run_flow("stats", str(self.log))
         self.assertIn("1/2 explored", r.stdout)
         self.assertNotIn("2/3 explored", r.stdout)
+
+
+class TestBehaviorClassFrontier(FlowCase):
+    def threads_tree(self) -> Path:
+        tree = self.dir / "threads-like.xml"
+        rows = "".join(
+            f'<XCUIElementTypeCell type="XCUIElementTypeCell" label="{user}" name="{user}"'
+            f' enabled="true" visible="true" x="0" y="{y}" width="375" height="60">'
+            f'<XCUIElementTypeButton type="XCUIElementTypeButton" label="팔로우" name="팔로우"'
+            f' enabled="true" visible="true" x="290" y="{y + 10}" width="70" height="40"/>'
+            f'</XCUIElementTypeCell>'
+            for user, y in (("user.one", 100), ("user.two", 160))
+        )
+        tree.write_text(TREE.replace(
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="가" name="가" enabled="true"'
+            ' visible="true" x="0" y="100" width="100" height="40"/>', "").replace(
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="나" name="나" enabled="true"'
+            ' visible="true" x="0" y="200" width="100" height="40"/>', rows),
+            encoding="utf-8")
+        return tree
+
+    def test_repeated_rows_report_raw_and_behavior_coverage(self):
+        tree = self.threads_tree()
+        self.write([self.screen(tree=tree)])
+        stats = self.run_flow("stats", str(self.log))
+        self.assertIn("targets 0/2 explored, 2 left", stats.stdout)
+        self.assertIn("behavior classes 0/1 explored, 1 left", stats.stdout)
+        self.assertIn("withheld state-changing 2 (not safe pending work)", stats.stdout)
+
+        next_run = self.run_flow("next", str(self.log))
+        self.assertEqual(next_run.stdout.count("INFO:   tap "), 1)
+        self.assertNotIn("| 팔로우", next_run.stdout)
+
+    def test_one_repeated_row_covers_behavior_but_not_raw_targets(self):
+        tree = self.threads_tree()
+        self.write([
+            self.screen(tree=tree),
+            {"type": "tap", "from": "n1", "to": "n1", "label": "user.one",
+             "x": "187", "y": "130", "changed": "false"},
+        ])
+        stats = self.run_flow("stats", str(self.log))
+        self.assertIn("targets 1/2 explored, 1 left", stats.stdout)
+        self.assertIn("behavior classes 1/1 explored, 0 left", stats.stdout)
+        self.assertIn("complete (behavior classes; 1 repeated raw targets unvisited)", stats.stdout)
+        self.assertIn("frontier empty", self.run_flow("next", str(self.log)).stdout)
+
+    def test_explicit_behavior_fingerprint_wins_over_coordinate_inference(self):
+        behavior_for_na = hashlib.sha1("AXButton|navigation|나".encode()).hexdigest()[:12]
+        self.write([
+            self.screen(),
+            {"type": "tap", "from": "n1", "to": "n1", "label": "가",
+             "x": "50", "y": "120", "behavior": behavior_for_na,
+             "changed": "false"},
+        ])
+        stats = self.run_flow("stats", str(self.log))
+        self.assertIn("targets 1/2 explored, 1 left", stats.stdout)
+        self.assertIn("behavior classes 1/2 explored, 1 left", stats.stdout)
+        pending = self.run_flow("next", str(self.log)).stdout
+        self.assertIn("| 가", pending)
+        self.assertNotIn("| 나", pending)
+
+
+class TestStateIdentity(FlowCase):
+    def test_states_of_one_coarse_node_are_grouped_separately(self):
+        self.write([
+            self.screen(statekey="state-base", name="01-base"),
+            {"type": "tap", "from": "n1", "to": "n1",
+             "from_statekey": "state-base", "to_statekey": "state-focused",
+             "label": "가", "x": "50", "y": "120", "changed": "true"},
+            self.screen(statekey="state-focused", name="02-focused"),
+        ])
+        stats = self.run_flow("stats", str(self.log))
+        self.assertIn("screens 2", stats.stdout)
+        self.assertIn("targets 1/4 explored, 3 left", stats.stdout)
+        self.assertIn("behavior classes 1/4 explored, 3 left", stats.stdout)
+        self.assertNotIn("destination capture", stats.stdout)
+
+        out = self.dir / "state-map.html"
+        result = self.run_flow("map", str(self.log), str(out))
+        self.assertIn("2 screens, 1 transitions", result.stdout)
+
+    def test_state_screen_keeps_coarse_node_alongside_graph_key(self):
+        event = self.screen(node="coarse-home", statekey="home-focused")
+        rows = DEVICE_FLOW.frontier([event])
+        self.assertEqual(rows[0]["key"], "home-focused")
+        self.assertEqual(rows[0]["statekey"], "home-focused")
+        self.assertEqual(rows[0]["node"], "coarse-home")
+
+    def test_state_screen_without_coarse_node_is_rejected(self):
+        event = self.screen(statekey="home-focused")
+        del event["node"]
+        self.write([event])
+        result = self.run_flow("stats", str(self.log))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("screen event requires coarse node", result.stderr)
+
+    def test_state_action_requires_both_statekey_endpoints(self):
+        self.write([
+            self.screen(statekey="state-base"),
+            {"type": "tap", "from_statekey": "state-base", "from": "n1", "to": "n1",
+             "label": "가", "x": "50", "y": "120", "changed": "false"},
+        ])
+        result = self.run_flow("stats", str(self.log))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("both from_statekey and to_statekey", result.stderr)
+
+    def test_unofficial_state_aliases_are_rejected(self):
+        event = self.screen()
+        event["state"] = "home-focused"
+        self.write([event])
+        result = self.run_flow("stats", str(self.log))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("use statekey/from_statekey/to_statekey", result.stderr)
+
+    def test_legacy_node_from_to_logs_remain_supported(self):
+        self.write([
+            self.screen(),
+            {"type": "tap", "from": "n1", "to": "n1", "label": "가",
+             "x": "50", "y": "120", "changed": "false"},
+        ])
+        stats = self.run_flow("stats", str(self.log))
+        self.assertIn("screens 1", stats.stdout)
+        self.assertIn("targets 1/2 explored, 1 left", stats.stdout)
 
 
 class TestCoverage(FlowCase):
@@ -164,6 +296,40 @@ class TestCoverage(FlowCase):
         r = self.run_flow("stats", str(self.log))
         self.assertNotIn("no resolvable destination", r.stdout)
         self.assertNotIn("incomplete", r.stdout)
+
+    def test_changed_swipe_without_a_followup_capture_is_incomplete(self):
+        self.write([self.screen(),
+                    {"type": "swipe", "from": "n1", "to": "n1",
+                     "x1": "180", "y1": "700", "x2": "180", "y2": "200",
+                     "changed": "true"}])
+        r = self.run_flow("stats", str(self.log))
+        self.assertIn("destination capture", r.stdout)
+        self.assertIn("incomplete", r.stdout)
+
+    def test_scroll_captures_union_candidates_for_the_same_node(self):
+        scrolled = self.dir / "02-home-scroll.xml"
+        scrolled.write_text(
+            TREE.replace(
+                "</XCUIElementTypeApplication>",
+                '<XCUIElementTypeButton type="XCUIElementTypeButton" label="다" name="다" '
+                'enabled="true" visible="true" x="0" y="300" width="100" height="40"/>'
+                "</XCUIElementTypeApplication>",
+            ),
+            encoding="utf-8",
+        )
+        capture = self.screen(node="n1", name="02-home-scroll")
+        capture["tree"] = str(scrolled)
+        self.write([self.screen(),
+                    {"type": "swipe", "from": "n1", "to": "n1",
+                     "x1": "180", "y1": "700", "x2": "180", "y2": "200",
+                     "changed": "true"},
+                    capture])
+        r = self.run_flow("stats", str(self.log))
+        self.assertIn("0/3 explored", r.stdout)
+        self.assertNotIn("incomplete", r.stdout)
+        r = self.run_flow("next", str(self.log))
+        self.assertIn("| 다", r.stdout)
+        self.assertIn(str(scrolled), r.stdout)
 
     def test_missing_tree_is_incomplete(self):
         event = self.screen()

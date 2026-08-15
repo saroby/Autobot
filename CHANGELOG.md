@@ -2,6 +2,31 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
+## [Unreleased]
+
+### Added — `/autobot:clone` 반복 가능한 고속 수집·재현 파이프라인
+- `device_wda.sh doctor/step/stop-server`: Appium·Xcode·서명·기기·앱·디스크 preflight, 탭→settle→도착 PNG/XML→flow의 원자적 캡처, 스크립트가 시작한 Appium만 안전하게 종료한다. 같은 대상 세션은 descriptor로 재사용하고, 로컬 Appium은 필요할 때 자동 시작하며 `CLONE_METRICS=1`로 HTTP 시간을 기록한다.
+- iOS 18+ 실기기의 RemoteXPC registry를 session 전에 검사해 Appium의 불명확한 `Unknown device UDID` 대신 정확한 tunnel 생성 명령을 낸다. macOS TUN 생성은 sudo가 필요하므로 암묵 실행하지 않는다.
+- `device`가 물리 기기의 UDID·marketing name·product type·OS/build·연결 정보를 `device-profile.json`에 저장한다. `device_render.sh ... auto ...`가 이를 이용해 같은 기종 시뮬레이터를 선택한다.
+- `clone_postprocess.py`가 변경된 raw pair만 bounded 병렬 측정하고 캐시된 화면은 재사용해 결정적인 JSON/Markdown 스펙을 만든다. `device_assets.py`는 AXImage/명시 요소를 배율에 맞춰 crop하고 SHA 중복 제거·선택적 `.imageset`·원자적 research provenance manifest를 생성한다.
+- `clone_flow_codegen.py`가 신·구 flow 로그에서 검토 가능한 state→View manifest와 컴파일 가능한 관찰 전이 router를 생성한다. 누락 매핑·모호한 state/action은 추측하지 않고 실패한다.
+- `clone_skill_sync.py`가 저장소 SSOT와 설치 플러그인의 drift를 검사하고, 정확히 같은 버전의 설치본만 원자적으로 동기화한다.
+
+### Changed — 탐험 품질·렌더·대조의 비용과 신뢰도
+- 후보는 역할/actionable trait를 요구하고 키보드·정적 설명문을 제거한다. 팔로우·좋아요·리포스트·게시·전송·추천 숨기기·토글은 상태 변경으로 보류하며, coverage는 raw target과 반복 행 behavior class를 나눠 보고한다.
+- 화면 정체성을 stale-tap `sig`, coarse 구조 `node`, 포커스·키보드·선택·모달을 포함한 interaction `state`로 분리하고 옛 node-only 로그를 계속 읽는다.
+- 렌더러는 source/root/SDK/target 기반 컴파일 캐시와 안정 프레임 polling을 사용한다. 비교기는 측정 요소별 high/medium/low 오차, heatmap, advisory mask를 제공하되 side-by-side 원본은 가리지 않는다.
+
+### Added — `/autobot:clone` clone workspace와 Xcode CoreDevice 복구
+- `scripts/clone_workspace.sh prepare`가 기존 iOS scaffold 경로로 `.autobot/clone/project/CloneWorkspace.xcodeproj`를 idempotently 생성한다.
+- 실기기 게이트가 연결된 물리 기기를 찾지 못하면 지정된 clone workspace를 Xcode로 열고 최대 30초 동안 `devicectl`을 재조회한다. 계속 `paired`/`unavailable`이면 성공으로 위조하지 않고 기존 안내로 중지한다.
+- 오프라인 회귀 3건 추가: workspace 생성 멱등성, Xcode project open 호출, Xcode open 뒤 연결 재조회.
+
+### Fixed — `/autobot:clone` 피드/목록 스크롤 탐험 증거
+- `device_wda.sh swipe`가 settle 후 `swipe` flow 이벤트를 남기고, `changed=true`인 swipe도 후속 `screen` 캡처가 없으면 `device_flow.py stats`에서 `incomplete`로 판정한다.
+- 같은 `nodekey`의 여러 화면 캡처에서 접근성 후보를 합쳐, Threads 같은 피드에서 스크롤로 새로 드러난 컨트롤이 `next` 재개 큐에서 사라지지 않게 했다. 각 후보가 나온 XML을 함께 출력한다.
+- 회귀 3건 추가: changed swipe 캡처 게이트, 스크롤 후보 병합, WDA swipe settle/flow 기록.
+
 ## [0.13.9] — 2026-08-15
 
 ### Changed — `/autobot:clone` 세션을 대상 앱에 바인딩하고, 모든 조작 앞에서 foreground 를 증명한다
