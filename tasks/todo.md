@@ -341,3 +341,38 @@
 - [x] 플러그인·Python·lock 버전을 0.13.10으로 정렬하고 changelog 확정
 - [x] 릴리스 메타데이터와 RemoteXPC 회귀 검증
 - [x] 의도한 0.13.10 릴리스 파일만 커밋 대상으로 확정
+
+---
+
+# clone RemoteXPC background launch 수정 — 2026-08-16
+
+## 목표와 수용 조건
+
+실기기 연구용 Threads clone에서 재현된 macOS `nohup: can't detach from console` 실패를 제거해 관리자 인증 후 RemoteXPC tunnel이 실제 registry에 게시되게 한다.
+
+- [x] 0.13.10 실기기 실패 로그와 성공한 최소 launch 차이를 재현한다.
+- [x] `nohup` detach 동작에 의존하지 않는 최소 background launch로 수정한다.
+- [x] 관리형 Appium 서버도 shell tool 종료 뒤 생존하도록 launchd 소유 프로세스로 시작한다.
+- [x] 캐시 sudo와 GUI 관리자 인증 fixture를 포함한 회귀 테스트를 통과한다.
+- [x] 실기기 `doctor`에서 대상 UDID tunnel readiness를 재검증한다.
+- [ ] 관련/전체 검증 후 feature branch를 push하고 PR을 연다.
+
+## Working Notes
+
+- 관찰: `/usr/bin/nohup ... &`는 관리자 `do shell script` 경로에서 `can't detach from console`로 즉시 종료했다.
+- 대조: 같은 완전 리다이렉트 background command에서 `nohup`만 제거하면 프로세스가 PID 1의 자식으로 유지되고 대상 UDID와 RSD 서비스 83개가 registry에 게시됐다.
+- 추가 관찰: WDA session 생성은 성공했지만 명령 프로세스 종료 직후 관리형 Appium PID와 포트 4723이 사라져 다음 `screen`이 active-app guard에서 중지됐다.
+- 추가 관찰: Threads 검색창은 요소 조회 직후 포커스/레이아웃이 바뀌며 첫 입력이 `stale element reference`로 거절됐다. 같은 accessibility id를 한 번만 재조회하는 복구 경로를 추가한다.
+- 추가 관찰: `device_wda.sh`가 `state`/`from_state`/`to_state`를 기록하지만 `device_flow.py`는 공식 `statekey` 필드만 허용해, 실제 Threads 로그의 `stats`/`map`이 1행부터 거절됐다. 생산자를 공식 필드로 정렬하고 WDA→flow 통합 회귀를 추가한다.
+- 재개 호환: 0.13.10이 이미 만든 세 underscored alias 로그는 reader가 canonical field로 정규화하되, 다른 비공식 alias와 alias/canonical 충돌은 계속 거절한다.
+- 화면 정체성: Threads는 커스텀 top bar 제목을 `Header` trait으로 내보내 표준 NavigationBar 제목만 보던 node/state key가 메시지↔설정, 홈↔검색을 충돌시켰다. 셀 내부 Header는 제외하고 screen-level Header만 landmark로 포함한다.
+- Threads 접근성 트리의 최상위 콘텐츠는 화면 전체 크기 AXCell로 감싸져 있다. 이를 목록 row로 취급하면 제목과 거의 모든 컨트롤이 데이터로 제거되므로, viewport의 90%×75% 이상인 cell은 구조 wrapper로 분류하고 실제 작은 row만 churn에서 제외한다.
+
+## Results
+
+- 구현: 관리자 shell의 RemoteXPC 시작은 BSD `nohup` detach에 의존하지 않는다. 관리형 Appium은 launchd job으로 명령 shell보다 오래 살고, `stop-server`가 job/PID/label을 함께 정리한다.
+- 구현: semantic type은 Appium의 `stale element reference`에만 target을 재확인한 뒤 동일 accessibility id를 한 번 재조회한다. flow 생산자는 공식 `statekey` 필드를 쓰며, 0.13.10 alias 로그는 reader가 충돌 없이 정규화한다.
+- 구현: full-screen AXCell wrapper와 custom Header를 구분해, 데이터 row churn을 흡수하면서 Threads의 홈·검색·메시지·설정을 서로 다른 node/state로 유지한다.
+- 실기기: RemoteXPC registry에 대상 UDID와 RSD 서비스 83개 게시, `doctor` 전체 통과, launchd Appium(PPID 1) 생존, Threads 검색 입력/결과 캡처를 확인했다. `quit` 후 `stop-server`가 실제 PID 56563과 session/PID/label 상태를 모두 정리했다. 이후 tunnel 종료 뒤 새 관리자 인증 시도는 승인되지 않아 bounded timeout으로 끝났으며 성공으로 위조하지 않았다.
+- 검증: clone/a11y 관련 142건, `verify_spec_docs.py`, `bash -n`, `uv lock --check`, `git diff --check` 통과. legacy bounded-start 회귀는 scheduling 여유 조정 후 3회 반복 통과했다.
+- 전체 suite: 1,197건 중 5건 실패. 이번 범위의 scheduling 2건(`device_wda` fake child, `make_port_kill` listener)은 단독 재실행에서 통과했다. 남은 3건은 Pillow 11.3에 `Image.get_flattened_data()`가 없어 발생하는 기존 `test_visual_contract.py` 실패다.

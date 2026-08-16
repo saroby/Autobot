@@ -77,7 +77,7 @@ sid="$(scripts/device_wda.sh session "$udid" "$bundle_id")"
 
 `device`를 먼저 실행해야 Xcode/CoreDevice 자동 복구와 기기 profile 생성이 선행된다. 그 다음 `doctor`가 Appium/xcuitest driver, Xcode·`devicectl`, 서명 team, 대상 기기·앱, iOS 18+ RemoteXPC tunnel, 빌드에 필요한 디스크 여유를 한 번에 점검한다. `device`가 성공하면 `.autobot/clone/device-profile.json`에 UDID·기기명·marketing name·product type·OS/build·연결 상태를 남기며 Step 6의 동일 기종 시뮬레이터 선택이 이를 사용한다.
 
-`session`은 로컬 `APPIUM_URL`이 응답하지 않으면 Appium을 자동 시작하고, 같은 UDID·bundle ID·서버의 살아 있는 세션이 있으면 `.autobot/clone/wda-session.json`에서 재사용한다. 자동 시작을 끄려면 `CLONE_AUTO_START_APPIUM=0`, 재사용을 끄려면 `CLONE_SESSION_REUSE=0`을 쓴다. 이 스크립트가 시작한 서버만 `scripts/device_wda.sh stop-server`로 종료할 수 있다. HTTP 병목을 계측할 때만 `CLONE_METRICS=1`을 켜며 원시 요청 시간은 `.autobot/clone/http-metrics.jsonl`에 남는다.
+`session`은 로컬 `APPIUM_URL`이 응답하지 않으면 Appium을 자동 시작하고, 같은 UDID·bundle ID·서버의 살아 있는 세션이 있으면 `.autobot/clone/wda-session.json`에서 재사용한다. 자동 시작 서버는 각 skill 명령의 shell이 끝난 뒤에도 유지되도록 현재 사용자의 launchd job이 소유하며, PID와 label을 `.autobot/clone/`에 기록한다. 자동 시작을 끄려면 `CLONE_AUTO_START_APPIUM=0`, 재사용을 끄려면 `CLONE_SESSION_REUSE=0`을 쓴다. 이 스크립트가 시작한 서버만 `scripts/device_wda.sh stop-server`로 종료할 수 있고, 이때 launchd job과 두 상태 파일을 함께 제거한다. HTTP 병목을 계측할 때만 `CLONE_METRICS=1`을 켜며 원시 요청 시간은 `.autobot/clone/http-metrics.jsonl`에 남는다.
 
 iOS 18+ 물리 기기는 CoreDevice의 `connected` 상태와 별도로 Appium xcuitest RemoteXPC tunnel이 필요하다. `doctor`와 `session`은 `http://127.0.0.1:42314/remotexpc/tunnels`에 **대상 UDID**가 있는지 먼저 확인한다. 이미 있으면 그대로 재사용하며 Xcode나 tunnel 프로세스를 다시 띄우지 않는다.
 

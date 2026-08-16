@@ -48,6 +48,7 @@ CLONE_STATE_DIR="${CLONE_STATE_DIR:-$PWD/.autobot/clone}"
 CLONE_SESSION_FILE="${CLONE_SESSION_FILE:-$CLONE_STATE_DIR/wda-session.json}"
 CLONE_DEVICE_PROFILE_FILE="${CLONE_DEVICE_PROFILE_FILE:-$CLONE_STATE_DIR/device-profile.json}"
 CLONE_APPIUM_PID_FILE="${CLONE_APPIUM_PID_FILE:-$CLONE_STATE_DIR/appium-server.pid}"
+CLONE_APPIUM_LABEL_FILE="${CLONE_APPIUM_LABEL_FILE:-$CLONE_STATE_DIR/appium-server.label}"
 CLONE_APPIUM_LOG="${CLONE_APPIUM_LOG:-$CLONE_STATE_DIR/appium-server.log}"
 CLONE_METRICS_LOG="${CLONE_METRICS_LOG:-$CLONE_STATE_DIR/http-metrics.jsonl}"
 CLONE_TUNNEL_REGISTRY_URL="${CLONE_TUNNEL_REGISTRY_URL:-http://127.0.0.1:42314/remotexpc/tunnels}"
@@ -269,12 +270,11 @@ _open_xcode_project_for_tunnel() {
 }
 
 _tunnel_launch_command() {
-  local udid="$1" port="$2" appium_bin node_bin nohup_bin appium_home launch_path user_home
+  local udid="$1" port="$2" appium_bin node_bin appium_home launch_path user_home
   appium_bin="$(command -v appium 2>/dev/null || true)"
   node_bin="$(command -v node 2>/dev/null || true)"
-  nohup_bin="$(command -v nohup 2>/dev/null || true)"
-  if [[ -z "$appium_bin" || -z "$node_bin" || -z "$nohup_bin" ]]; then
-    echo "ERROR: automatic RemoteXPC setup requires appium, node, and nohup on PATH" >&2
+  if [[ -z "$appium_bin" || -z "$node_bin" ]]; then
+    echo "ERROR: automatic RemoteXPC setup requires appium and node on PATH" >&2
     return 1
   fi
   appium_home="${APPIUM_HOME:-$HOME/.appium}"
@@ -285,17 +285,17 @@ _tunnel_launch_command() {
   python3 -c '
 import shlex, sys
 
-appium, nohup, path, appium_home, home, udid, port, retry_count, log = sys.argv[1:]
+appium, path, appium_home, home, udid, port, retry_count, log = sys.argv[1:]
 args = [
     "/usr/bin/env", "PATH=" + path, "APPIUM_HOME=" + appium_home, "HOME=" + home,
-    nohup, appium, "driver", "run", "xcuitest", "tunnel-creation", "--",
+    appium, "driver", "run", "xcuitest", "tunnel-creation", "--",
     "--udid", udid,
     "--tunnel-registry-port", port,
     "--disconnect-retry-max-attempts", retry_count,
 ]
 print(" ".join(shlex.quote(arg) for arg in args)
       + " >> " + shlex.quote(log) + " 2>&1 </dev/null &")
-' "$appium_bin" "$nohup_bin" "$launch_path" "$appium_home" "$user_home" "$udid" "$port" \
+' "$appium_bin" "$launch_path" "$appium_home" "$user_home" "$udid" "$port" \
     "${CLONE_TUNNEL_RETRY_MAX_ATTEMPTS:-0}" "$CLONE_TUNNEL_LOG"
 }
 
@@ -656,6 +656,84 @@ _remove_managed_pid() {
   return 0
 }
 
+_managed_appium_label() {
+  local label=""
+  [[ -r "$CLONE_APPIUM_LABEL_FILE" ]] && read -r label <"$CLONE_APPIUM_LABEL_FILE" || true
+  [[ "$label" =~ ^com\.autobot\.clone\.appium\.[0-9]+\.[0-9]+$ ]] && printf '%s' "$label"
+}
+
+_remove_managed_appium_job() {
+  local label launchctl_bin
+  label="$(_managed_appium_label || true)"
+  if [[ -n "$label" ]]; then
+    launchctl_bin="${CLONE_LAUNCHCTL_BIN:-$(command -v launchctl 2>/dev/null || true)}"
+    [[ -n "$launchctl_bin" ]] && "$launchctl_bin" remove "$label" >/dev/null 2>&1 || true
+  fi
+  rm -f "$CLONE_APPIUM_LABEL_FILE"
+}
+
+_launchctl_job_pid() {
+  local launchctl_bin="$1" label="$2"
+  "$launchctl_bin" print "gui/$(id -u)/$label" 2>/dev/null \
+    | awk '$1 == "pid" && $2 == "=" { print $3; exit }'
+}
+
+_start_managed_appium_server() {
+  local host="$1" port="$2" base_path="$3"
+  local appium_bin node_bin appium_home launch_path launchctl_bin label pid="" i=0
+  local pid_tmp label_tmp
+  mkdir -p "$CLONE_STATE_DIR" "$(dirname "$CLONE_APPIUM_PID_FILE")" \
+    "$(dirname "$CLONE_APPIUM_LABEL_FILE")" "$(dirname "$CLONE_APPIUM_LOG")"
+  appium_bin="$(command -v appium 2>/dev/null || true)"
+  node_bin="$(command -v node 2>/dev/null || true)"
+  if [[ -z "$appium_bin" || -z "$node_bin" ]]; then
+    echo "ERROR: managed Appium startup requires appium and node on PATH" >&2
+    return 1
+  fi
+  local server_cmd=("$appium_bin" server --address "$host" --port "$port")
+  [[ -n "$base_path" ]] && server_cmd+=(--base-path "$base_path")
+
+  if [[ "${CLONE_APPIUM_USE_LAUNCHCTL:-1}" != "0" ]]; then
+    launchctl_bin="${CLONE_LAUNCHCTL_BIN:-$(command -v launchctl 2>/dev/null || true)}"
+    if [[ -z "$launchctl_bin" ]]; then
+      echo "ERROR: managed Appium startup requires launchctl; set CLONE_AUTO_START_APPIUM=0 and start Appium explicitly" >&2
+      return 1
+    fi
+    label="com.autobot.clone.appium.${port}.$$"
+    label_tmp="$CLONE_APPIUM_LABEL_FILE.tmp.$$"
+    printf '%s\n' "$label" >"$label_tmp"
+    mv "$label_tmp" "$CLONE_APPIUM_LABEL_FILE"
+    appium_home="${APPIUM_HOME:-${HOME}/.appium}"
+    launch_path="$(dirname "$node_bin"):$(dirname "$appium_bin"):/usr/bin:/bin:/usr/sbin:/sbin"
+    if ! "$launchctl_bin" submit -l "$label" -o "$CLONE_APPIUM_LOG" -e "$CLONE_APPIUM_LOG" -- \
+      /usr/bin/env "PATH=$launch_path" "APPIUM_HOME=$appium_home" "HOME=${HOME}" "${server_cmd[@]}"; then
+      rm -f "$CLONE_APPIUM_LABEL_FILE"
+      echo "ERROR: launchctl could not submit managed Appium job $label" >&2
+      return 1
+    fi
+    while [[ "$i" -lt 20 ]]; do
+      pid="$(_launchctl_job_pid "$launchctl_bin" "$label" || true)"
+      [[ "$pid" =~ ^[0-9]+$ ]] && break
+      sleep 0.05
+      i=$((i + 1))
+    done
+    if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+      "$launchctl_bin" remove "$label" >/dev/null 2>&1 || true
+      rm -f "$CLONE_APPIUM_LABEL_FILE"
+      echo "ERROR: launchctl submitted $label but did not publish its pid" >&2
+      return 1
+    fi
+  else
+    nohup "${server_cmd[@]}" >"$CLONE_APPIUM_LOG" 2>&1 </dev/null &
+    pid=$!
+  fi
+
+  pid_tmp="$CLONE_APPIUM_PID_FILE.tmp.$$"
+  printf '%s\n' "$pid" >"$pid_tmp"
+  mv "$pid_tmp" "$CLONE_APPIUM_PID_FILE"
+  printf '%s' "$pid"
+}
+
 _wait_for_appium() {
   local pid="${1:-}" tries="${CLONE_APPIUM_START_TRIES:-30}"
   local interval="${CLONE_APPIUM_POLL_INTERVAL:-1}" i=0
@@ -690,7 +768,8 @@ _ensure_appium() {
     return 1
   fi
 
-  mkdir -p "$CLONE_STATE_DIR" "$(dirname "$CLONE_APPIUM_PID_FILE")" "$(dirname "$CLONE_APPIUM_LOG")"
+  mkdir -p "$CLONE_STATE_DIR" "$(dirname "$CLONE_APPIUM_PID_FILE")" \
+    "$(dirname "$CLONE_APPIUM_LABEL_FILE")" "$(dirname "$CLONE_APPIUM_LOG")"
   local pid endpoint host port base_path lock="$CLONE_APPIUM_PID_FILE.lock"
   pid="$(_managed_appium_pid || true)"
   if [[ -n "$pid" && -e "$CLONE_APPIUM_PID_FILE" ]]; then
@@ -700,6 +779,7 @@ _ensure_appium() {
       echo "ERROR: managed Appium process $pid did not become ready at $APPIUM_URL — inspect $CLONE_APPIUM_LOG" >&2
       return 1
     fi
+    _remove_managed_appium_job
     _remove_managed_pid "$pid"
   fi
 
@@ -742,17 +822,15 @@ _ensure_appium() {
     return 1
   fi
 
-  local server_cmd=(appium server --address "$host" --port "$port")
-  [[ -n "$base_path" ]] && server_cmd+=(--base-path "$base_path")
-  nohup "${server_cmd[@]}" >"$CLONE_APPIUM_LOG" 2>&1 </dev/null &
-  pid=$!
-  local pid_tmp="$CLONE_APPIUM_PID_FILE.tmp.$$"
-  printf '%s\n' "$pid" >"$pid_tmp"
-  mv "$pid_tmp" "$CLONE_APPIUM_PID_FILE"
+  if ! pid="$(_start_managed_appium_server "$host" "$port" "$base_path")"; then
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  fi
   rmdir "$lock" 2>/dev/null || true
   echo "INFO: started managed Appium server pid $pid; log $CLONE_APPIUM_LOG" >&2
   if _wait_for_appium "$pid"; then return 0; fi
 
+  _remove_managed_appium_job
   if kill -0 "$pid" 2>/dev/null; then
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -763,13 +841,20 @@ _ensure_appium() {
 }
 
 cmd_stop_server() {
-  local pid process_command tries="${CLONE_APPIUM_STOP_TRIES:-20}" i=0
+  local pid label process_command tries="${CLONE_APPIUM_STOP_TRIES:-20}" i=0
   pid="$(_managed_appium_pid || true)"
+  label="$(_managed_appium_label || true)"
   if [[ -z "$pid" ]]; then
+    if [[ -n "$label" ]]; then
+      _remove_managed_appium_job
+      echo "OK: stopped managed Appium job $label"
+      return 0
+    fi
     echo "INFO: no Appium server managed by device_wda.sh"
     return 0
   fi
   if ! kill -0 "$pid" 2>/dev/null; then
+    _remove_managed_appium_job
     _remove_managed_pid "$pid"
     echo "INFO: removed stale managed Appium pid $pid"
     return 0
@@ -782,7 +867,11 @@ cmd_stop_server() {
       return 1
       ;;
   esac
-  kill "$pid" 2>/dev/null || true
+  if [[ -n "$label" ]]; then
+    _remove_managed_appium_job
+  else
+    kill "$pid" 2>/dev/null || true
+  fi
   [[ "$tries" =~ ^[0-9]+$ ]] || tries=20
   while kill -0 "$pid" 2>/dev/null && [[ "$i" -lt "$tries" ]]; do
     sleep 0.25
@@ -916,7 +1005,7 @@ open(sys.argv[1], 'w', encoding='utf-8').write(json.load(sys.stdin)['value'])" "
   key="$(_key_of "$xml" || true)"
   if [[ -n "$key" ]]; then
     echo "INFO: nodekey $key"
-    _flow_event screen "node=$key" "state=$(_state_of "$xml")" \
+    _flow_event screen "node=$key" "statekey=$(_state_of "$xml")" \
       "sig=$(_sig_of "$xml")" "name=$name" "tree=$xml" "png=$png"
   fi
   echo "OK: captured $png + $xml"
@@ -1085,7 +1174,7 @@ _record_tap_transition() {
   local x="$1" y="$2"
   shift 2
   _flow_event tap "from=${_TAP_FROM_KEY:-?}" "to=${_TAP_TO_KEY:-?}" \
-    "from_state=${_TAP_FROM_STATE:-?}" "to_state=${_TAP_TO_STATE:-?}" \
+    "from_statekey=${_TAP_FROM_STATE:-?}" "to_statekey=${_TAP_TO_STATE:-?}" \
     "behavior=${_TAP_BEHAVIOR:-?}" "label=${_TAP_LABEL:-?}" \
     "x=$x" "y=$y" "changed=${_TAP_CHANGED:-false}" "$@"
 }
@@ -1162,44 +1251,71 @@ cmd_step() {
   fi
 
   _record_tap_transition "$x" "$y" "tree=$xml" "png=$png" "evidence=durable" "via=step"
-  _flow_event screen "node=${_TAP_TO_KEY:-?}" "state=${_TAP_TO_STATE:-?}" "sig=${_TAP_TO_SIG:-?}" \
+  _flow_event screen "node=${_TAP_TO_KEY:-?}" "statekey=${_TAP_TO_STATE:-?}" "sig=${_TAP_TO_SIG:-?}" \
     "name=$name" "tree=$xml" "png=$png" "via=step"
   echo "OK: tapped $x,$y${_TAP_LABEL:+ ($_TAP_LABEL)} and captured $png + $xml"
   [[ "$_TAP_CHANGED" == true ]] || echo "INFO: screen did not change — durable evidence records the no-op destination"
 }
 
 cmd_type() {
-  local sid="${1:-}" accessibility_id="${2:-}" text="${3:-}" response element
+  local sid="${1:-}" accessibility_id="${2:-}" text="${3:-}" response element type_response error attempt=1
   if [[ -z "$sid" || -z "$accessibility_id" || -z "$text" ]]; then
     echo "ERROR: usage: device_wda.sh type <sid> <accessibility_id> <text>" >&2
     echo "ERROR:   use a unique accessibility id from the current Appium accessibility tree; never log secrets." >&2
     return 1
   fi
   _assert_target "$sid" || return 1
-  response="$(_curl -X POST "$APPIUM_URL/session/$sid/element" \
-    -H 'Content-Type: application/json' \
-    -d "$(python3 -c 'import json, sys; print(json.dumps({"using":"accessibility id", "value":sys.argv[1]}))' "$accessibility_id")")" || {
-      echo "ERROR: accessibility id '$accessibility_id' was not found" >&2
-      return 1
-    }
-  element="$(python3 -c '
+  while (( attempt <= 2 )); do
+    response="$(_curl -X POST "$APPIUM_URL/session/$sid/element" \
+      -H 'Content-Type: application/json' \
+      -d "$(python3 -c 'import json, sys; print(json.dumps({"using":"accessibility id", "value":sys.argv[1]}))' "$accessibility_id")")" || {
+        echo "ERROR: accessibility id '$accessibility_id' was not found" >&2
+        return 1
+      }
+    element="$(python3 -c '
 import json, sys
 value = json.load(sys.stdin).get("value", {})
 if isinstance(value, dict):
     print(value.get("element-6066-11e4-a52e-4f735466cecf") or value.get("ELEMENT") or "")
 ' <<<"$response")"
-  if [[ -z "$element" ]]; then
-    echo "ERROR: Appium returned no element for accessibility id '$accessibility_id'" >&2
-    return 1
-  fi
-  _curl -X POST "$APPIUM_URL/session/$sid/element/$element/value" \
-    -H 'Content-Type: application/json' \
-    -d "$(python3 -c 'import json, sys; print(json.dumps({"text":sys.argv[1]}))' "$text")" >/dev/null || {
+    if [[ -z "$element" ]]; then
+      echo "ERROR: Appium returned no element for accessibility id '$accessibility_id'" >&2
+      return 1
+    fi
+
+    # Finding a text field can focus or re-layout the view. XCUITest then rejects
+    # the bound element as stale even though the same accessibility id is still
+    # present. Keep the response body so we can retry that one recoverable error
+    # once without hiding transport failures or retrying arbitrary input errors.
+    type_response="$(_curl_keep_body -X POST "$APPIUM_URL/session/$sid/element/$element/value" \
+      -H 'Content-Type: application/json' \
+      -d "$(python3 -c 'import json, sys; print(json.dumps({"text":sys.argv[1]}))' "$text")")" || {
       echo "ERROR: Appium could not type into '$accessibility_id'" >&2
       return 1
     }
-  _flow_event input "label=$accessibility_id" "length=${#text}"
-  echo "OK: typed ${#text} characters into $accessibility_id"
+    error="$(python3 -c '
+import json, sys
+try:
+    value = json.load(sys.stdin).get("value", {})
+except ValueError:
+    print("invalid response")
+else:
+    print(value.get("error", "") if isinstance(value, dict) else "")
+' <<<"$type_response")"
+    if [[ -z "$error" ]]; then
+      _flow_event input "label=$accessibility_id" "length=${#text}"
+      echo "OK: typed ${#text} characters into $accessibility_id"
+      return 0
+    fi
+    if [[ "$error" == "stale element reference" && "$attempt" == "1" ]]; then
+      echo "INFO: text field changed while binding; re-finding '$accessibility_id' once" >&2
+      _assert_target "$sid" || return 1
+      attempt=2
+      continue
+    fi
+    echo "ERROR: Appium could not type into '$accessibility_id' ($error)" >&2
+    return 1
+  done
 }
 
 cmd_swipe() {
@@ -1235,7 +1351,7 @@ cmd_swipe() {
   to_key="$(_key_of "$after_tree" 2>/dev/null || true)"
   to_state="$(_state_of "$after_tree" 2>/dev/null || true)"
   _flow_event swipe "from=${from_key:-?}" "to=${to_key:-?}" \
-              "from_state=${from_state:-?}" "to_state=${to_state:-?}" \
+              "from_statekey=${from_state:-?}" "to_statekey=${to_state:-?}" \
               "x1=$x1" "y1=$y1" "x2=$x2" "y2=$y2" "changed=$changed"
   rm -f "$before_tree" "$after_tree"
   echo "OK: swiped $x1,$y1 -> $x2,$y2"

@@ -1,5 +1,17 @@
 # Lessons — Autobot 구조 개선 (2026-04-27)
 
+## 2026-08-16 RemoteXPC 관리자 background launch
+
+- **실패 모드**: macOS 관리자 `do shell script` 안에서 `/usr/bin/nohup ... &`를 실행하자 `nohup: can't detach from console`로 종료되어, 인증은 성공했지만 tunnel 프로세스가 시작되지 않았다.
+- **검출 신호**: `doctor`의 나머지 gate는 통과하고 `remotexpc-tunnel.log`에는 해당 한 줄만 반복되며 포트 42314 listener와 target UDID registry가 없다.
+- **방지 규칙**: 완전 리다이렉트한 비대화형 background shell은 별도 `nohup`에 의존하지 않는다. 회귀 fixture는 PATH의 `nohup`이 실패하더라도 Appium tunnel launch가 실행되고 target registry readiness까지 확인해야 한다.
+
+## 2026-08-16 관리형 Appium은 호출 shell보다 오래 살아야 한다
+
+- **실패 모드**: `session` 명령 안에서 `nohup appium server ... &`로 시작한 서버가 WDA session 생성까지는 살아 있었지만 shell tool 종료와 함께 사라져, 다음 `screen` 명령이 포트 4723 연결 실패로 중지됐다.
+- **검출 신호**: session 응답과 WDA build는 성공했는데 저장된 PID는 즉시 stale이고 Appium 로그에는 정상 종료 기록 없이 마지막 POST `/session`만 남았다.
+- **방지 규칙**: 여러 skill 명령 사이에서 재사용할 관리형 서버는 호출 shell의 process group이 아니라 launchd가 소유하게 한다. PID뿐 아니라 launchctl label을 기록하고 `stop-server`가 그 job을 명시적으로 제거한다.
+
 ## 2026-08-15 장시간 전체 테스트 추적
 
 - **실패 모드**: `tests/run_tests.sh`가 출력 없이 계속 실행 중인데 완료 여부를 확인하려고 같은 전체 suite를 두 번 더 시작했다.
@@ -396,3 +408,10 @@
 - 실패 모드: SHA 변수로 두 ref를 원자 push하면서 `$source_sha:refs/heads/main`을 사용하자 zsh가 콜론 뒤를 변수 modifier처럼 해석해 refspec이 `<sha>efs/heads/main`으로 훼손됐다. 원격은 두 ref를 모두 거부해 변경은 없었다.
 - 검출 신호: push 오류의 src refspec에 원래 있어야 할 `:r`이 사라졌고, push 전 출력한 live ref는 그대로였다.
 - 예방 규칙: 변수와 refspec을 연결할 때는 항상 `${source_sha}:refs/heads/<branch>`처럼 중괄호로 변수 경계를 고정한다. 실패 후에는 원격이 일부라도 바뀌었다고 추정하지 말고 `ls-remote`로 두 ref를 다시 읽는다.
+- 2026-08-16: XCUITest 텍스트 필드는 `findElement`가 포커스/레이아웃 변화를 유발해 바로 다음 `setValue`에서 stale이 될 수 있다. 입력 명령은 Appium 오류 본문을 보존하고 `stale element reference`에 한해 동일 semantic locator를 한 번만 재조회한다. 임의 입력 오류를 무제한 재시도하지 않는다.
+- 2026-08-16: 단일 unittest를 실행할 때 클래스 소속과 메서드 이름을 추정해 `_FailedTest`가 반복됐다. `rg -n '^class |def test_'` 결과에서 정확한 두 이름을 복사한 뒤 fully qualified test name을 구성한다.
+- 2026-08-16: flow parser만 공식 `statekey` 계약을 검사하고 이벤트 생산자의 실제 필드명을 통합 테스트하지 않아, 실기기 로그가 생성되지만 즉시 읽을 수 없는 상태가 배포됐다. 생산자 회귀는 이벤트 키 assertion에 더해 동일 로그를 `device_flow.py stats`에 실제 전달해 소비자 수용까지 검증한다.
+- 2026-08-16: 종료 테스트에서 Python이 소유한 child를 shell이 kill하면 부모가 reap하기 전 zombie에도 `kill -0`이 성공해 bounded stop이 실패했다. launchd의 즉시 reaping을 재현하도록 fixture 부모에 wait thread를 두고, 제품 종료 로직과 테스트 소유권 차이를 혼동하지 않는다.
+- 2026-08-16: role count와 AXNavigationBar 제목만으로 화면 identity를 만들면 커스텀 top bar의 Threads 메시지/설정처럼 구조가 같은 별도 route가 충돌한다. 셀 밖의 Header/Heading trait은 안정적인 화면 landmark로 포함하고, 동적 목록 행 안의 Header는 제외해 데이터 churn 흡수 규칙을 유지한다.
+- 2026-08-16: AXCell은 항상 반복 데이터 row가 아니다. Threads처럼 전체 viewport를 감싸는 collection cell도 있으므로, 크기와 viewport 비율로 structural wrapper를 제외한 뒤에만 cell-descendant를 동적 데이터로 취급한다.
+- 2026-08-16: JSONL 일회성 rekey 명령에서 shell/Python 이중 escaping으로 줄바꿈 대신 문자 `\\n`을 기록해 `Extra data`가 났다. 변환 전 원본을 백업하고 원자 교체하며, inline Python에서는 `chr(10)`처럼 escaping 경계가 없는 줄 구분자를 사용한 뒤 reader로 즉시 재검증한다.

@@ -215,13 +215,34 @@ class TestStateIdentity(FlowCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("both from_statekey and to_statekey", result.stderr)
 
-    def test_unofficial_state_aliases_are_rejected(self):
+    def test_released_state_aliases_are_canonicalized_for_resume(self):
         event = self.screen()
         event["state"] = "home-focused"
+        self.write([
+            event,
+            {"type": "tap", "from": "n1", "to": "n1",
+             "from_state": "home-focused", "to_state": "home-focused",
+             "label": "가", "x": "50", "y": "120", "changed": "false"},
+        ])
+        result = self.run_flow("stats", str(self.log))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("screens 1", result.stdout)
+
+    def test_unofficial_state_aliases_are_rejected(self):
+        event = self.screen()
+        event["state_key"] = "home-focused"
         self.write([event])
         result = self.run_flow("stats", str(self.log))
         self.assertEqual(result.returncode, 1)
         self.assertIn("use statekey/from_statekey/to_statekey", result.stderr)
+
+    def test_alias_and_canonical_state_conflict_is_rejected(self):
+        event = self.screen(statekey="home-focused")
+        event["state"] = "other-state"
+        self.write([event])
+        result = self.run_flow("stats", str(self.log))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("conflicting state fields state and statekey", result.stderr)
 
     def test_legacy_node_from_to_logs_remain_supported(self):
         self.write([
