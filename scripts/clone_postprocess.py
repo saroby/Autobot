@@ -188,6 +188,23 @@ def evidence_markdown(
             f"{_escape_cell('; '.join(bit for bit in layout_bits if bit))} | "
             f"{_escape_cell(colors)} |"
         )
+    uncovered = measurement.get("uncoveredRegions") or []
+    lines.extend(["", "## Uncovered regions", ""])
+    if uncovered:
+        lines.append(
+            "Non-background areas no measured element covers — content the chrome "
+            "filter may have dropped. Check each against the screenshot BEFORE "
+            "writing the spec; a missing element here becomes a missing element "
+            "in the reproduction."
+        )
+        lines.append("")
+        lines.extend(
+            f"- ({region.get('x')}, {region.get('y')}) "
+            f"{region.get('width')} × {region.get('height')} pt"
+            for region in uncovered
+        )
+    else:
+        lines.append("- None — every visible region is covered by a measured element.")
     lines.extend(["", "## Unmeasurable", ""])
     unmeasurable = measurement.get("unmeasurable") or []
     if unmeasurable:

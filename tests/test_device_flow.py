@@ -340,6 +340,63 @@ class TestCoverage(FlowCase):
         self.assertIn("incomplete", r.stdout)
 
 
+class TestTodo(FlowCase):
+    """`todo` feeds `device_wda.sh explore`: coordinates must come from the
+    given capture, done work must not be re-offered, withheld never offered."""
+
+    def _state(self) -> str:
+        return DEVICE_FLOW._statekey_of(str(self.tree))
+
+    def _tap(self, state: str, label: str, x: int, y: int) -> dict:
+        return {"type": "tap", "from": "n1", "to": "n2",
+                "from_statekey": state, "to_statekey": "elsewhere",
+                "label": label, "x": str(x), "y": str(y), "changed": "true"}
+
+    def test_todo_lists_only_unexplored_candidates_of_this_capture(self):
+        state = self._state()
+        self.write([self.screen(statekey=state), self._tap(state, "가", 50, 120)])
+        r = self.run_flow("todo", str(self.log), str(self.tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertNotIn("| 가", r.stdout)
+        self.assertIn("INFO: todo 50 220 | 나", r.stdout)
+
+    def test_todo_reports_a_drained_capture(self):
+        state = self._state()
+        self.write([self.screen(statekey=state),
+                    self._tap(state, "가", 50, 120), self._tap(state, "나", 50, 220)])
+        r = self.run_flow("todo", str(self.log), str(self.tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertNotIn("INFO: todo", r.stdout)
+        self.assertIn("OK: 0 unexplored", r.stdout)
+
+    def test_todo_never_offers_withheld_targets(self):
+        tree = self.dir / "with-follow.xml"
+        tree.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
+            '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+            ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="가" name="가" enabled="true"'
+            ' visible="true" x="0" y="100" width="100" height="40"/>'
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="팔로우" name="팔로우"'
+            ' enabled="true" visible="true" x="0" y="200" width="100" height="40"/>'
+            '</XCUIElementTypeApplication></AppiumAUT>',
+            encoding="utf-8",
+        )
+        state = DEVICE_FLOW._statekey_of(str(tree))
+        self.write([{"type": "screen", "node": "n1", "sig": "s1", "name": "01-home",
+                     "statekey": state, "tree": str(tree), "png": ""}])
+        r = self.run_flow("todo", str(self.log), str(tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("| 가", r.stdout)
+        self.assertNotIn("팔로우", r.stdout)
+
+    def test_todo_requires_an_existing_tree(self):
+        self.write([self.screen()])
+        r = self.run_flow("todo", str(self.log), str(self.dir / "missing.xml"))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no such tree", r.stderr)
+
+
 class TestMap(FlowCase):
     def test_the_map_names_what_was_not_explored(self):
         self.write([self.screen()])

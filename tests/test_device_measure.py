@@ -35,6 +35,30 @@ def png_bytes(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
             + chunk(b"IEND", b""))
 
 
+def png_with_patch(width: int, height: int, background: tuple[int, int, int],
+                   patch: tuple[int, int, int],
+                   rect: tuple[int, int, int, int]) -> bytes:
+    """Single-color PNG with one rectangular patch of another color."""
+    px, py, pw, ph = rect
+
+    def row(y: int) -> bytes:
+        if py <= y < py + ph:
+            return (b"\x00" + bytes(background) * px + bytes(patch) * pw
+                    + bytes(background) * (width - px - pw))
+        return b"\x00" + bytes(background) * width
+
+    raw = b"".join(row(y) for y in range(height))
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw))
+            + chunk(b"IEND", b""))
+
+
 def tree_xml(inner: str, w: int = 375, h: int = 812) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
@@ -253,6 +277,40 @@ class TestScreenNoise(unittest.TestCase):
         # WDA reports two windows per screen, so every element arrives duplicated.
         d = measure(node("Cell", "일기", 16, 442, 343, 53) * 2)
         self.assertEqual([e["label"] for e in d["elements"]].count("일기"), 1)
+
+
+class TestUncoveredRegions(unittest.TestCase):
+    """The dominant clone failure is a missing element; a visible area no
+    measured frame covers must surface as a warning, not stay silent."""
+
+    BG = (255, 255, 255)
+    INK = (30, 90, 200)
+
+    def test_visible_content_without_an_element_is_flagged(self):
+        image = png_with_patch(375, 812, self.BG, self.INK, (100, 400, 64, 64))
+        d = measure(node("Button", "계속", 0, 100, 100, 40), image)
+        regions = d["uncoveredRegions"]
+        self.assertEqual(len(regions), 1, msg=str(regions))
+        region = regions[0]
+        self.assertTrue(80 <= region["x"] <= 110 and 380 <= region["y"] <= 410,
+                        msg=str(region))
+
+    def test_a_measured_element_covering_the_patch_clears_the_flag(self):
+        image = png_with_patch(375, 812, self.BG, self.INK, (100, 400, 64, 64))
+        d = measure(node("Other", "카드", 96, 396, 72, 72), image)
+        self.assertEqual(d["uncoveredRegions"], [])
+
+    def test_uniform_background_reports_nothing(self):
+        d = measure(node("Button", "계속", 0, 100, 100, 40),
+                    png_bytes(375, 812, self.BG))
+        self.assertEqual(d["uncoveredRegions"], [])
+
+    def test_system_chrome_bands_are_ignored(self):
+        # Status bar content (top 7%) has no tree elements on most screens and
+        # must not flag every capture.
+        image = png_with_patch(375, 812, self.BG, self.INK, (100, 8, 64, 32))
+        d = measure(node("Button", "계속", 0, 100, 100, 40), image)
+        self.assertEqual(d["uncoveredRegions"], [])
 
 
 class TestHonesty(unittest.TestCase):

@@ -65,7 +65,7 @@ sid="$(scripts/device_wda.sh session "$udid" "$bundle_id")"
 
 `device`를 먼저 실행해야 Xcode/CoreDevice 자동 복구와 기기 profile 생성이 선행된다. 그 다음 `doctor`가 Appium/xcuitest driver, Xcode·`devicectl`, 서명 team, 대상 기기·앱, iOS 18+ RemoteXPC tunnel, 빌드에 필요한 디스크 여유를 한 번에 점검한다. `device`가 성공하면 `.autobot/clone/device-profile.json`에 UDID·기기명·marketing name·product type·OS/build·연결 상태를 남기며 Step 6의 동일 기종 시뮬레이터 선택이 이를 사용한다.
 
-`session`은 로컬 `APPIUM_URL`이 응답하지 않으면 Appium을 자동 시작하고, 같은 UDID·bundle ID·서버의 살아 있는 세션이 있으면 `.autobot/clone/wda-session.json`에서 재사용한다. 자동 시작을 끄려면 `CLONE_AUTO_START_APPIUM=0`, 재사용을 끄려면 `CLONE_SESSION_REUSE=0`을 쓴다. 이 스크립트가 시작한 서버만 `scripts/device_wda.sh stop-server`로 종료할 수 있다. HTTP 병목을 계측할 때만 `CLONE_METRICS=1`을 켜며 원시 요청 시간은 `.autobot/clone/http-metrics.jsonl`에 남는다.
+`session`은 로컬 `APPIUM_URL`이 응답하지 않으면 Appium을 자동 시작하고, 같은 UDID·bundle ID·서버의 살아 있는 세션이 있으면 `.autobot/clone/wda-session.json`에서 재사용한다. 자동 시작을 끄려면 `CLONE_AUTO_START_APPIUM=0`, 재사용을 끄려면 `CLONE_SESSION_REUSE=0`을 쓴다. 새 세션과 재사용 세션 모두에 성능 설정을 적용한다 — `waitForIdleTimeout=0`·`animationCoolOffTimeout=0` (clone 은 자체 settle 루프로 안정화를 판정하므로 WDA 의 idle/애니메이션 대기는 이중 대기다). 대상 앱이 idle 대기 없이 오동작하면 `CLONE_WDA_IDLE_TIMEOUT`/`CLONE_WDA_ANIM_COOLOFF`(초)로 되돌리고, 트리가 너무 커서 `/source` 가 타임아웃할 때만 `CLONE_WDA_SNAPSHOT_MAX_DEPTH` 를 쓴다(기본은 미전송 — 얕은 스냅샷은 측정이 의존하는 깊은 트리를 잘라낸다). `CLONE_WDA_TUNE=0` 으로 전체 비활성화한다. 설정 적용 실패는 경고만 남기고 세션을 막지 않는다. 이 스크립트가 시작한 서버만 `scripts/device_wda.sh stop-server`로 종료할 수 있다. HTTP 병목을 계측할 때만 `CLONE_METRICS=1`을 켜며 원시 요청 시간은 `.autobot/clone/http-metrics.jsonl`에 남는다.
 
 iOS 18+ 물리 기기는 CoreDevice의 `connected` 상태와 별도로 Appium xcuitest RemoteXPC tunnel이 필요하다. `doctor`와 `session`은 `http://127.0.0.1:42314/remotexpc/tunnels`에 **대상 UDID**가 있는지 먼저 확인한다. 이미 있으면 그대로 재사용하며 Xcode나 tunnel 프로세스를 다시 띄우지 않는다.
 
@@ -86,18 +86,23 @@ macOS TUN 인터페이스 생성에는 관리자 권한이 필요하다. 캐시�
 **화면 하나를 골라 재현하지 않는다.** 앱 전체를 훑어 화면과 그 사이 전이를 먼저 모으고, 그 지도를 본 뒤에 재현할 화면을 고른다. 맥락 없이 복제한 화면은 껍데기다.
 
 ```bash
+# 기본 경로: 현재 화면부터 안전 frontier를 기계적으로 소진한다 — 탭마다 사람이
+# 개입하지 않는다. 변경 탭은 도착 화면에서 이어가고(뒤로가기도 후보이므로 스스로
+# 돌아온다), 모든 탭은 step과 같은 가드(후보 출처·fresh sig·foreground)를 거치며
+# withheld 는 절대 탭하지 않는다. 화면 소진·max steps·가드 발동에서 멈춘다.
+scripts/device_wda.sh explore "$sid" .autobot/clone/raw 20
+scripts/device_flow.py next .autobot/clone/flow.jsonl    # 다음 frontier가 있는 화면
+# 거기로 이동(탭/뒤로가기)한 뒤 explore 를 다시 실행한다. 수동 경로는 진단·이동용:
 scripts/device_wda.sh screen "$sid" .autobot/clone/raw <NN>-<screen>
 scripts/device_wda.sh candidates .autobot/clone/raw/<NN>-<screen>.xml
-# 권장: 탭 + settle + 도착 PNG/XML + flow 기록을 한 번에 원자적으로 완료
 scripts/device_wda.sh step "$sid" <x> <y> \
   .autobot/clone/raw/<NN>-<screen>.xml .autobot/clone/raw <NN>-<destination>
 scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow에 기록하지 않음
-scripts/device_flow.py next .autobot/clone/flow.jsonl    # 아직 안 가본 곳
 ```
 
 탐험 규율·STOP 조건은 `autobot-copy-analyze` Step 3 과 **동일하며 같은 코드가 강제한다** — 접근성 트리를 먼저 읽고 semantic text input을 사용하며, 좌표 탭은 후보·현재 화면 서명이 일치할 때만 허용한다. 파괴적 라벨은 후보에서 제외하고, 모달이면 후보 0개로 중지한다. clone 에서 달라지는 건 셋:
 
-**① 전이가 자동으로 기록된다.** `screen`·`step`·`tap`·`swipe`가 `.autobot/clone/flow.jsonl` 에 한 줄씩 남긴다 — 손으로 적는 게 아니다. 기본 경로는 `step`이다. 탭, settle에 사용한 최종 XML 재사용, 도착 스크린샷, 원자적 파일 교체, 전이·화면 이벤트 기록을 한 명령으로 닫아 추가 `/source` 왕복과 캡처 누락을 없앤다. 저수준 `tap`은 디버깅용으로만 두며, `changed=true`인데 별도 `screen`이 없으면 여전히 `incomplete`다. 끝내 바뀌지 않은 동작도 `changed=false`로 기록한다.
+**① 전이가 자동으로 기록된다.** `explore`·`screen`·`step`·`tap`·`swipe`가 `.autobot/clone/flow.jsonl` 에 한 줄씩 남긴다 — 손으로 적는 게 아니다. 기본 경로는 `explore`(내부적으로 `step` 반복)이고, 개별 탭은 `step`이다. 탭, settle에 사용한 최종 XML 재사용, 도착 스크린샷, 원자적 파일 교체, 전이·화면 이벤트 기록을 한 명령으로 닫아 추가 `/source` 왕복과 캡처 누락을 없앤다. 저수준 `tap`은 디버깅용으로만 두며, `changed=true`인데 별도 `screen`이 없으면 여전히 `incomplete`다. 끝내 바뀌지 않은 동작도 `changed=false`로 기록한다.
 
 **② 화면 정체성은 세 층이다.** `sig`(라벨 집합 해시)는 stale-coordinate 탭 가드, `node`/`nodekey`는 데이터 변화·스크롤을 흡수하는 coarse 구조, `state`/`statekey`는 키보드·포커스·선택·모달을 포함하는 상호작용 상태다. flow와 생성 라우터는 `state`를 우선하고 옛 로그의 `node`로 fallback한다. 같은 coarse node라도 검색 포커스 전후는 다른 상태이므로 기능 복제에서 사라지지 않는다.
 
@@ -150,6 +155,7 @@ python3 scripts/clone_postprocess.py .autobot/clone --workers 4 \
 - **기하** — 각 요소의 x·y·width·height(pt), 부모 대비 상대 위치, 형제 간 간격. 여기서 **패딩·스택 간격**이 그대로 나온다.
 - **색** — 모서리에서 `background`, 컨트롤 내부 격자의 최빈값에서 `fill`, 텍스트는 배경과 대비가 가장 큰 픽셀에서 `foreground`. 세 개가 다 필요하다: FAB 의 파란 fill 은 모서리(뒤 캡슐)에도 중심(흰 글리프)에도 없다. 팔레트는 빈도순 집계.
 - **타이포** — 텍스트 요소의 높이와 폭에서 대략적인 폰트 크기·굵기를 역산하고, iOS 표준 텍스트 스타일(`.body`/`.headline`/`.largeTitle`…)에 매핑한다. 정확한 폰트 파일은 알 수 없으므로 **시스템 폰트 기준**으로 맞춘다.
+- **미커버 영역** — 스크린샷에서 배경이 아닌데 측정된 어떤 요소의 프레임에도 덮이지 않는 영역을 `uncoveredRegions` 로 낸다(시스템 크롬 상·하단 밴드는 제외). 지배적 실패인 **요소 누락**(Step 6-4)과 크롬 필터가 콘텐츠까지 버린 사고를 측정 단계에서 잡는 장치다. WARN 이 나오면 스크린샷과 대조해 원인을 확인한 뒤 스펙을 쓴다 — 무시하고 넘어가면 누락이 재현본까지 전파된다.
 - **구조** — 접근성 트리의 부모-자식에서 스택 방향(`vstack`/`hstack`/`zstack`)과 형제 간 간격을 계산해 `layout` 으로 낸다. 축은 형제가 **겹치지 않는** 쪽이다(양수 간격 합이 아니라 겹침이 신호 — 6pt 겹친 두 줄은 zstack 이 아니라 vstack 이다). 버리는 것 셋: 라벨 없는 전체화면 래퍼(자식은 살아남은 조상에 재부착), 스크롤 막대 같은 크롬(**자식까지 함께** — 그 자식은 스크롤 막대 부품이지 콘텐츠가 아니다), WDA 가 창을 둘로 보고해 생기는 완전 중복 요소. 셋 다 안 버리면 카드 4장이 16pt 간격인 화면이 "spacing 147" 로 나온다(실측).
   카드 자신의 배경은 부모를 꽉 채워 모든 형제와 겹치므로 간격 계산에서 뺀다 — 안 그러면 한 줄의 간격이 `-343` 으로 잡힌다.
 
@@ -223,7 +229,12 @@ python3 scripts/clone_flow_codegen.py generate \
 
 `device_compare.py`는 같은 픽셀 크기로 렌더된 경우에 한해 전체 및 측정 요소별 mismatch/평균 오차와 high·medium·low 차이, 결정적 heatmap을 출력한다. `--mask x,y,w,h`와 `--mask-system-chrome`은 애니메이션·시각 자산 같은 advisory 지표만 제외하며, 나란히 붙인 원본 증거는 가리지 않는다. 크기가 다르면 region metric과 heatmap을 건너뛰고 side-by-side만 만든다. 이 지표는 통과 판정의 단독 근거가 아니다. **대조 이미지와 요소 표/동작 계약의 사람 검토를 함께 통과해야 한다.**
 
-4. **누락부터 센다.** 이 작업의 지배적 실패는 색이나 간격이 아니라 **요소가 통째로 빠지는 것**이다 — screenshot-to-code 연구(DCGen, arXiv 2406.16386)가 분류한 실패 1,699건 중 누락 85.3%, 배치 오류 12.7%, 왜곡 2.6%였다. 그러니 대조할 때 눈으로 "비슷하네"부터 하지 말고 **Step 4 요소 표의 행을 하나씩 짚어** 재현본에 있는지 센다. 우리 측정 단계는 크롬을 버리므로(Step 3) 콘텐츠를 같이 버렸을 위험이 특히 크다.
+4. **누락부터 센다.** 이 작업의 지배적 실패는 색이나 간격이 아니라 **요소가 통째로 빠지는 것**이다 — screenshot-to-code 연구(DCGen, arXiv 2406.16386)가 분류한 실패 1,699건 중 누락 85.3%, 배치 오류 12.7%, 왜곡 2.6%였다. 세기는 기계가 먼저 한다: AXe 가 설치돼 있으면 `device_render.sh` 가 렌더된 접근성 트리를 `<out>.tree.json` 으로 남기므로,
+   ```bash
+   python3 scripts/clone_structural_diff.py .autobot/clone/screens/<NN>.json \
+           .autobot/clone/compare/<NN>-rendered.tree.json
+   ```
+   가 스펙 요소마다 렌더 대응물을 라벨→프레임 순으로 찾고, **누락이 하나라도 있으면 exit 1** 로 수렴 루프를 되돌린다(위치 이탈은 WARN, 픽셀 유사도는 여전히 `device_compare` 몫). 트리 덤프가 없거나 그 후에도, **Step 4 요소 표의 행을 하나씩 짚어** 재현본에 있는지 사람이 다시 센다. 우리 측정 단계는 크롬을 버리므로(Step 3) 콘텐츠를 같이 버렸을 위험이 특히 크다 — Step 3 의 `uncoveredRegions` 경고가 남아 있는 화면이면 더더욱.
 
 5. **차이는 분류해서 무거운 것부터 고친다.** 발견한 차이를 같은 무게로 다루면 모서리 반경을 다듬는 동안 빠진 요소가 살아남는다. 순서는 고정이다:
 
@@ -256,6 +267,7 @@ python3 scripts/clone_flow_codegen.py generate \
 | state/view 매핑 + 관찰 전이 라우터 | `.autobot/clone/views.json`, `Sources/ObservedFlow.swift` | 기능 재생 |
 | 연구용 자산과 출처 | `.autobot/clone/assets/*`, `assets/manifest.json` | 연구용 clone 빌드·감사 |
 | 대조 이미지 | `.autobot/clone/compare/*.png` | Step 6 검증 |
+| 렌더 접근성 트리 (AXe 설치 시) | `.autobot/clone/compare/*-rendered.tree.json` | Step 6 구조 diff (`clone_structural_diff.py`) |
 | 측정·렌더 캐시 | `.autobot/clone/.postprocess-cache.json`, `render-cache/` | 반복 실행 가속 |
 | clone Xcode 작업공간 | `.autobot/clone/project/CloneWorkspace.xcodeproj` | Xcode/CoreDevice 준비 및 이후 구현 빌드 |
 

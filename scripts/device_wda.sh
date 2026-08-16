@@ -13,6 +13,7 @@
 #   session <udid> <bundle_id>        Start a WDA session bound to the target app.
 #   screen <sid> <outdir> <name>      Capture <name>.png + <name>.xml + signature.
 #   step <sid> <x> <y> <tree> <outdir> <name>  Tap, settle, and capture destination evidence.
+#   explore <sid> <outdir> [max_steps]  Drain safe frontier candidates mechanically (default 20 steps).
 #   candidates <tree>                 Safe tap targets (delegates to device_a11y.py).
 #   sig <tree>                        Screen signature (delegates to device_a11y.py).
 #   tap <sid> <x> <y> <tree.xml>      Tap a candidate — refuses stale/non-candidate points.
@@ -807,6 +808,7 @@ cmd_session() {
   if [[ -n "$cached_sid" ]]; then
     _ensure_appium || return 1
     if _remote_session_matches "$cached_sid" "$udid" "$bundle_id"; then
+      _tune_session "$cached_sid"
       echo "OK: reusing live WDA session on $udid (target $bundle_id)" >&2
       echo "$cached_sid"
       return 0
@@ -881,8 +883,52 @@ else:
     echo "ERROR: WDA session started but its descriptor could not be saved at $CLONE_SESSION_FILE" >&2
     return 1
   fi
+  _tune_session "$sid"
   echo "OK: WDA session on $udid (target $bundle_id)" >&2
   echo "$sid"
+}
+
+# Clone runs its own settle loop (sig polling in _perform_tap_and_settle), so
+# WDA-level idle/animation waits before every action and /source are pure
+# double-waiting — on animation-heavy apps each one costs up to the full
+# 10s driver default. Applied to new AND reused sessions (settings live per
+# session). Failures only warn: tuning is advisory, never a session gate.
+# ponytail: waitForIdleTimeout=0 assumes our settle loop is the only sync;
+# raise CLONE_WDA_IDLE_TIMEOUT if a target app misbehaves without idle waits.
+_tune_session() {
+  local sid="$1" settings
+  [[ "${CLONE_WDA_TUNE:-1}" == "0" ]] && return 0
+  settings="$(python3 -c "
+import json, os
+def num(name, default):
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+s = {
+    'waitForIdleTimeout': num('CLONE_WDA_IDLE_TIMEOUT', 0),
+    'animationCoolOffTimeout': num('CLONE_WDA_ANIM_COOLOFF', 0),
+}
+# Off by default: lowering snapshot depth trades away exactly the deep tree
+# the measurement step depends on. Knob only, for very large hierarchies.
+depth = num('CLONE_WDA_SNAPSHOT_MAX_DEPTH', 0)
+if depth > 0:
+    s['snapshotMaxDepth'] = depth
+print(json.dumps({'settings': s}))" 2>/dev/null)" || settings=""
+  if [[ -z "$settings" ]]; then
+    echo "WARN: could not build WDA performance settings — continuing untuned" >&2
+    return 0
+  fi
+  if _curl -X POST "$APPIUM_URL/session/$sid/appium/settings" \
+       -H 'Content-Type: application/json' -d "$settings" >/dev/null 2>&1; then
+    echo "INFO: applied WDA performance settings $settings" >&2
+  else
+    echo "WARN: could not apply WDA performance settings — continuing untuned" >&2
+  fi
+  return 0
 }
 
 _capture_screenshot() {
@@ -916,7 +962,7 @@ open(sys.argv[1], 'w', encoding='utf-8').write(json.load(sys.stdin)['value'])" "
   key="$(_key_of "$xml" || true)"
   if [[ -n "$key" ]]; then
     echo "INFO: nodekey $key"
-    _flow_event screen "node=$key" "state=$(_state_of "$xml")" \
+    _flow_event screen "node=$key" "statekey=$(_state_of "$xml")" \
       "sig=$(_sig_of "$xml")" "name=$name" "tree=$xml" "png=$png"
   fi
   echo "OK: captured $png + $xml"
@@ -1085,7 +1131,7 @@ _record_tap_transition() {
   local x="$1" y="$2"
   shift 2
   _flow_event tap "from=${_TAP_FROM_KEY:-?}" "to=${_TAP_TO_KEY:-?}" \
-    "from_state=${_TAP_FROM_STATE:-?}" "to_state=${_TAP_TO_STATE:-?}" \
+    "from_statekey=${_TAP_FROM_STATE:-?}" "to_statekey=${_TAP_TO_STATE:-?}" \
     "behavior=${_TAP_BEHAVIOR:-?}" "label=${_TAP_LABEL:-?}" \
     "x=$x" "y=$y" "changed=${_TAP_CHANGED:-false}" "$@"
 }
@@ -1162,7 +1208,7 @@ cmd_step() {
   fi
 
   _record_tap_transition "$x" "$y" "tree=$xml" "png=$png" "evidence=durable" "via=step"
-  _flow_event screen "node=${_TAP_TO_KEY:-?}" "state=${_TAP_TO_STATE:-?}" "sig=${_TAP_TO_SIG:-?}" \
+  _flow_event screen "node=${_TAP_TO_KEY:-?}" "statekey=${_TAP_TO_STATE:-?}" "sig=${_TAP_TO_SIG:-?}" \
     "name=$name" "tree=$xml" "png=$png" "via=step"
   echo "OK: tapped $x,$y${_TAP_LABEL:+ ($_TAP_LABEL)} and captured $png + $xml"
   [[ "$_TAP_CHANGED" == true ]] || echo "INFO: screen did not change — durable evidence records the no-op destination"
@@ -1235,7 +1281,7 @@ cmd_swipe() {
   to_key="$(_key_of "$after_tree" 2>/dev/null || true)"
   to_state="$(_state_of "$after_tree" 2>/dev/null || true)"
   _flow_event swipe "from=${from_key:-?}" "to=${to_key:-?}" \
-              "from_state=${from_state:-?}" "to_state=${to_state:-?}" \
+              "from_statekey=${from_state:-?}" "to_statekey=${to_state:-?}" \
               "x1=$x1" "y1=$y1" "x2=$x2" "y2=$y2" "changed=$changed"
   rm -f "$before_tree" "$after_tree"
   echo "OK: swiped $x1,$y1 -> $x2,$y2"
@@ -1369,6 +1415,77 @@ raise SystemExit(0 if contains(json.load(sys.stdin).get("result", {})) else 1)
   echo "OK: doctor passed"
 }
 
+# Highest auto-capture index in <outdir> + 1, so re-runs never clobber evidence.
+_next_auto_index() {
+  local dir="$1" max=0 file stem idx
+  for file in "$dir"/auto-*.xml; do
+    [[ -e "$file" ]] || continue
+    stem="${file##*/auto-}"
+    idx="${stem%.xml}"
+    if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$((10#$idx))" -gt "$max" ]]; then
+      max="$((10#$idx))"
+    fi
+  done
+  echo $((max + 1))
+}
+
+# Drain safe frontier candidates mechanically — the agent only navigates BETWEEN
+# frontiers, not every tap. DFS by construction: a changed tap continues on the
+# arrival screen, and back buttons are candidates too, so the walk returns on
+# its own. Every tap goes through the same step guards (candidate provenance,
+# fresh sig, foreground bundle), and withheld/state-changing targets are never
+# tapped — `device_flow.py todo` filters them out before this loop sees them.
+# Stopping is normal, not exceptional: drained screen, max steps, or any guard.
+cmd_explore() {
+  local sid="${1:-}" outdir="${2:-}" max_steps="${3:-20}"
+  if [[ -z "$sid" || -z "$outdir" ]]; then
+    echo "ERROR: usage: device_wda.sh explore <sid> <outdir> [max_steps]" >&2
+    return 1
+  fi
+  if ! [[ "$max_steps" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: max_steps must be a positive integer, got '$max_steps'" >&2
+    return 1
+  fi
+  local flow="${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}"
+  local n name tree todo_out line x y steps=0
+  n="$(_next_auto_index "$outdir")"
+  name="$(printf 'auto-%04d' "$n")"
+  cmd_screen "$sid" "$outdir" "$name" || return 1
+  tree="$outdir/$name.xml"
+  if [[ ! -s "$tree" ]]; then
+    echo "ERROR: seed capture has no accessibility tree — cannot explore" >&2
+    return 1
+  fi
+  while [[ "$steps" -lt "$max_steps" ]]; do
+    if ! todo_out="$(python3 "$_HERE/device_flow.py" todo "$flow" "$tree")"; then
+      echo "ERROR: could not compute the frontier of $(basename "$tree") — see above" >&2
+      return 1
+    fi
+    line="$(sed -n 's/^INFO: todo //p' <<<"$todo_out")"
+    line="${line%%$'\n'*}"
+    if [[ -z "$line" ]]; then
+      echo "INFO: this screen's safe frontier is drained after $steps step(s) — navigate elsewhere (see device_flow.py next) and re-run explore"
+      break
+    fi
+    x="${line%% *}"
+    line="${line#* }"
+    y="${line%% *}"
+    n=$((n + 1))
+    name="$(printf 'auto-%04d' "$n")"
+    if ! cmd_step "$sid" "$x" "$y" "$tree" "$outdir" "$name"; then
+      echo "ERROR: explore stopped after $steps step(s) — the flow log keeps what was done; fix the condition above and re-run explore" >&2
+      return 1
+    fi
+    tree="$outdir/$name.xml"
+    steps=$((steps + 1))
+  done
+  if [[ "$steps" -ge "$max_steps" ]]; then
+    echo "INFO: reached max steps ($max_steps) — re-run explore to continue"
+  fi
+  python3 "$_HERE/device_flow.py" stats "$flow" || true
+  echo "OK: explore made $steps step(s)"
+}
+
 cmd_quit() {
   local sid="${1:-}"
   if [[ -z "$sid" ]]; then
@@ -1388,6 +1505,7 @@ main() {
     session)    cmd_session "$@" ;;
     screen)     cmd_screen "$@" ;;
     step)       cmd_step "$@" ;;
+    explore)    cmd_explore "$@" ;;
     candidates) python3 "$_HERE/device_a11y.py" candidates "$@" ;;
     sig)        python3 "$_HERE/device_a11y.py" sig "$@" ;;
     tap)        cmd_tap "$@" ;;
@@ -1396,7 +1514,7 @@ main() {
     quit)       cmd_quit "$@" ;;
     stop-server) cmd_stop_server "$@" ;;
     doctor)     cmd_doctor "$@" ;;
-    *) echo "ERROR: unknown subcommand '${sub:-}'. Use: device | session | screen | step | candidates | sig | tap | type | swipe | quit | stop-server | doctor" >&2; return 1 ;;
+    *) echo "ERROR: unknown subcommand '${sub:-}'. Use: device | session | screen | step | explore | candidates | sig | tap | type | swipe | quit | stop-server | doctor" >&2; return 1 ;;
   esac
 }
 

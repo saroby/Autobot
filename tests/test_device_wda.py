@@ -733,8 +733,94 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(caps["appium:agentPath"], str(target / "WebDriverAgent.xcodeproj"))
         self.assertEqual(actual_post_action, expected_post_action)
 
+    def test_new_session_applies_perf_settings(self):
+        """Clone owns settling (sig polling), so WDA idle/animation waits are
+        double-waiting — a fresh session must zero them via the settings API."""
+        result, posts = self._run_session_with_settings_server({})
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        settings = [body for path, body in posts if path.endswith("/appium/settings")]
+        self.assertEqual(len(settings), 1)
+        self.assertEqual(settings[0]["settings"], {
+            "waitForIdleTimeout": 0,
+            "animationCoolOffTimeout": 0,
+        })
+
+    def test_perf_settings_knobs_and_optional_snapshot_depth(self):
+        result, posts = self._run_session_with_settings_server({
+            "CLONE_WDA_IDLE_TIMEOUT": "3",
+            "CLONE_WDA_ANIM_COOLOFF": "2",
+            "CLONE_WDA_SNAPSHOT_MAX_DEPTH": "60",
+        })
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        settings = [body for path, body in posts if path.endswith("/appium/settings")]
+        self.assertEqual(settings[0]["settings"], {
+            "waitForIdleTimeout": 3,
+            "animationCoolOffTimeout": 2,
+            "snapshotMaxDepth": 60,
+        })
+
+    def test_perf_settings_can_be_disabled(self):
+        result, posts = self._run_session_with_settings_server({"CLONE_WDA_TUNE": "0"})
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(
+            [path for path, _ in posts if path.endswith("/appium/settings")], [])
+
+    def test_perf_settings_failure_does_not_fail_the_session(self):
+        result, posts = self._run_session_with_settings_server({}, settings_status=500)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), "session-1")
+        self.assertIn("continuing untuned", result.stderr)
+
+    def _run_session_with_settings_server(
+        self, extra_env: dict[str, str], settings_status: int = 200,
+    ) -> tuple[subprocess.CompletedProcess, list[tuple[str, dict]]]:
+        posts: list[tuple[str, dict]] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict, status: int = 200):
+                body = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                self._reply({"value": {"ready": True}})
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                posts.append((self.path, body))
+                if self.path.endswith("/appium/settings"):
+                    self._reply({"value": None}, status=settings_status)
+                else:
+                    self._reply({"value": {"sessionId": "session-1"}})
+
+            def log_message(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "state"
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                env = {**os.environ, "DEVELOPMENT_TEAM": "72J2BT27K5",
+                       "APPIUM_URL": f"http://127.0.0.1:{server.server_port}",
+                       "CLONE_STATE_DIR": str(state), **extra_env}
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                    capture_output=True, text=True, env=env,
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+        return result, posts
+
     def test_matching_live_session_is_reused_and_target_guard_uses_cached_bundle(self):
-        calls = {"status": 0, "session_get": 0, "session_create": 0, "active": 0}
+        calls = {"status": 0, "session_get": 0, "session_create": 0, "active": 0,
+                 "settings": 0}
 
         class Handler(BaseHTTPRequestHandler):
             def _reply(self, payload: dict):
@@ -760,6 +846,9 @@ class TestSigningTeamResolution(unittest.TestCase):
                 if self.path == "/session":
                     calls["session_create"] += 1
                     self._reply({"value": {"sessionId": "unexpected"}})
+                elif self.path.endswith("/appium/settings"):
+                    calls["settings"] += 1
+                    self._reply({"value": None})
                 else:
                     calls["active"] += 1
                     self._reply({"value": {"bundleId": "com.example.target"}})
@@ -808,6 +897,8 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(calls["session_get"], 1,
                          msg="_assert_target should trust the matching local descriptor")
         self.assertEqual(calls["active"], 1)
+        self.assertEqual(calls["settings"], 1,
+                         msg="a reused session must be re-tuned (settings are per session)")
 
     def test_active_app_guard_rejects_a_foreign_foreground_app(self):
         class Handler(BaseHTTPRequestHandler):
@@ -930,6 +1021,14 @@ class TestSigningTeamResolution(unittest.TestCase):
                 events = [json.loads(line) for line in flow.read_text(encoding="utf-8").splitlines()]
                 final_xml = (outdir / "destination.xml").read_text(encoding="utf-8")
                 final_png = (outdir / "destination.png").read_bytes()
+                # Producer/reader contract: the log the shell writes must be
+                # readable by device_flow.py (2026-08-16: `state=`/`from_state=`
+                # were emitted while the reader hard-rejects those aliases, so
+                # every real exploration log failed next/stats/map).
+                reader = subprocess.run(
+                    ["python3", str(SCRIPT.parent / "device_flow.py"), "stats", str(flow)],
+                    capture_output=True, text=True,
+                )
             finally:
                 server.shutdown()
                 thread.join(timeout=2)
@@ -943,19 +1042,123 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(state["screenshots"], 1)
         self.assertEqual(final_xml, after)
         self.assertEqual(final_png, png_bytes)
+        self.assertEqual(reader.returncode, 0,
+                         msg="device_flow.py must read the log device_wda.sh writes: "
+                             + reader.stderr + reader.stdout)
         self.assertEqual([event["type"] for event in events], ["tap", "screen"])
         tap, screen = events
         self.assertEqual(tap["evidence"], "durable")
         self.assertEqual(tap["via"], "step")
         self.assertNotEqual(tap["behavior"], "?")
-        self.assertNotEqual(tap["from_state"], "?")
-        self.assertNotEqual(tap["to_state"], "?")
+        self.assertNotEqual(tap["from_statekey"], "?")
+        self.assertNotEqual(tap["to_statekey"], "?")
         self.assertEqual(tap["tree"], str(outdir / "destination.xml"))
         self.assertIn("from", tap)
         self.assertIn("to", tap)
-        self.assertEqual(screen["state"], tap["to_state"])
+        self.assertEqual(screen["statekey"], tap["to_statekey"])
         self.assertEqual(screen["node"], tap["to"])
         self.assertEqual(screen["tree"], str(outdir / "destination.xml"))
+
+    def _run_explore(self, *explore_args: str):
+        """Fake device: one screen, two safe buttons (both no-op taps) and one
+        withheld 팔로우 button. Explore must drain the two safe targets by
+        itself and never touch the withheld one."""
+        tree_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+            '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+            ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="가" name="가" enabled="true"'
+            ' visible="true" x="0" y="100" width="100" height="40"/>'
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="나" name="나" enabled="true"'
+            ' visible="true" x="0" y="200" width="100" height="40"/>'
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="팔로우" name="팔로우"'
+            ' enabled="true" visible="true" x="0" y="300" width="100" height="40"/>'
+            '</XCUIElementTypeApplication></AppiumAUT>'
+        )
+        taps: list[str] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    self._reply({"value": tree_xml})
+                elif self.path.endswith("/screenshot"):
+                    self._reply({"value": base64.b64encode(b"png").decode()})
+                else:
+                    self._reply({"value": {"capabilities": {
+                        "appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                if self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                elif self.path.endswith("/actions"):
+                    taps.append(self.rfile.read(int(self.headers["Content-Length"])).decode())
+                    self._reply({"value": {}})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            outdir = root / "raw"
+            flow = root / "flow.jsonl"
+            state_dir = root / "state"
+            state_dir.mkdir()
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                appium_url = f"http://127.0.0.1:{server.server_port}"
+                (state_dir / "wda-session.json").write_text(json.dumps({
+                    "sid": "session-1", "udid": "00008101-AAA",
+                    "bundleId": "com.example.target", "appiumUrl": appium_url,
+                }), encoding="utf-8")
+                env = {
+                    **os.environ,
+                    "APPIUM_URL": appium_url,
+                    "CLONE_STATE_DIR": str(state_dir),
+                    "CLONE_FLOW_LOG": str(flow),
+                    "CLONE_TAP_SETTLE_TRIES": "1",
+                }
+                r = subprocess.run(
+                    ["bash", str(SCRIPT), "explore", "session-1", str(outdir), *explore_args],
+                    capture_output=True, text=True, env=env,
+                )
+                events = [json.loads(line)
+                          for line in flow.read_text(encoding="utf-8").splitlines()]
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+        return r, events, taps
+
+    def test_explore_drains_the_safe_frontier_without_a_human_per_tap(self):
+        r, events, taps = self._run_explore()
+        self.assertEqual(r.returncode, 0, msg=r.stderr + r.stdout)
+        self.assertIn("explore made 2 step(s)", r.stdout)
+        self.assertIn("safe frontier is drained", r.stdout)
+        tap_labels = [e["label"] for e in events if e["type"] == "tap"]
+        self.assertEqual(sorted(tap_labels), ["가", "나"])
+        self.assertNotIn("팔로우", "".join(tap_labels))
+        self.assertEqual(len(taps), 2, msg="withheld targets must never be tapped")
+        # Every tap left durable evidence the reader accepts.
+        self.assertEqual([e["type"] for e in events],
+                         ["screen", "tap", "screen", "tap", "screen"])
+
+    def test_explore_respects_max_steps(self):
+        r, events, taps = self._run_explore("1")
+        self.assertEqual(r.returncode, 0, msg=r.stderr + r.stdout)
+        self.assertIn("reached max steps (1)", r.stdout)
+        self.assertEqual(len(taps), 1)
 
     def test_swipe_waits_for_settle_and_records_a_flow_event(self):
         before = (
@@ -1028,8 +1231,8 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(event["type"], "swipe")
         self.assertEqual(event["changed"], "true",
                          msg=f"event={event} stdout={r.stdout!r} stderr={r.stderr!r}")
-        self.assertNotEqual(event["from_state"], "?")
-        self.assertNotEqual(event["to_state"], "?")
+        self.assertNotEqual(event["from_statekey"], "?")
+        self.assertNotEqual(event["to_statekey"], "?")
         self.assertIn("from", event)
         self.assertIn("to", event)
         self.assertEqual(event["x1"], "180")
@@ -1119,8 +1322,6 @@ class TestManagedAppiumDoctorAndMetrics(unittest.TestCase):
                 "APPIUM_URL": f"http://127.0.0.1:{unused_local_port()}",
                 "CLONE_STATE_DIR": str(state),
                 "CLONE_AUTO_START_APPIUM": "1",
-                # Leave enough wall time for the fake process to be scheduled
-                # on a busy Xcode/Appium host while keeping the poll bounded.
                 "CLONE_APPIUM_START_TRIES": "10",
                 "CLONE_APPIUM_POLL_INTERVAL": "0.05",
                 "CLONE_APPIUM_STATUS_TIMEOUT": "0.1",
@@ -1139,8 +1340,13 @@ class TestManagedAppiumDoctorAndMetrics(unittest.TestCase):
 
             self.assertEqual(r.returncode, 1)
             self.assertLess(elapsed, 4)
-            self.assertEqual(start_lines, ["start"],
-                             msg=f"stderr={r.stderr!r} appium_log={appium_log!r}")
+            # The spawn is proven by stderr; starts.log may miss the line when
+            # the bounded poll TERMs the child before it is even scheduled, so
+            # it only guards against DUPLICATE starts (racy assertEqual(["start"])
+            # flaked on busy hosts).
+            self.assertIn("started managed Appium server", r.stderr)
+            self.assertLessEqual(len(start_lines), 1,
+                                 msg=f"stderr={r.stderr!r} appium_log={appium_log!r}")
             self.assertTrue((state / "appium-server.log").exists())
             self.assertFalse((state / "appium-server.pid").exists())
             self.assertIn("bounded poll", r.stderr)

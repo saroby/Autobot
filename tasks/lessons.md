@@ -402,3 +402,8 @@
 - 실패 모드: 사용자가 Threads clone과 스킬 개선을 요청했는데, clone 스킬의 Step 0을 그대로 따라 대상 앱 소유권과 연구용/배포용 범위를 먼저 질문하며 실행을 중단했다.
 - 검출 신호: 사용자가 "스킬에서 타사앱 체크 프로세스 삭제해"라고 교정했다.
 - 예방 규칙: `autobot-clone-app`은 산출물을 별도 질문 없이 `research-only`로 취급하고 기술적 기기·bundle ID 게이트부터 진행한다. 자산 provenance와 보안 경계는 유지하되, 소유권·사용 범위 확인을 실행 선행 조건으로 두지 않는다.
+
+## 2026-08-16 — flow 로그 producer/reader가 서로 다른 필드명 계약을 갖고도 둘 다 green이었다
+- 실패 모드: `device_wda.sh`는 flow.jsonl에 `state=`/`from_state=`/`to_state=`를 쓰는데, `device_flow.py`의 v2 계약은 바로 그 이름들을 명시적으로 거부한다(`statekey`/`from_statekey`/`to_statekey`만 허용). 실기기 탐험 로그 전부가 `next`/`stats`/`map`에서 읽히지 않는 상태였다.
+- 검출 신호: producer가 실제로 쓴 한 줄을 reader에 넣어보는 단 하나의 실험(`device_flow.py stats <실제 로그>`)이 즉시 ERROR를 냈다. 반면 producer 테스트는 자기가 쓴 비공식 필드명을, reader 테스트는 자기가 만든 공식 필드명 픽스처를 각각 단언해 둘 다 통과했다.
+- 예방 규칙: 한 파일을 사이에 둔 producer/reader 쌍은 반드시 경계를 넘는 회귀 테스트를 하나 둔다 — producer의 실제 산출물을 reader에 그대로 통과시키는 테스트(test_device_wda.py의 step 테스트가 이제 `device_flow.py stats`를 실행). 픽스처를 손으로 만든 계약 테스트는 이 실패를 영원히 못 잡는다.

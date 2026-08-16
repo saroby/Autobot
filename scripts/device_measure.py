@@ -22,6 +22,7 @@ use are supported; anything else degrades to "colors unavailable", never a crash
 from __future__ import annotations
 
 import json
+import math
 import struct
 import sys
 import zlib
@@ -42,6 +43,16 @@ TEXT_STYLES = [
 GLYPH_TO_FRAME = 1.35
 # Parent marker for elements dropped as chrome — their subtree goes with them.
 CHROME = -2
+
+# Uncovered-region scan: the dominant clone failure is a wholesale MISSING
+# element (DCGen, arXiv 2406.16386: 85.3% of failures), and our own chrome
+# filter can drop content along with the chrome. Blocks of visibly
+# non-background pixels that no measured frame covers turn that silent loss
+# into a warning at measurement time instead of a human count at Step 6.
+UNCOVERED_BLOCK_PX = 16     # scan granularity, in screenshot pixels
+UNCOVERED_MIN_BLOCKS = 3    # smaller clusters are antialiasing/shadow specks
+UNCOVERED_COLOR_DELTA = 24  # max per-channel distance still "background"
+UNCOVERED_MAX_REGIONS = 10
 
 
 class PNG:
@@ -191,6 +202,82 @@ def _overlap(boxes: list[dict], pos: str, size: str) -> float:
     return sum(ratios) / len(ratios) if ratios else 0.0
 
 
+def _rgb(hexv: str) -> tuple[int, int, int]:
+    return tuple(int(hexv[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def uncovered_regions(png: PNG | None, measured: list[dict], root_frame: dict,
+                      scale: float) -> list[dict]:
+    """Point-space rectangles of non-background pixels no measured frame covers.
+
+    Coarse by design: block centers on a 16px grid, clustered by adjacency.
+    The same top/bottom bands device_compare masks as system chrome are skipped
+    — the status bar rarely has measurable tree elements and would flag on
+    every screen.
+    """
+    if png is None or not root_frame.get("width"):
+        return []
+    background = sample(png, root_frame, scale).get("background")
+    if not background:
+        return []
+    bg = _rgb(background)
+    top = max(1, math.ceil(png.height * 0.07))
+    bottom_start = png.height - max(1, math.ceil(png.height * 0.05))
+    # Near-full-screen containers (the AXApplication root, list wrappers) cover
+    # every pixel and say nothing about content — counting them would mark the
+    # whole screen "covered" and blind the scan.
+    screen_area = root_frame["width"] * root_frame["height"]
+    frames_px = [
+        (m["frame"]["x"] * scale, m["frame"]["y"] * scale,
+         (m["frame"]["x"] + m["frame"]["width"]) * scale,
+         (m["frame"]["y"] + m["frame"]["height"]) * scale)
+        for m in measured
+        if m["frame"]["width"] * m["frame"]["height"] < 0.9 * screen_area
+    ]
+    block = UNCOVERED_BLOCK_PX
+    grid_w = png.width // block
+    grid_h = png.height // block
+    flagged: set[tuple[int, int]] = set()
+    for by in range(grid_h):
+        cy = by * block + block // 2
+        if cy < top or cy >= bottom_start:
+            continue
+        for bx in range(grid_w):
+            cx = bx * block + block // 2
+            if any(x1 <= cx < x2 and y1 <= cy < y2 for x1, y1, x2, y2 in frames_px):
+                continue
+            hexv = png.hex_at(cx, cy)
+            if not hexv:
+                continue
+            pixel = _rgb(hexv)
+            if max(abs(a - b) for a, b in zip(pixel, bg)) > UNCOVERED_COLOR_DELTA:
+                flagged.add((bx, by))
+    regions = []
+    while flagged:
+        stack = [flagged.pop()]
+        cluster = []
+        while stack:
+            bx, by = stack.pop()
+            cluster.append((bx, by))
+            for neighbor in ((bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)):
+                if neighbor in flagged:
+                    flagged.remove(neighbor)
+                    stack.append(neighbor)
+        if len(cluster) < UNCOVERED_MIN_BLOCKS:
+            continue
+        xs = [bx for bx, _ in cluster]
+        ys = [by for _, by in cluster]
+        regions.append({
+            "x": round(min(xs) * block / scale, 1),
+            "y": round(min(ys) * block / scale, 1),
+            "width": round((max(xs) - min(xs) + 1) * block / scale, 1),
+            "height": round((max(ys) - min(ys) + 1) * block / scale, 1),
+            "blocks": len(cluster),
+        })
+    regions.sort(key=lambda r: r["blocks"], reverse=True)
+    return regions[:UNCOVERED_MAX_REGIONS]
+
+
 def measure(tree: str, image: str | None) -> dict:
     els = device_a11y.load(tree)
     png, note = None, None
@@ -335,6 +422,8 @@ def measure(tree: str, image: str | None) -> dict:
         "palette": [{"hex": h, "count": n} for h, n in palette.most_common(12)],
         "droppedWrappers": dropped,
         "elements": measured,
+        "uncoveredRegions": uncovered_regions(
+            png, measured, root["frame"] if root else {}, scale),
         "unmeasurable": unmeasurable,
     }
 
@@ -350,6 +439,11 @@ def main(argv: list[str]) -> int:
         return 1
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     print()
+    uncovered = result.get("uncoveredRegions") or []
+    if uncovered:
+        print(f"WARN: {len(uncovered)} non-background region(s) not covered by any "
+              "measured element — content may have been dropped with chrome; "
+              "inspect uncoveredRegions before writing the spec", file=sys.stderr)
     print(f"OK: measured {len(result['elements'])} elements, "
           f"{len(result['palette'])} colors", file=sys.stderr)
     return 0

@@ -24,9 +24,9 @@ allowed-tools:
 - **시작 준비** — `scripts/clone_workspace.sh prepare`로 `.autobot/clone/project/CloneWorkspace.xcodeproj`를 만들고, `CLONE_XCODE_PROJECT`를 지정한 뒤 기기 게이트를 실행한다. Xcode workspace는 CoreDevice 복구와 이후 구현 빌드에 사용하며, 관찰 전에 실행하지 않는다.
 - **WDA 서명 격리** — `scripts/device_wda.sh session`은 기본적으로 WDA를 `.autobot/clone/wda`에 복사해 서명 후 bundle 변형 충돌을 격리한다. `CLONE_WDA_REFRESH=1`은 복사본을 갱신하고, 전역 Appium WDA를 직접 수정하지 않는다.
 
-탐험은 **중단돼도 이어서 한다** — `session`은 같은 대상의 살아 있는 세션을 재사용하고 필요하면 로컬 Appium을 자동 시작한다. iOS 18+ RemoteXPC tunnel이 없으면 `doctor`/`session`이 clone Xcode 프로젝트를 먼저 연 뒤 관리자 인증을 거쳐 자동 시작하고, registry에서 대상 UDID를 확인해야 계속한다. 기존 tunnel은 재사용하며 `CLONE_AUTO_START_TUNNEL=0`으로 자동 시작을 끌 수 있다. 탭은 `device_wda.sh step`으로 settle XML·도착 PNG·flow를 한 번에 남긴다. `device_flow.py next/stats`는 raw target과 반복 행을 묶은 behavior class 커버리지를 함께 복원하며, 키보드·정적 문구는 제외하고 팔로우/좋아요/게시 같은 상태 변경은 `withheld`로 보류한다. coarse `node`와 포커스·키보드·선택을 포함한 `state`를 분리하므로 같은 화면의 상호작용 상태를 잃지 않는다.
+탐험은 **중단돼도 이어서 한다** — `session`은 같은 대상의 살아 있는 세션을 재사용하고 필요하면 로컬 Appium을 자동 시작한다. 세션에는 성능 설정(`waitForIdleTimeout=0`·`animationCoolOffTimeout=0`)이 자동 적용된다 — clone의 자체 settle 루프가 안정화를 판정하므로 WDA 대기는 중복이다(`CLONE_WDA_TUNE=0`으로 비활성). iOS 18+ RemoteXPC tunnel이 없으면 `doctor`/`session`이 clone Xcode 프로젝트를 먼저 연 뒤 관리자 인증을 거쳐 자동 시작하고, registry에서 대상 UDID를 확인해야 계속한다. 기존 tunnel은 재사용하며 `CLONE_AUTO_START_TUNNEL=0`으로 자동 시작을 끌 수 있다. 탐험의 기본 경로는 `device_wda.sh explore`다 — 현재 화면부터 안전 frontier를 기계적으로 소진하며(탭당 사람 개입 없음, withheld 제외, step 가드 공유), frontier 사이 이동과 개별 진단만 `step`을 쓴다. 탭은 settle XML·도착 PNG·flow를 한 번에 남긴다. `device_flow.py next/stats`는 raw target과 반복 행을 묶은 behavior class 커버리지를 함께 복원하며, 키보드·정적 문구는 제외하고 팔로우/좋아요/게시 같은 상태 변경은 `withheld`로 보류한다. coarse `node`와 포커스·키보드·선택을 포함한 `state`를 분리하므로 같은 화면의 상호작용 상태를 잃지 않는다.
 
-반복 후처리는 `clone_postprocess.py --workers 4 --extract-assets`, 관찰 전이 연결은 `clone_flow_codegen.py`, 렌더는 `device_render.sh ... auto ...`, 대조는 `device_compare.py --measure ... --heatmap ...`를 기본 경로로 사용한다. 자세한 옵션·중지 조건은 SSOT 스킬을 따른다.
+반복 후처리는 `clone_postprocess.py --workers 4 --extract-assets`, 관찰 전이 연결은 `clone_flow_codegen.py`, 렌더는 `device_render.sh ... auto ...`, 대조는 `device_compare.py --measure ... --heatmap ...`를 기본 경로로 사용한다. 요소 누락은 눈보다 먼저 `clone_structural_diff.py <측정.json> <렌더.tree.json>`로 센다 — 누락이 있으면 exit 1로 수렴 루프를 되돌린다. 자세한 옵션·중지 조건은 SSOT 스킬을 따른다.
 
 ## `/autobot:copy` 와의 차이
 

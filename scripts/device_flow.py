@@ -6,8 +6,14 @@
 is what makes the three things below possible:
 
     device_flow.py next <flow.jsonl>              What is still unexplored.
+    device_flow.py todo <flow.jsonl> <tree.xml>    Unexplored safe candidates of THIS capture.
     device_flow.py map  <flow.jsonl> <out.html>    The flow map, for a human.
     device_flow.py stats <flow.jsonl>              Coverage, one line.
+
+`todo` is the machine half of `next`: same behavior-class frontier, but scoped
+to one live capture so the coordinates it prints are valid for the tap guard
+(which only accepts candidates of the tree currently on the device). It is what
+lets `device_wda.sh explore` drain a screen without a human in the loop.
 
 `next` is also how a run RESUMES. On a real phone the session dies, the screen
 locks, a login wall appears — exploration ending early is the normal case, not
@@ -346,6 +352,52 @@ def cmd_next(path: str) -> int:
     return 0
 
 
+def _statekey_of(tree: str) -> str:
+    proc = subprocess.run([sys.executable, str(HERE / "device_a11y.py"), "statekey", tree],
+                          capture_output=True, text=True)
+    for line in proc.stdout.splitlines():
+        if line.startswith("INFO: statekey "):
+            return line[len("INFO: statekey "):].strip()
+    return ""
+
+
+def cmd_todo(path: str, tree: str) -> int:
+    """Unexplored safe candidates of one capture, one `INFO: todo x y | label` per line.
+
+    Behavior-class filtered like `frontier` (repeated rows collapse to one
+    representative), but every printed coordinate comes from the given tree, so
+    a caller can pass it straight to the tap guard.
+    """
+    if not Path(tree).is_file():
+        print(f"ERROR: no such tree '{tree}'", file=sys.stderr)
+        return 1
+    state = _statekey_of(tree)
+    if not state:
+        print(f"ERROR: could not derive a state key from '{tree}'", file=sys.stderr)
+        return 1
+    events = load(path)
+    done = [(t.get("label", "?"), int(t["x"]), int(t["y"]), t.get("behavior"))
+            for t in taps(events) if action_source(t) == state]
+    done_behaviors = {str(behavior) for _lab, _x, _y, behavior in done if behavior}
+    emitted: set[str] = set()
+    count = 0
+    for record in candidate_records_of(tree):
+        if record["withheld"]:
+            continue
+        behavior = record["behavior"]
+        if behavior in done_behaviors or behavior in emitted:
+            continue
+        if any((lab == record["label"] or "?" in (lab, record["label"]))
+               and abs(x - record["x"]) <= 12 and abs(y - record["y"]) <= 12
+               for lab, x, y, _behavior in done):
+            continue
+        emitted.add(behavior)
+        print(f"INFO: todo {record['x']} {record['y']} | {record['label']}")
+        count += 1
+    print(f"OK: {count} unexplored safe candidate(s) on this capture")
+    return 0
+
+
 def _print_capture_gaps(gaps: dict[str, list]) -> None:
     if gaps["missing_trees"]:
         print(f"WARN: {len(gaps['missing_trees'])} captured screen(s) have no accessibility tree — "
@@ -628,6 +680,8 @@ def main(argv: list[str]) -> int:
             return (cmd_next if mode == "next" else cmd_stats)(argv[2])
         if mode == "map" and len(argv) == 4:
             return cmd_map(argv[2], argv[3])
+        if mode == "todo" and len(argv) == 4:
+            return cmd_todo(argv[2], argv[3])
     except FileNotFoundError:
         print(f"ERROR: no exploration log at {argv[2]} — capture a screen first "
               "(`device_wda.sh screen` writes it)", file=sys.stderr)
@@ -638,7 +692,8 @@ def main(argv: list[str]) -> int:
     except FlowContractError as exc:
         print(f"ERROR: invalid exploration log {argv[2]}: {exc}", file=sys.stderr)
         return 1
-    print("ERROR: usage: device_flow.py next|stats <flow.jsonl> | map <flow.jsonl> <out.html>",
+    print("ERROR: usage: device_flow.py next|stats <flow.jsonl> | map <flow.jsonl> <out.html> "
+          "| todo <flow.jsonl> <tree.xml>",
           file=sys.stderr)
     return 1
 

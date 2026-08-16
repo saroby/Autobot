@@ -262,6 +262,19 @@ EOF
   else
     capture_stable_frame "$sim" "$out" "$work"
   fi
+  # Best-effort: dump the RENDERED accessibility tree so clone_structural_diff
+  # can count missing elements mechanically (Step 6-4). Never fails the render.
+  local tree_out="${out%.png}.tree.json"
+  if command -v axe >/dev/null 2>&1; then
+    if axe describe-ui --udid "$sim" > "$tree_out" 2>/dev/null && [[ -s "$tree_out" ]]; then
+      echo "INFO: rendered accessibility tree -> $tree_out"
+    else
+      rm -f "$tree_out"
+      echo "WARN: axe describe-ui failed — structural diff unavailable for this render"
+    fi
+  else
+    echo "INFO: AXe not installed — skipping rendered tree dump (structural diff unavailable)"
+  fi
   echo "OK: rendered $view -> $out"
 }
 
