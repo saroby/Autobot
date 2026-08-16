@@ -341,3 +341,40 @@
 - [x] 플러그인·Python·lock 버전을 0.13.10으로 정렬하고 changelog 확정
 - [x] 릴리스 메타데이터와 RemoteXPC 회귀 검증
 - [x] 의도한 0.13.10 릴리스 파일만 커밋 대상으로 확정
+
+---
+
+# clone 타사 앱 체크 프로세스 제거 — 2026-08-16
+
+## 목표와 수용 조건
+
+Threads 복제나 실기기 조작은 수행하지 않고, `autobot-clone-app`이 실행 전에 대상 앱 소유권과 사용 범위를 질문하는 프로세스만 제거한다.
+
+- [x] 소유권·연구용/배포용 확인 질문과 그 분기를 canonical 스킬에서 제거한다.
+- [x] `commands/clone.md` 진입 계약도 같은 내용으로 동기화한다.
+- [x] clone 산출물은 별도 질문 없이 `research-only`를 기본값으로 유지한다.
+- [x] 자산 provenance와 샌드박스·암호화·서명 우회 금지는 유지한다.
+- [x] 설치된 동일 버전 스킬까지 동기화하고 문서·회귀 검증을 통과한다.
+- [x] Threads 앱 실행, 캡처, 탐험, 재현은 수행하지 않는다.
+
+## 체크리스트
+
+- [x] 현재 스킬·command·테스트의 체크 프로세스 의존 범위 확정
+- [x] 최소 문서 수정과 회귀 테스트 추가
+- [x] 설치본 동기화
+- [x] 관련 테스트·문서 검사·diff 검사
+- [x] Results와 Working Notes 기록
+
+## Working Notes
+
+- canonical SSOT는 `skills/autobot-clone-app/SKILL.md`, 진입 문서는 `commands/clone.md`다.
+- 사용자 교정으로 이번 회차의 범위는 프로세스 제거뿐이며 clone 실행은 금지한다.
+- `clone_skill_sync.py sync`는 설치된 `SKILL.md`만 갱신하므로, 설치된 0.13.10의 `commands/clone.md`는 canonical 파일과 직접 동일하게 맞춘 뒤 `cmp`로 검증했다.
+
+## Results
+
+- mandatory 소유권·사용 범위 질문, 본인/타사/배포용 분기 표, Step 0 분기 규칙을 제거했다.
+- 별도 질문 없이 모든 clone 산출물을 `research-only`로 생성하고, 접근 가능한 자산은 provenance를 남기며 샌드박스·암호화·서명 경계를 우회하지 않는 계약은 유지했다.
+- canonical `SKILL.md`와 `commands/clone.md`, 설치된 Autobot 0.13.10의 두 파일을 동기화했다. 독립 forward-test도 소유권 질문 없이 기술 preflight로 진입했다.
+- 검증: clone 관련 19 tests, frontmatter 1 test, `verify_spec_docs.py`, canonical/설치본 skill validation, `clone_skill_sync.py check`, installed command `cmp`, 제거 문구 부재 검사, `git diff --check` 모두 통과했다.
+- Threads 앱 실행·캡처·탐험·재현은 수행하지 않았다.

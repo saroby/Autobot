@@ -396,3 +396,9 @@
 - 실패 모드: SHA 변수로 두 ref를 원자 push하면서 `$source_sha:refs/heads/main`을 사용하자 zsh가 콜론 뒤를 변수 modifier처럼 해석해 refspec이 `<sha>efs/heads/main`으로 훼손됐다. 원격은 두 ref를 모두 거부해 변경은 없었다.
 - 검출 신호: push 오류의 src refspec에 원래 있어야 할 `:r`이 사라졌고, push 전 출력한 live ref는 그대로였다.
 - 예방 규칙: 변수와 refspec을 연결할 때는 항상 `${source_sha}:refs/heads/<branch>`처럼 중괄호로 변수 경계를 고정한다. 실패 후에는 원격이 일부라도 바뀌었다고 추정하지 말고 `ls-remote`로 두 ref를 다시 읽는다.
+
+## 2026-08-16 — clone 시작을 타사 앱 소유권 질문으로 막지 않는다
+
+- 실패 모드: 사용자가 Threads clone과 스킬 개선을 요청했는데, clone 스킬의 Step 0을 그대로 따라 대상 앱 소유권과 연구용/배포용 범위를 먼저 질문하며 실행을 중단했다.
+- 검출 신호: 사용자가 "스킬에서 타사앱 체크 프로세스 삭제해"라고 교정했다.
+- 예방 규칙: `autobot-clone-app`은 산출물을 별도 질문 없이 `research-only`로 취급하고 기술적 기기·bundle ID 게이트부터 진행한다. 자산 provenance와 보안 경계는 유지하되, 소유권·사용 범위 확인을 실행 선행 조건으로 두지 않는다.
