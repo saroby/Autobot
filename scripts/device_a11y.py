@@ -250,14 +250,21 @@ def _node_identity(els: list[dict]) -> tuple[str, list[str]]:
                      and e["role"] not in CONTAINERS
                      and e["role"] not in ("AXOther", "AXKey")
                      and e["role"] != "AXCell"
-                     and _ancestor_index(els, index, {"AXCell"}) is None
+                     and _data_cell_index(els, index) is None
                      and not _inside_keyboard(els, index)
                      and not _inside_modal(els, index))
     shape = [f"{role}:{_bucket(n)}" for role, n in sorted(counts.items())]
-    if any(e["role"] == "AXCell" and e["frame"]["width"] > 0 for e in els):
+    if any(e["role"] == "AXCell" and e["frame"]["width"] > 0
+           and _is_data_cell(els, index) for index, e in enumerate(els)):
         shape.append("AXCell:present")
-    titles = sorted({e["label"] for e in els
-                     if e["role"] in ("AXNavigationBar", "AXTabBar") and e["label"]})
+    titles = sorted({e["label"] for index, e in enumerate(els)
+                     if e["label"]
+                     and (e["role"] in ("AXNavigationBar", "AXTabBar")
+                          or any(trait.casefold() in ("header", "heading")
+                                 for trait in e.get("traits", [])))
+                     and _data_cell_index(els, index) is None
+                     and not _inside_keyboard(els, index)
+                     and not _inside_modal(els, index)})
     digest = hashlib.sha1("\n".join(titles + shape).encode()).hexdigest()[:12]
     return digest, shape
 
@@ -269,7 +276,10 @@ def nodekey(els: list[dict]) -> None:
     means the screen moved) but wrong for a graph: the same list with different
     data, or scrolled by one row, would be a new node and the exploration queue
     would never drain. This hashes structure instead — role counts plus the
-    navigation bar's own label, which names the screen rather than its data.
+    navigation bar or custom Header trait label, which names the screen rather
+    than its row data. Apps such as Threads draw their own top bar without an
+    AXNavigationBar container, so omitting Header landmarks merges unrelated
+    screens that happen to have the same role counts.
     """
     # Containers and keyboard keys are excluded: they are plumbing, not identity.
     # The same empty-list screen was captured twice minutes apart and split into
@@ -290,6 +300,29 @@ def _ancestor_index(els: list[dict], index: int, roles: set[str]) -> int | None:
         seen.add(parent)
         parent = els[parent].get("parent", -1)
     return None
+
+
+def _is_data_cell(els: list[dict], index: int) -> bool:
+    """Distinguish a list row from an app's full-screen collection wrapper."""
+    if not (0 <= index < len(els)) or els[index]["role"] != "AXCell":
+        return False
+    frame = els[index]["frame"]
+    viewport = max(
+        (e["frame"] for e in els
+         if e["role"] in ("AXApplication", "AXWindow")
+         and e["frame"]["width"] > 0 and e["frame"]["height"] > 0),
+        key=lambda item: item["width"] * item["height"],
+        default=None,
+    )
+    if viewport and frame["width"] >= viewport["width"] * 0.9 \
+            and frame["height"] >= viewport["height"] * 0.75:
+        return False
+    return frame["width"] > 0 and frame["height"] > 0
+
+
+def _data_cell_index(els: list[dict], index: int) -> int | None:
+    cell = _ancestor_index(els, index, {"AXCell"})
+    return cell if cell is not None and _is_data_cell(els, cell) else None
 
 
 def _inside_keyboard(els: list[dict], index: int) -> bool:
@@ -335,7 +368,8 @@ def _normalized_label(label: str) -> str:
 
 def _state_control_id(els: list[dict], index: int) -> str:
     e = els[index]
-    row = index if e["role"] == "AXCell" else _ancestor_index(els, index, {"AXCell"})
+    row = (index if e["role"] == "AXCell" and _is_data_cell(els, index)
+           else _data_cell_index(els, index))
     if row is not None:
         return f"row:{e['role']}"
     f = e["frame"]
@@ -394,7 +428,8 @@ def _action_rank(e: dict) -> int:
 
 def _behavior_fingerprint(els: list[dict], index: int, classification: dict) -> str:
     e = els[index]
-    row = index if e["role"] == "AXCell" else _ancestor_index(els, index, {"AXCell"})
+    row = (index if e["role"] == "AXCell" and _is_data_cell(els, index)
+           else _data_cell_index(els, index))
     if classification["effect"] != "none":
         subject = classification["effect"]
     elif row is not None and e["role"] == "AXCell":

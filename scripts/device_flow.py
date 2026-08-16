@@ -44,16 +44,32 @@ class FlowContractError(ValueError):
     pass
 
 
-# Flow v2 contract. These names are intentionally singular: accepting aliases
-# would let the WDA producer and offline reader silently disagree.
+# Flow v2 contract. 0.13.10 accidentally shipped its WDA producer with the
+# three underscored aliases below even though this reader already required the
+# canonical names. Read those released logs so resumability survives upgrades;
+# the producer integration test prevents new logs from drifting back.
+RELEASED_STATE_ALIASES = {
+    "state": "statekey",
+    "from_state": "from_statekey",
+    "to_state": "to_statekey",
+}
 UNOFFICIAL_STATE_FIELDS = {
-    "state", "state_key", "from_state", "to_state", "fromState", "toState",
+    "state_key", "fromState", "toState",
 }
 
 
 def _validate_event(event: object, line_number: int) -> dict:
     if not isinstance(event, dict):
         raise FlowContractError(f"line {line_number}: event must be a JSON object")
+    event = dict(event)
+    for alias, canonical in RELEASED_STATE_ALIASES.items():
+        if alias not in event:
+            continue
+        if canonical in event:
+            raise FlowContractError(
+                f"line {line_number}: conflicting state fields {alias} and {canonical}"
+            )
+        event[canonical] = event.pop(alias)
     aliases = sorted(UNOFFICIAL_STATE_FIELDS.intersection(event))
     if aliases:
         raise FlowContractError(

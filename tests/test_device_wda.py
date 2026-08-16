@@ -26,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_wda.sh"
+FLOW_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_flow.py"
 
 
 def unused_local_port() -> int:
@@ -535,6 +536,38 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertIn("Appium did not answer", result.stderr)
         self.assertFalse(lock_exists)
 
+    def test_tunnel_start_does_not_depend_on_nohup_detaching_from_console(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "ready"
+            server, thread = start_tunnel_registry(marker)
+            try:
+                env, _state, _order_log, appium_log, _sudo_log = self._automatic_tunnel_env(
+                    root, marker, server.server_port,
+                )
+                nohup = root / "bin" / "nohup"
+                nohup.write_text(
+                    "#!/usr/bin/env bash\n"
+                    "echo 'nohup: cannot detach from console' >&2\n"
+                    "exit 91\n",
+                    encoding="utf-8",
+                )
+                nohup.chmod(0o755)
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                    capture_output=True, text=True, env=env, timeout=5,
+                )
+                appium_args = appium_log.read_text(encoding="utf-8")
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(result.returncode, 1, msg=result.stderr)
+        self.assertIn("driver run xcuitest tunnel-creation", appium_args)
+        self.assertIn("RemoteXPC tunnel ready for 00008101-AAA", result.stderr)
+        self.assertIn("Appium did not answer", result.stderr)
+
     def test_headless_authorization_failure_returns_without_waiting_for_password(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1019,22 +1052,25 @@ class TestSigningTeamResolution(unittest.TestCase):
                     capture_output=True, text=True, env=env,
                 )
                 events = [json.loads(line) for line in flow.read_text(encoding="utf-8").splitlines()]
-                final_xml = (outdir / "destination.xml").read_text(encoding="utf-8")
-                final_png = (outdir / "destination.png").read_bytes()
                 # Producer/reader contract: the log the shell writes must be
                 # readable by device_flow.py (2026-08-16: `state=`/`from_state=`
                 # were emitted while the reader hard-rejects those aliases, so
                 # every real exploration log failed next/stats/map).
-                reader = subprocess.run(
-                    ["python3", str(SCRIPT.parent / "device_flow.py"), "stats", str(flow)],
+                flow_result = subprocess.run(
+                    ["python3", str(FLOW_SCRIPT), "stats", str(flow)],
                     capture_output=True, text=True,
                 )
+                final_xml = (outdir / "destination.xml").read_text(encoding="utf-8")
+                final_png = (outdir / "destination.png").read_bytes()
             finally:
                 server.shutdown()
                 thread.join(timeout=2)
                 server.server_close()
 
         self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertEqual(flow_result.returncode, 0,
+                         msg="device_flow.py must read the log device_wda.sh writes: "
+                             + flow_result.stderr + flow_result.stdout)
         self.assertEqual(state["source_gets"], 2,
                          msg="step must use freshness + final settle source, with no screen refetch")
         self.assertEqual(state["session_gets"], 0,
@@ -1042,9 +1078,6 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(state["screenshots"], 1)
         self.assertEqual(final_xml, after)
         self.assertEqual(final_png, png_bytes)
-        self.assertEqual(reader.returncode, 0,
-                         msg="device_flow.py must read the log device_wda.sh writes: "
-                             + reader.stderr + reader.stdout)
         self.assertEqual([event["type"] for event in events], ["tap", "screen"])
         tap, screen = events
         self.assertEqual(tap["evidence"], "durable")
@@ -1296,8 +1329,189 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertIn('"type": "input"', flow)
         self.assertIn('"length": "15"', flow)
 
+    def test_type_refinds_once_after_stale_element_reference(self):
+        received = {"finds": 0, "values": []}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict, status: int = 200):
+                body = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                self._reply({"value": {"capabilities": {"appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                elif self.path.endswith("/element"):
+                    received["finds"] += 1
+                    self._reply({"value": {
+                        "element-6066-11e4-a52e-4f735466cecf":
+                            f"element-{received['finds']}"
+                    }})
+                elif self.path.endswith("/element/element-1/value"):
+                    received["values"].append(payload)
+                    self._reply({"value": {"error": "stale element reference"}}, status=404)
+                else:
+                    received["values"].append(payload)
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                lib = root / "wda_lib.sh"
+                log = root / "flow.jsonl"
+                lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                               encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": f"http://127.0.0.1:{server.server_port}",
+                       "CLONE_FLOW_LOG": str(log)}
+                r = subprocess.run(
+                    ["bash", "-c", f"source '{lib}'; cmd_type session-1 field-id sensitive-value"],
+                    capture_output=True, text=True, env=env,
+                )
+                flow = log.read_text(encoding="utf-8")
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertEqual(received["finds"], 2)
+        self.assertEqual(received["values"], [
+            {"text": "sensitive-value"}, {"text": "sensitive-value"}
+        ])
+        self.assertIn("re-finding 'field-id' once", r.stderr)
+        self.assertNotIn("sensitive-value", flow)
+        self.assertEqual(flow.count('"type": "input"'), 1)
+
 
 class TestManagedAppiumDoctorAndMetrics(unittest.TestCase):
+    def test_launchctl_backed_start_records_job_and_pid(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            launchctl_log = root / "launchctl.log"
+            launchctl = bin_dir / "launchctl"
+            launchctl.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$*\" >> \"$CLONE_TEST_LAUNCHCTL_LOG\"\n"
+                "if [[ \"${1:-}\" == \"print\" ]]; then\n"
+                "  printf '\\tpid = %s\\n' \"$CLONE_TEST_JOB_PID\"\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            launchctl.chmod(0o755)
+            appium = bin_dir / "appium"
+            appium.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            appium.chmod(0o755)
+            state = root / "state"
+            lib = root / "wda-lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            managed = subprocess.Popen(["sleep", "5"])
+            try:
+                env = {
+                    **os.environ,
+                    "HOME": str(root / "home"),
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "CLONE_STATE_DIR": str(state),
+                    "CLONE_LAUNCHCTL_BIN": str(launchctl),
+                    "CLONE_TEST_LAUNCHCTL_LOG": str(launchctl_log),
+                    "CLONE_TEST_JOB_PID": str(managed.pid),
+                }
+                result = subprocess.run(
+                    ["bash", "-c", f"source '{lib}'; _start_managed_appium_server 127.0.0.1 4723 ''"],
+                    capture_output=True, text=True, env=env,
+                )
+                launchctl_args = (launchctl_log.read_text(encoding="utf-8")
+                                  if launchctl_log.exists() else "")
+                pid_value = ((state / "appium-server.pid").read_text(encoding="utf-8").strip()
+                             if (state / "appium-server.pid").exists() else "")
+                label_value = ((state / "appium-server.label").read_text(encoding="utf-8").strip()
+                               if (state / "appium-server.label").exists() else "")
+            finally:
+                managed.terminate()
+                managed.wait(timeout=2)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), str(managed.pid))
+        self.assertEqual(pid_value, str(managed.pid))
+        self.assertTrue(label_value.startswith("com.autobot.clone.appium.4723."))
+        self.assertIn("submit -l", launchctl_args)
+        self.assertIn("-o", launchctl_args)
+        self.assertIn("appium server --address 127.0.0.1 --port 4723", launchctl_args)
+
+    def test_stop_server_removes_launchctl_job_and_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            launchctl_log = root / "launchctl.log"
+            appium = bin_dir / "appium-test-server"
+            appium.write_text(
+                "#!/usr/bin/env bash\n"
+                "trap 'exit 0' TERM INT\n"
+                "while :; do sleep 1; done\n",
+                encoding="utf-8",
+            )
+            appium.chmod(0o755)
+            managed = subprocess.Popen([str(appium)])
+            reaper = threading.Thread(target=managed.wait, daemon=True)
+            reaper.start()
+            state = root / "state"
+            state.mkdir()
+            label = "com.autobot.clone.appium.4723.1234"
+            (state / "appium-server.pid").write_text(f"{managed.pid}\n", encoding="utf-8")
+            (state / "appium-server.label").write_text(f"{label}\n", encoding="utf-8")
+            launchctl = bin_dir / "launchctl"
+            launchctl.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$*\" >> \"$CLONE_TEST_LAUNCHCTL_LOG\"\n"
+                "if [[ \"${1:-}\" == \"remove\" ]]; then\n"
+                "  kill \"$CLONE_TEST_JOB_PID\"\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            launchctl.chmod(0o755)
+            try:
+                env = {
+                    **os.environ,
+                    "CLONE_STATE_DIR": str(state),
+                    "CLONE_LAUNCHCTL_BIN": str(launchctl),
+                    "CLONE_TEST_LAUNCHCTL_LOG": str(launchctl_log),
+                    "CLONE_TEST_JOB_PID": str(managed.pid),
+                    "CLONE_APPIUM_STOP_TRIES": "20",
+                }
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "stop-server"],
+                    capture_output=True, text=True, env=env,
+                )
+                launchctl_args = launchctl_log.read_text(encoding="utf-8")
+                pid_exists = (state / "appium-server.pid").exists()
+                label_exists = (state / "appium-server.label").exists()
+            finally:
+                if managed.poll() is None:
+                    managed.terminate()
+                managed.wait(timeout=2)
+                reaper.join(timeout=2)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn(f"remove {label}", launchctl_args)
+        self.assertFalse(pid_exists)
+        self.assertFalse(label_exists)
+
     def test_auto_start_is_bounded_and_captures_pid_and_log(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1322,9 +1536,11 @@ class TestManagedAppiumDoctorAndMetrics(unittest.TestCase):
                 "APPIUM_URL": f"http://127.0.0.1:{unused_local_port()}",
                 "CLONE_STATE_DIR": str(state),
                 "CLONE_AUTO_START_APPIUM": "1",
+                # This test pins the non-launchctl fallback path.
+                "CLONE_APPIUM_USE_LAUNCHCTL": "0",
                 "CLONE_APPIUM_START_TRIES": "10",
                 "CLONE_APPIUM_POLL_INTERVAL": "0.05",
-                "CLONE_APPIUM_STATUS_TIMEOUT": "0.1",
+                "CLONE_APPIUM_STATUS_TIMEOUT": "0.01",
                 "CLONE_TEST_START_LOG": str(starts),
             }
             started_at = time.monotonic()

@@ -461,6 +461,36 @@ class TestNodeKey(unittest.TestCase):
         b = self.key(node("NavigationBar", "개인정보", 0, 50) + node("Cell", "항목", 16, 110))
         self.assertNotEqual(a, b)
 
+    def test_custom_header_trait_separates_look_alike_screens(self):
+        # Threads uses Header static text instead of AXNavigationBar for titles
+        # such as 메시지/설정; role counts alone collapse those distinct routes.
+        a = self.key(node("StaticText", "메시지", 16, 51, traits="Header")
+                     + node("Button", "메뉴", 335, 59))
+        b = self.key(node("StaticText", "설정", 172, 61, traits="Header")
+                     + node("Button", "메뉴", 335, 59))
+        self.assertNotEqual(a, b)
+
+    def test_header_inside_list_row_does_not_split_dynamic_data(self):
+        def row(title: str) -> str:
+            return (
+                '<XCUIElementTypeCell type="XCUIElementTypeCell" label="" name=""'
+                ' enabled="true" visible="true" x="0" y="100" width="375" height="60">'
+                + node("StaticText", title, 16, 110, traits="Header")
+                + '</XCUIElementTypeCell>'
+            )
+        self.assertEqual(self.key(row("첫 게시물")), self.key(row("다른 게시물")))
+
+    def test_full_screen_cell_wrapper_does_not_hide_custom_header(self):
+        def screen(title: str) -> str:
+            return (
+                '<XCUIElementTypeCell type="XCUIElementTypeCell" label="" name=""'
+                ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+                + node("StaticText", title, 16, 51, traits="Header")
+                + node("Button", "메뉴", 335, 59)
+                + '</XCUIElementTypeCell>'
+            )
+        self.assertNotEqual(self.key(screen("메시지")), self.key(screen("설정")))
+
 
 class TestStateKey(unittest.TestCase):
     def key(self, mode: str, inner: str) -> str:
