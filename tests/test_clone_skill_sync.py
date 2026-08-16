@@ -110,6 +110,26 @@ class CloneSkillSyncTests(unittest.TestCase):
 
 
 class CloneSkillContractTests(unittest.TestCase):
+    def test_clone_defaults_to_research_only_without_ownership_gate(self):
+        skill = (ROOT / "skills" / "autobot-clone-app" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        command = (ROOT / "commands" / "clone.md").read_text(encoding="utf-8")
+
+        for text in (skill, command):
+            self.assertIn("별도 확인 질문 없이", text)
+            self.assertIn("research-only", text)
+
+        for removed in (
+            "대상 앱의 소유 여부",
+            "소유·사용 범위 확인",
+            "본인 앱 (또는 소유 조직의 앱)",
+            "타사 앱 — 연구 전용",
+            "distribution-safe",
+        ):
+            self.assertNotIn(removed, skill)
+            self.assertNotIn(removed, command)
+
     def test_remote_xpc_auto_start_contract_matches_command_surface(self):
         skill = (ROOT / "skills" / "autobot-clone-app" / "SKILL.md").read_text(
             encoding="utf-8"

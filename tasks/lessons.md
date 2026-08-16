@@ -415,3 +415,9 @@
 - 2026-08-16: role count와 AXNavigationBar 제목만으로 화면 identity를 만들면 커스텀 top bar의 Threads 메시지/설정처럼 구조가 같은 별도 route가 충돌한다. 셀 밖의 Header/Heading trait은 안정적인 화면 landmark로 포함하고, 동적 목록 행 안의 Header는 제외해 데이터 churn 흡수 규칙을 유지한다.
 - 2026-08-16: AXCell은 항상 반복 데이터 row가 아니다. Threads처럼 전체 viewport를 감싸는 collection cell도 있으므로, 크기와 viewport 비율로 structural wrapper를 제외한 뒤에만 cell-descendant를 동적 데이터로 취급한다.
 - 2026-08-16: JSONL 일회성 rekey 명령에서 shell/Python 이중 escaping으로 줄바꿈 대신 문자 `\\n`을 기록해 `Extra data`가 났다. 변환 전 원본을 백업하고 원자 교체하며, inline Python에서는 `chr(10)`처럼 escaping 경계가 없는 줄 구분자를 사용한 뒤 reader로 즉시 재검증한다.
+
+## 2026-08-16 — clone 시작을 타사 앱 소유권 질문으로 막지 않는다
+
+- 실패 모드: 사용자가 Threads clone과 스킬 개선을 요청했는데, clone 스킬의 Step 0을 그대로 따라 대상 앱 소유권과 연구용/배포용 범위를 먼저 질문하며 실행을 중단했다.
+- 검출 신호: 사용자가 "스킬에서 타사앱 체크 프로세스 삭제해"라고 교정했다.
+- 예방 규칙: `autobot-clone-app`은 산출물을 별도 질문 없이 `research-only`로 취급하고 기술적 기기·bundle ID 게이트부터 진행한다. 자산 provenance와 보안 경계는 유지하되, 소유권·사용 범위 확인을 실행 선행 조건으로 두지 않는다.
