@@ -33,8 +33,9 @@
 # Prerequisites (once):
 #   npm i -g appium && appium driver install xcuitest
 #   Appium is auto-started locally when APPIUM_URL is unavailable.
-#   iOS 18+ real device: keep `sudo appium driver run xcuitest
-#                        tunnel-creation -- --udid <udid>` running separately.
+#   iOS 18+ real device: when the target tunnel is missing, the clone Xcode
+#   project is opened first and macOS administrator authorization is requested
+#   once to start Appium's RemoteXPC tunnel in the background.
 #   iPhone: Developer Mode ON + this Mac trusted + Settings > Developer >
 #           Enable UI Automation ON (without it WDA dies with
 #           "Timed out while enabling automation mode")
@@ -50,6 +51,7 @@ CLONE_APPIUM_PID_FILE="${CLONE_APPIUM_PID_FILE:-$CLONE_STATE_DIR/appium-server.p
 CLONE_APPIUM_LOG="${CLONE_APPIUM_LOG:-$CLONE_STATE_DIR/appium-server.log}"
 CLONE_METRICS_LOG="${CLONE_METRICS_LOG:-$CLONE_STATE_DIR/http-metrics.jsonl}"
 CLONE_TUNNEL_REGISTRY_URL="${CLONE_TUNNEL_REGISTRY_URL:-http://127.0.0.1:42314/remotexpc/tunnels}"
+CLONE_TUNNEL_LOG="${CLONE_TUNNEL_LOG:-$CLONE_STATE_DIR/remotexpc-tunnel.log}"
 
 _metric_write() {
   [[ "${CLONE_METRICS:-0}" == "1" ]] || return 0
@@ -229,17 +231,214 @@ raise SystemExit(0 if contains(json.load(sys.stdin)) else 1)
 ' "$udid" <<<"$response" 2>/dev/null
 }
 
-_require_tunnel() {
+_tunnel_registry_port() {
+  python3 -c '
+import sys
+from urllib.parse import urlparse
+
+parsed = urlparse(sys.argv[1])
+if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+    raise SystemExit(1)
+try:
+    port = parsed.port or 80
+except ValueError:
+    raise SystemExit(1)
+if not 1 <= port <= 65535:
+    raise SystemExit(1)
+print(port)
+' "$CLONE_TUNNEL_REGISTRY_URL" 2>/dev/null
+}
+
+_open_xcode_project_for_tunnel() {
+  [[ "${CLONE_AUTO_OPEN_XCODE:-1}" == "1" ]] || return 0
+  local project="${CLONE_XCODE_PROJECT:-}"
+  [[ -n "$project" ]] || return 0
+  if [[ ! -e "$project" ]]; then
+    echo "ERROR: clone Xcode project does not exist: $project — run 'scripts/clone_workspace.sh prepare' first" >&2
+    return 1
+  fi
+  if ! command -v open >/dev/null 2>&1; then
+    echo "ERROR: cannot open the clone Xcode project before RemoteXPC setup — macOS 'open' is unavailable" >&2
+    return 1
+  fi
+  echo "INFO: opening clone Xcode project before RemoteXPC setup: $project" >&2
+  if ! open -g -a Xcode "$project" >/dev/null 2>&1; then
+    echo "ERROR: Xcode could not open the clone project before RemoteXPC setup: $project" >&2
+    return 1
+  fi
+}
+
+_tunnel_launch_command() {
+  local udid="$1" port="$2" appium_bin node_bin nohup_bin appium_home launch_path user_home
+  appium_bin="$(command -v appium 2>/dev/null || true)"
+  node_bin="$(command -v node 2>/dev/null || true)"
+  nohup_bin="$(command -v nohup 2>/dev/null || true)"
+  if [[ -z "$appium_bin" || -z "$node_bin" || -z "$nohup_bin" ]]; then
+    echo "ERROR: automatic RemoteXPC setup requires appium, node, and nohup on PATH" >&2
+    return 1
+  fi
+  appium_home="${APPIUM_HOME:-$HOME/.appium}"
+  user_home="$HOME"
+  launch_path="$(dirname "$node_bin"):$(dirname "$appium_bin"):/usr/bin:/bin:/usr/sbin:/sbin"
+  mkdir -p "$(dirname "$CLONE_TUNNEL_LOG")"
+  touch "$CLONE_TUNNEL_LOG"
+  python3 -c '
+import shlex, sys
+
+appium, nohup, path, appium_home, home, udid, port, retry_count, log = sys.argv[1:]
+args = [
+    "/usr/bin/env", "PATH=" + path, "APPIUM_HOME=" + appium_home, "HOME=" + home,
+    nohup, appium, "driver", "run", "xcuitest", "tunnel-creation", "--",
+    "--udid", udid,
+    "--tunnel-registry-port", port,
+    "--disconnect-retry-max-attempts", retry_count,
+]
+print(" ".join(shlex.quote(arg) for arg in args)
+      + " >> " + shlex.quote(log) + " 2>&1 </dev/null &")
+' "$appium_bin" "$nohup_bin" "$launch_path" "$appium_home" "$user_home" "$udid" "$port" \
+    "${CLONE_TUNNEL_RETRY_MAX_ATTEMPTS:-0}" "$CLONE_TUNNEL_LOG"
+}
+
+_authorize_tunnel_with_gui() {
+  local launch_command="$1" osascript_bin="${CLONE_OSASCRIPT_BIN:-/usr/bin/osascript}"
+  local timeout="${CLONE_TUNNEL_AUTH_TIMEOUT:-120}"
+  [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || timeout=120
+  if [[ ! -x "$osascript_bin" ]]; then
+    echo "ERROR: macOS administrator authorization is unavailable: $osascript_bin" >&2
+    return 1
+  fi
+  echo "INFO: requesting macOS administrator authorization for the RemoteXPC TUN interface" >&2
+  python3 -c '
+import subprocess, sys
+
+osascript, command, timeout = sys.argv[1:]
+source = """on run argv
+  do shell script (item 1 of argv) with administrator privileges
+end run
+"""
+try:
+    completed = subprocess.run(
+        [osascript, "-", command], input=source, text=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        timeout=int(timeout), check=False,
+    )
+except subprocess.TimeoutExpired:
+    print("ERROR: macOS administrator authorization timed out", file=sys.stderr)
+    raise SystemExit(124)
+if completed.returncode:
+    message = (completed.stderr or "administrator authorization was cancelled").strip().splitlines()[0]
+    print("ERROR: RemoteXPC administrator authorization failed: " + message, file=sys.stderr)
+raise SystemExit(completed.returncode)
+' "$osascript_bin" "$launch_command" "$timeout"
+}
+
+_wait_for_tunnel() {
+  local udid="$1" tries="${CLONE_TUNNEL_START_TRIES:-60}"
+  local interval="${CLONE_TUNNEL_POLL_INTERVAL:-1}" i=0
+  [[ "$tries" =~ ^[1-9][0-9]*$ ]] || tries=60
+  while [[ "$i" -lt "$tries" ]]; do
+    if _tunnel_registry_ready "$udid"; then
+      echo "OK: RemoteXPC tunnel ready for $udid" >&2
+      return 0
+    fi
+    sleep "$interval"
+    i=$((i + 1))
+  done
+  return 1
+}
+
+_tunnel_manual_help() {
+  local udid="$1"
+  echo "ERROR: RemoteXPC tunnel is not ready for $udid at $CLONE_TUNNEL_REGISTRY_URL." >&2
+  echo "ERROR: approve the macOS administrator prompt, or run 'sudo -v' once and retry the same skill command." >&2
+  echo "ERROR: manual fallback: sudo appium driver run xcuitest tunnel-creation -- --udid '$udid'" >&2
+}
+
+_acquire_tunnel_start_lock() {
+  local lock="$1" owner=""
+  if mkdir "$lock" 2>/dev/null; then
+    printf '%s\n' "$$" >"$lock/owner"
+    return 0
+  fi
+  # mkdir is the atomic ownership boundary. The winner writes owner immediately
+  # afterwards, but a contender can observe the directory in that tiny window.
+  # Treat a missing/empty owner file as held instead of deleting a live lock.
+  [[ -s "$lock/owner" ]] || return 1
+  read -r owner <"$lock/owner" || return 1
+  if [[ "$owner" =~ ^[0-9]+$ ]] && ps -p "$owner" >/dev/null 2>&1; then
+    return 1
+  fi
+  rm -f "$lock/owner" 2>/dev/null || true
+  rmdir "$lock" 2>/dev/null || return 1
+  mkdir "$lock" 2>/dev/null || return 1
+  printf '%s\n' "$$" >"$lock/owner"
+}
+
+_start_tunnel() {
+  local udid="$1" port launch_command sudo_bin lock launched=0 result=1
+  if ! [[ "$udid" =~ ^[A-Za-z0-9-]+$ ]]; then
+    echo "ERROR: refusing unsafe RemoteXPC device identifier: $udid" >&2
+    return 1
+  fi
+  port="$(_tunnel_registry_port || true)"
+  if [[ -z "$port" ]]; then
+    echo "ERROR: automatic RemoteXPC setup only supports a local HTTP registry URL, got $CLONE_TUNNEL_REGISTRY_URL" >&2
+    return 1
+  fi
+  mkdir -p "$CLONE_STATE_DIR"
+  lock="$CLONE_STATE_DIR/remotexpc-tunnel-start.lock"
+  if ! _acquire_tunnel_start_lock "$lock"; then
+    echo "INFO: another device_wda.sh process is starting the RemoteXPC tunnel; waiting" >&2
+    if _wait_for_tunnel "$udid"; then return 0; fi
+    echo "ERROR: concurrent RemoteXPC startup did not publish $udid within the bounded poll" >&2
+    return 1
+  fi
+
+  if _tunnel_registry_ready "$udid"; then
+    echo "INFO: RemoteXPC tunnel became ready before startup; reusing it" >&2
+    result=0
+  elif ! _open_xcode_project_for_tunnel; then
+    result=1
+  elif ! launch_command="$(_tunnel_launch_command "$udid" "$port")"; then
+    result=1
+  else
+    sudo_bin="${CLONE_SUDO_BIN:-$(command -v sudo 2>/dev/null || true)}"
+    echo "INFO: starting managed RemoteXPC tunnel for $udid" >&2
+    if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n /bin/sh -c "$launch_command" >/dev/null 2>&1; then
+      launched=1
+    elif [[ "${CLONE_TUNNEL_GUI_AUTH:-1}" == "1" && -z "${CI:-}" ]] \
+      && _authorize_tunnel_with_gui "$launch_command"; then
+      launched=1
+    fi
+    if [[ "$launched" -eq 1 ]] && _wait_for_tunnel "$udid"; then
+      result=0
+    else
+      [[ "$launched" -eq 0 ]] \
+        && echo "ERROR: automatic RemoteXPC startup could not obtain administrator authorization" >&2
+      [[ "$launched" -eq 1 ]] \
+        && echo "ERROR: RemoteXPC startup did not publish $udid within the bounded poll — inspect $CLONE_TUNNEL_LOG" >&2
+      result=1
+    fi
+  fi
+
+  rm -f "$lock/owner" 2>/dev/null || true
+  rmdir "$lock" 2>/dev/null || true
+  return "$result"
+}
+
+_ensure_tunnel() {
   local udid="$1"
   _device_requires_tunnel "$udid" || return 0
   if _tunnel_registry_ready "$udid"; then
     echo "INFO: RemoteXPC tunnel ready for $udid" >&2
     return 0
   fi
-  echo "ERROR: iOS 18+ Appium sessions require a RemoteXPC tunnel for $udid, but the registry is unavailable at $CLONE_TUNNEL_REGISTRY_URL." >&2
-  echo "ERROR: run this once in another terminal and keep it running:" >&2
-  echo "ERROR:   sudo appium driver run xcuitest tunnel-creation -- --udid '$udid'" >&2
-  echo "ERROR: tunnel creation needs sudo for the macOS TUN interface, so device_wda.sh will not request a password or fake success." >&2
+  if [[ "${CLONE_AUTO_START_TUNNEL:-1}" != "1" ]]; then
+    _tunnel_manual_help "$udid"
+    return 1
+  fi
+  if _start_tunnel "$udid"; then return 0; fi
+  _tunnel_manual_help "$udid"
   return 1
 }
 
@@ -620,7 +819,7 @@ cmd_session() {
     echo "ERROR: no signing team — export DEVELOPMENT_TEAM=<10-char team id> (WDA must be signed to install on a real device)" >&2
     return 1
   fi
-  _require_tunnel "$udid" || return 1
+  _ensure_tunnel "$udid" || return 1
   _ensure_appium || return 1
   wda_bootstrap="$(_prepare_wda_bootstrap || true)"
   # Building + installing WDA on first run takes minutes; later runs reattach.
@@ -1046,7 +1245,7 @@ cmd_swipe() {
 cmd_doctor() {
   local want="${1:-}" bundle_id="${2:-}" failures=0 version drivers developer team
   local udids=() names=() target_udid="" target_name="" apps available_kb free_mb
-  local minimum_mb="${CLONE_MIN_DISK_MB:-2048}"
+  local minimum_mb="${CLONE_MIN_DISK_MB:-2048}" needs_tunnel=0
   echo "INFO: checking Appium, Xcode/CoreDevice, signing, target device, and disk"
 
   if command -v appium >/dev/null 2>&1; then
@@ -1104,8 +1303,8 @@ cmd_doctor() {
       if _tunnel_registry_ready "$target_udid"; then
         echo "OK: RemoteXPC tunnel is ready for $target_udid"
       else
-        echo "ERROR: RemoteXPC tunnel is missing for iOS 18+ target $target_udid — run 'sudo appium driver run xcuitest tunnel-creation -- --udid $target_udid' in another terminal" >&2
-        failures=$((failures + 1))
+        echo "INFO: RemoteXPC tunnel is missing for iOS 18+ target $target_udid — doctor will prepare it after the remaining checks pass"
+        needs_tunnel=1
       fi
     fi
   elif [[ "${#udids[@]}" -eq 0 ]]; then
@@ -1153,6 +1352,14 @@ raise SystemExit(0 if contains(json.load(sys.stdin).get("result", {})) else 1)
   else
     echo "ERROR: could not determine disk free space for $PWD" >&2
     failures=$((failures + 1))
+  fi
+
+  if [[ "$failures" -eq 0 && "$needs_tunnel" -eq 1 ]]; then
+    if _ensure_tunnel "$target_udid"; then
+      echo "OK: RemoteXPC tunnel prepared for $target_udid"
+    else
+      failures=$((failures + 1))
+    fi
   fi
 
   if [[ "$failures" -gt 0 ]]; then

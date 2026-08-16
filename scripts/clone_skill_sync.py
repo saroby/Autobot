@@ -2,7 +2,7 @@
 """Detect and repair drift between the clone skill SSOT and an installed plugin.
 
 The repository copy is authoritative while developing Autobot. Plugin caches are
-versioned, so this tool refuses to copy a 0.13.9 skill into a 0.13.8 package: a
+versioned, so this tool refuses to copy a newer skill into an older package: a
 matching package must be installed first. That keeps a convenient local repair
 from creating a mixed-version plugin whose prose promises scripts it does not
 ship.

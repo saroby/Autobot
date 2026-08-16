@@ -73,6 +73,28 @@ def device_details_json(
     }}})
 
 
+def start_tunnel_registry(marker: Path, udid: str = "00008101-AAA"):
+    """Return a local registry that publishes the target only after marker exists."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            tunnels = [{"udid": udid}] if marker.exists() else []
+            body = json.dumps({"tunnels": tunnels}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
 def run_device(
     devices: list[tuple[str, str, str]],
     *argv: str,
@@ -245,6 +267,73 @@ class TestSigningTeamResolution(unittest.TestCase):
                 capture_output=True, text=True, env=env,
             )
 
+    def _automatic_tunnel_env(self, root: Path, marker: Path, registry_port: int):
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        order_log = root / "order.log"
+        appium_log = root / "appium-args.log"
+        sudo_log = root / "sudo-args.log"
+
+        opener = bin_dir / "open"
+        opener.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf 'open\\n' >> \"$CLONE_TEST_ORDER_LOG\"\n",
+            encoding="utf-8",
+        )
+        appium = bin_dir / "appium"
+        appium.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf 'tunnel\\n' >> \"$CLONE_TEST_ORDER_LOG\"\n"
+            "printf '%s\\n' \"$*\" >> \"$CLONE_TEST_APPIUM_ARGS\"\n"
+            "sleep \"${CLONE_TEST_TUNNEL_DELAY:-0}\"\n"
+            "touch \"$CLONE_TEST_TUNNEL_MARKER\"\n",
+            encoding="utf-8",
+        )
+        sudo = bin_dir / "sudo"
+        sudo.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ \"${CLONE_TEST_SUDO_FAIL:-0}\" == \"1\" ]]; then exit 1; fi\n"
+            "printf '%s\\n' \"$*\" >> \"$CLONE_TEST_SUDO_ARGS\"\n"
+            "[[ \"${1:-}\" == \"-n\" ]] && shift\n"
+            "exec \"$@\"\n",
+            encoding="utf-8",
+        )
+        for executable in (opener, appium, sudo):
+            executable.chmod(0o755)
+
+        profile = root / "device-profile.json"
+        profile.write_text(json.dumps({
+            "udid": "00008101-AAA",
+            "osVersion": "26.5.2",
+        }), encoding="utf-8")
+        project = root / "CloneWorkspace.xcodeproj"
+        project.mkdir()
+        state = root / "state"
+        env = {
+            **os.environ,
+            "HOME": str(root / "home"),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "CI": "1",
+            "DEVELOPMENT_TEAM": "72J2BT27K5",
+            "CLONE_DEVICE_PROFILE_FILE": str(profile),
+            "CLONE_XCODE_PROJECT": str(project),
+            "CLONE_STATE_DIR": str(state),
+            "CLONE_SUDO_BIN": str(sudo),
+            "CLONE_TUNNEL_REGISTRY_URL": (
+                f"http://127.0.0.1:{registry_port}/remotexpc/tunnels"
+            ),
+            "CLONE_TUNNEL_START_TRIES": "30",
+            "CLONE_TUNNEL_POLL_INTERVAL": "0.02",
+            "CLONE_TUNNEL_STATUS_TIMEOUT": "0.1",
+            "CLONE_AUTO_START_APPIUM": "0",
+            "APPIUM_URL": "http://127.0.0.1:1",
+            "CLONE_TEST_ORDER_LOG": str(order_log),
+            "CLONE_TEST_APPIUM_ARGS": str(appium_log),
+            "CLONE_TEST_SUDO_ARGS": str(sudo_log),
+            "CLONE_TEST_TUNNEL_MARKER": str(marker),
+        }
+        return env, state, order_log, appium_log, sudo_log
+
     def test_reads_team_id_from_global_env(self):
         r = self._run("TEAM_ID=72J2BT27K5\n")
         self.assertNotIn("no signing team", r.stderr)
@@ -331,7 +420,7 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(quit_result.returncode, 0, msg=quit_result.stderr)
         self.assertFalse(descriptor_exists_after_quit)
 
-    def test_ios_18_plus_profile_requires_remotexpc_before_starting_appium(self):
+    def test_ios_18_plus_profile_can_opt_out_of_tunnel_auto_start(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             profile = root / "device-profile.json"
@@ -344,6 +433,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                 "DEVELOPMENT_TEAM": "72J2BT27K5",
                 "CLONE_DEVICE_PROFILE_FILE": str(profile),
                 "CLONE_TUNNEL_READY": "0",
+                "CLONE_AUTO_START_TUNNEL": "0",
                 "CLONE_AUTO_START_APPIUM": "0",
                 "APPIUM_URL": "http://127.0.0.1:1",
             }
@@ -381,6 +471,208 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("RemoteXPC tunnel", result.stderr)
         self.assertIn("Appium did not answer", result.stderr)
+
+    def test_existing_tunnel_is_reused_without_opening_xcode_or_starting_another(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "ready"
+            server, thread = start_tunnel_registry(marker)
+            try:
+                env, state, order_log, appium_log, sudo_log = self._automatic_tunnel_env(
+                    root, marker, server.server_port,
+                )
+                env["CLONE_TUNNEL_READY"] = "1"
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                    capture_output=True, text=True, env=env, timeout=5,
+                )
+                order_exists = order_log.exists()
+                appium_exists = appium_log.exists()
+                sudo_exists = sudo_log.exists()
+                lock_exists = (state / "remotexpc-tunnel-start.lock").exists()
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("RemoteXPC tunnel ready", result.stderr)
+        self.assertIn("Appium did not answer", result.stderr)
+        self.assertFalse(order_exists)
+        self.assertFalse(appium_exists)
+        self.assertFalse(sudo_exists)
+        self.assertFalse(lock_exists)
+
+    def test_missing_tunnel_opens_xcode_then_starts_and_verifies_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "ready"
+            server, thread = start_tunnel_registry(marker)
+            try:
+                env, state, order_log, appium_log, sudo_log = self._automatic_tunnel_env(
+                    root, marker, server.server_port,
+                )
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                    capture_output=True, text=True, env=env, timeout=5,
+                )
+                order_lines = order_log.read_text(encoding="utf-8").splitlines()
+                appium_args = appium_log.read_text(encoding="utf-8")
+                sudo_args = sudo_log.read_text(encoding="utf-8")
+                lock_exists = (state / "remotexpc-tunnel-start.lock").exists()
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(result.returncode, 1, msg=result.stderr)
+        self.assertEqual(order_lines, ["open", "tunnel"])
+        self.assertIn("driver run xcuitest tunnel-creation -- --udid 00008101-AAA", appium_args)
+        self.assertIn(f"--tunnel-registry-port {server.server_port}", appium_args)
+        self.assertIn("--disconnect-retry-max-attempts 0", appium_args)
+        self.assertIn("-n /bin/sh -c", sudo_args)
+        self.assertIn("RemoteXPC tunnel ready for 00008101-AAA", result.stderr)
+        self.assertIn("Appium did not answer", result.stderr)
+        self.assertFalse(lock_exists)
+
+    def test_headless_authorization_failure_returns_without_waiting_for_password(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "ready"
+            server, thread = start_tunnel_registry(marker)
+            try:
+                env, state, order_log, appium_log, _sudo_log = self._automatic_tunnel_env(
+                    root, marker, server.server_port,
+                )
+                env["CLONE_TEST_SUDO_FAIL"] = "1"
+                started_at = time.monotonic()
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                    capture_output=True, text=True, env=env, timeout=5,
+                )
+                elapsed = time.monotonic() - started_at
+                order_lines = order_log.read_text(encoding="utf-8").splitlines()
+                appium_exists = appium_log.exists()
+                lock_exists = (state / "remotexpc-tunnel-start.lock").exists()
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertLess(elapsed, 4)
+        self.assertEqual(order_lines, ["open"])
+        self.assertFalse(appium_exists)
+        self.assertIn("could not obtain administrator authorization", result.stderr)
+        self.assertIn("sudo -v", result.stderr)
+        self.assertFalse(lock_exists)
+
+    def test_gui_authorization_fallback_starts_tunnel_after_sudo_cache_miss(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "ready"
+            server, thread = start_tunnel_registry(marker)
+            try:
+                env, _state, _order_log, _appium_log, _sudo_log = self._automatic_tunnel_env(
+                    root, marker, server.server_port,
+                )
+                osascript_log = root / "osascript.log"
+                osascript = root / "bin" / "osascript"
+                osascript.write_text(
+                    "#!/usr/bin/env bash\n"
+                    "printf '%s\\n' \"$*\" >> \"$CLONE_TEST_OSASCRIPT_ARGS\"\n"
+                    "exec /bin/sh -c \"$2\"\n",
+                    encoding="utf-8",
+                )
+                osascript.chmod(0o755)
+                env.pop("CI")
+                env.update({
+                    "CLONE_TEST_SUDO_FAIL": "1",
+                    "CLONE_OSASCRIPT_BIN": str(osascript),
+                    "CLONE_TEST_OSASCRIPT_ARGS": str(osascript_log),
+                })
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                    capture_output=True, text=True, env=env, timeout=5,
+                )
+                osascript_args = osascript_log.read_text(encoding="utf-8")
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(result.returncode, 1, msg=result.stderr)
+        self.assertIn("requesting macOS administrator authorization", result.stderr)
+        self.assertIn("tunnel-creation", osascript_args)
+        self.assertIn("RemoteXPC tunnel ready for 00008101-AAA", result.stderr)
+        self.assertIn("Appium did not answer", result.stderr)
+
+    def test_registry_with_only_another_udid_never_unblocks_session(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "ready"
+            server, thread = start_tunnel_registry(marker, udid="00008120-OTHER")
+            try:
+                env, state, _order_log, _appium_log, sudo_log = self._automatic_tunnel_env(
+                    root, marker, server.server_port,
+                )
+                env["CLONE_TUNNEL_START_TRIES"] = "10"
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                    capture_output=True, text=True, env=env, timeout=5,
+                )
+                tunnel_launch_count = len(sudo_log.read_text(encoding="utf-8").splitlines())
+                lock_exists = (state / "remotexpc-tunnel-start.lock").exists()
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(tunnel_launch_count, 1)
+        self.assertIn("did not publish 00008101-AAA", result.stderr)
+        self.assertNotIn("Appium did not answer", result.stderr)
+        self.assertFalse(lock_exists)
+
+    def test_concurrent_sessions_start_only_one_tunnel(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "ready"
+            server, thread = start_tunnel_registry(marker)
+            try:
+                env, state, _order_log, appium_log, _sudo_log = self._automatic_tunnel_env(
+                    root, marker, server.server_port,
+                )
+                env["CLONE_TEST_TUNNEL_DELAY"] = "0.2"
+                command = [
+                    "bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target",
+                ]
+                first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         text=True, env=env)
+                second = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          text=True, env=env)
+                try:
+                    first_stdout, first_stderr = first.communicate(timeout=10)
+                    second_stdout, second_stderr = second.communicate(timeout=10)
+                finally:
+                    for process in (first, second):
+                        if process.poll() is None:
+                            process.terminate()
+                            process.communicate(timeout=2)
+                appium_start_count = len(appium_log.read_text(encoding="utf-8").splitlines())
+                lock_exists = (state / "remotexpc-tunnel-start.lock").exists()
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(first.returncode, 1, msg=first_stdout + first_stderr)
+        self.assertEqual(second.returncode, 1, msg=second_stdout + second_stderr)
+        self.assertEqual(appium_start_count, 1)
+        combined = first_stderr + second_stderr
+        self.assertIn("another device_wda.sh process is starting", combined)
+        self.assertGreaterEqual(combined.count("RemoteXPC tunnel ready"), 2)
+        self.assertFalse(lock_exists)
 
     def test_session_uses_isolated_wda_copy_when_appium_source_exists(self):
         received: dict = {}
@@ -978,6 +1270,51 @@ class TestManagedAppiumDoctorAndMetrics(unittest.TestCase):
         self.assertIn("no connected physical iPhone", output)
         self.assertIn("disk free", output)
         self.assertIn("doctor found", output)
+
+    def test_doctor_prepares_missing_tunnel_after_other_checks_pass(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            appium = bin_dir / "appium"
+            appium.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == \"--version\" ]]; then echo 3.5.2; exit 0; fi\n"
+                "if [[ \"$1 $2 $3\" == \"driver list --installed\" ]]; then echo xcuitest; exit 0; fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            appium.chmod(0o755)
+            lib = root / "wda-lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            ensured = root / "ensured.txt"
+            command = f"""
+source '{lib}'
+_appium_status() {{ return 0; }}
+_team() {{ printf '72J2BT27K5'; }}
+_collect_connected_devices() {{ udids=('00008101-AAA'); names=('Phone'); }}
+_persist_device_profile() {{ return 0; }}
+_device_requires_tunnel() {{ return 0; }}
+_tunnel_registry_ready() {{ return 1; }}
+_ensure_tunnel() {{ printf '%s\\n' "$1" > '{ensured}'; return 0; }}
+cmd_doctor
+"""
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "CLONE_MIN_DISK_MB": "0",
+                "APPIUM_URL": "http://127.0.0.1:1",
+            }
+            result = subprocess.run(
+                ["bash", "-c", command], capture_output=True, text=True, env=env,
+            )
+            ensured_udid = ensured.read_text(encoding="utf-8").strip()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertEqual(ensured_udid, "00008101-AAA")
+        self.assertIn("RemoteXPC tunnel prepared", result.stdout)
+        self.assertIn("doctor passed", result.stdout)
 
     def test_http_metrics_do_not_corrupt_response_body(self):
         payload = {"value": {"ready": True}, "sentinel": "body"}

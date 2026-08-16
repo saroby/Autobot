@@ -48,7 +48,7 @@ description: Use when reproducing an existing iOS app's screens so they look and
 python3 scripts/clone_skill_sync.py check
 ```
 
-같은 버전이 설치되어 있고 스킬이 참조하는 clone runtime 스크립트의 존재·해시가 모두 같은데 **스킬 문서만** drift한 경우에만, 변경을 검토한 뒤 `sync`를 쓴다. 저장소가 0.13.9이고 설치본이 0.13.8인 것처럼 버전이 다르거나 스크립트가 빠졌으면 동기화하지 않는다. 먼저 일치하는 플러그인 패키지를 설치·reload해야 하며, 새 문서와 옛 스크립트를 섞어 실행하지 않는다.
+같은 버전이 설치되어 있고 스킬이 참조하는 clone runtime 스크립트의 존재·해시가 모두 같은데 **스킬 문서만** drift한 경우에만, 변경을 검토한 뒤 `sync`를 쓴다. 저장소와 설치본의 버전이 다르거나 스크립트가 빠졌으면 동기화하지 않는다. 먼저 일치하는 플러그인 패키지를 설치·reload해야 하며, 새 문서와 옛 스크립트를 섞어 실행하지 않는다.
 
 ### Step 0b — clone workspace 준비
 
@@ -79,13 +79,11 @@ sid="$(scripts/device_wda.sh session "$udid" "$bundle_id")"
 
 `session`은 로컬 `APPIUM_URL`이 응답하지 않으면 Appium을 자동 시작하고, 같은 UDID·bundle ID·서버의 살아 있는 세션이 있으면 `.autobot/clone/wda-session.json`에서 재사용한다. 자동 시작을 끄려면 `CLONE_AUTO_START_APPIUM=0`, 재사용을 끄려면 `CLONE_SESSION_REUSE=0`을 쓴다. 이 스크립트가 시작한 서버만 `scripts/device_wda.sh stop-server`로 종료할 수 있다. HTTP 병목을 계측할 때만 `CLONE_METRICS=1`을 켜며 원시 요청 시간은 `.autobot/clone/http-metrics.jsonl`에 남는다.
 
-iOS 18+ 물리 기기는 CoreDevice의 `connected` 상태와 별도로 Appium xcuitest RemoteXPC tunnel이 필요하다. `doctor`와 `session`은 `http://127.0.0.1:42314/remotexpc/tunnels`에 대상 UDID가 있는지 먼저 확인한다. 없으면 다음 명령을 **별도 터미널에서 실행하고 계속 켜 둔다**.
+iOS 18+ 물리 기기는 CoreDevice의 `connected` 상태와 별도로 Appium xcuitest RemoteXPC tunnel이 필요하다. `doctor`와 `session`은 `http://127.0.0.1:42314/remotexpc/tunnels`에 **대상 UDID**가 있는지 먼저 확인한다. 이미 있으면 그대로 재사용하며 Xcode나 tunnel 프로세스를 다시 띄우지 않는다.
 
-```bash
-sudo appium driver run xcuitest tunnel-creation -- --udid "$udid"
-```
+없으면 `doctor`가 다른 기기·서명·설치·디스크 검사를 모두 통과한 뒤 자동 준비한다. 순서는 `clone workspace 준비 → Xcode에서 프로젝트 열기(백그라운드, 빌드·실행 안 함) → RemoteXPC tunnel 시작 → registry에서 대상 UDID 확인 → WDA session`이다. Xcode 프로젝트 자체는 tunnel 명령의 입력이 아니지만, CoreDevice 연결과 개발자 서비스를 안정화하는 선행 복구 단계이므로 tunnel보다 먼저 연다.
 
-이 단계는 macOS TUN 인터페이스 생성 때문에 sudo가 필요하다. 스킬은 비밀번호를 요청하거나 성공을 위조하지 않고 정확한 명령과 함께 중지한다. custom registry를 쓰면 `CLONE_TUNNEL_REGISTRY_URL`을 지정한다.
+macOS TUN 인터페이스 생성에는 관리자 권한이 필요하다. 캐시된 `sudo` 권한이 있으면 비대화식으로 시작하고, 없으면 macOS 표준 관리자 인증 창을 한 번 띄운다. 인증이 취소되거나 CI처럼 GUI를 쓸 수 없으면 기다리며 멈추지 않고 `sudo -v` 후 같은 스킬 명령을 다시 실행하라고 안내한다. 자동 시작을 끄려면 `CLONE_AUTO_START_TUNNEL=0`, GUI 인증을 끄려면 `CLONE_TUNNEL_GUI_AUTH=0`을 쓴다. custom local registry는 `CLONE_TUNNEL_REGISTRY_URL`로 지정한다. 시작 후 대상 UDID가 실제 registry에 나타나지 않으면 성공으로 간주하지 않으며 로그는 `.autobot/clone/remotexpc-tunnel.log`에 남는다.
 
 예를 들어 Threads는 기기·릴리스에 따라 식별자가 달라질 수 있으므로 `com.instagram.barcelona`를 고정하지 않는다. 이 회차의 `heewook의 iPhone`에서는 `Threads`가 `com.burbn.barcelona`로 확인됐다. `--include-all-apps`를 생략해 앱이 보이지 않거나, 다른 기기의 목록을 보고 미설치로 결론내리면 안 된다. 대상 앱 자체는 Debug 빌드일 필요가 없으며, 기기에 설치되는 WDA runner만 개발자 서명이 필요하다.
 
@@ -287,4 +285,4 @@ python3 scripts/clone_flow_codegen.py generate \
 
 ## Preconditions
 
-- `autobot-copy-analyze` 와 동일: Appium + xcuitest, `DEVELOPMENT_TEAM`, iPhone 1대 연결 + 잠금 해제 + Developer Mode + Trust + **UI 자동화 ON**, 설치된 대상 bundle ID. 로컬 Appium 서버는 `session`이 자동 시작할 수 있지만 iOS 18+ RemoteXPC tunnel, 설치·driver·서명·기기·디스크 조건은 `doctor`에서 통과해야 한다. 미충족 시 중지.
+- `autobot-copy-analyze` 와 동일: Appium + xcuitest, `DEVELOPMENT_TEAM`, iPhone 1대 연결 + 잠금 해제 + Developer Mode + Trust + **UI 자동화 ON**, 설치된 대상 bundle ID. 로컬 Appium 서버와 iOS 18+ RemoteXPC tunnel은 `doctor`/`session`이 필요할 때 자동 준비한다. 설치·driver·서명·기기·디스크 조건 또는 관리자 인증이 충족되지 않으면 중지한다.

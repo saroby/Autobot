@@ -38,7 +38,7 @@ allowed-tools:
 ## CRITICAL RULES
 
 1. **복제 금지 경계** — 이름·로고·상표·에셋·문구를 그대로 옮기지 않는다. 재구성은 *방향*이지 *복제물*이 아니다. 브리프 상단에 경계를 명시한다.
-2. **기기와 대상 바인딩 없으면 중지** — `device_wda.sh device` → `device_wda.sh session <udid> <bundle_id>` 두 게이트를 먼저 통과해야 한다. 미연결·다중 연결·Appium 미기동·서명 누락·UI 자동화 OFF·대상 bundle ID 누락/미설치면 안내만 하고 **종료한다**. 스토어 메타만으로 브리프를 만들지 않는다.
+2. **기기와 대상 바인딩 없으면 중지** — `device_wda.sh device` → `device_wda.sh session <udid> <bundle_id>` 두 게이트를 먼저 통과해야 한다. 로컬 Appium과 iOS 18+ RemoteXPC tunnel은 필요할 때 자동 준비한다. 미연결·다중 연결·관리자 인증 실패·서명 누락·UI 자동화 OFF·대상 bundle ID 누락/미설치면 안내만 하고 **종료한다**. 스토어 메타만으로 브리프를 만들지 않는다.
 3. **탭 후보 밖은 탭 금지** — 자율 탐험은 `device_wda.sh candidates` 가 내보낸 `INFO: tap` 목록 안에서만 움직인다. 파괴적 라벨(삭제·구매·구독·로그아웃…)은 후보에서 제외되며, 좌표를 임의로 지어내 탭하지 않는다. 시스템 다이얼로그·로그인·페이월을 만나면 멈추고 사용자에게 넘긴다.
 4. **파이프라인 상태 위조 금지** — 이 명령은 gate-valid `build-state.json`/`architecture.json` 을 만들지 않는다. 브리프는 architect 의 *입력*이고, `/autobot:plan`·`/autobot:mvp` 가 정식 산출을 만든다.
 5. **부분 성공 = 성공** — 기기 게이트만 통과했다면, 일부 화면 캡처 실패·접근성 차단은 중지 사유가 아니다. 커버한 화면까지로 브리프를 쓰고 한계를 명시한다.

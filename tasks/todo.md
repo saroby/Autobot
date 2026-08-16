@@ -296,3 +296,48 @@
 - 설치본을 갱신하려면 0.13.9 플러그인 패키지를 설치/reload한 뒤 `clone_skill_sync.py check`를 다시 통과시킨다.
 
 ---
+
+# RemoteXPC 터널 자동 준비 — 2026-08-15
+
+## 목표와 수용 조건
+
+`autobot-clone-app`의 실기기 WDA 세션이 iOS 18+ RemoteXPC 터널을 별도 수동 명령 없이 준비하고, 기존 터널은 재사용하며, 관리자 인증이 불가능한 환경에서는 멈추지 않고 정확한 복구 방법을 제시한다.
+
+- [x] iOS 18+ 실기기이면서 해당 UDID 터널이 없을 때만 자동 시작한다.
+- [x] 이미 등록된 터널과 동시 시작 중인 프로세스를 재사용하고 중복 생성하지 않는다.
+- [x] 비대화식 환경에서 `sudo` 비밀번호를 기다리며 멈추지 않는다.
+- [x] 시작 후 레지스트리에 대상 UDID가 나타난 것을 확인해야 WDA 세션으로 진행한다.
+- [x] 자동 시작을 끄는 명시적 환경변수와 실패 시 실행 가능한 안내를 제공한다.
+- [x] 회귀 테스트, 셸 문법, 문서 검사, 전체 테스트를 실행한다.
+
+## 체크리스트
+
+- [x] 기존 터널/Appium 수명주기와 테스트 fixture 조사
+- [x] 터널 자동 시작·잠금·준비 대기 구현
+- [x] 회귀 테스트와 clone 스킬 계약 동기화
+- [x] 대상/전체 검증 실행
+- [x] Results와 Working Notes 기록
+
+## Results
+
+- `doctor`와 `session`이 iOS 18+ 대상 UDID의 RemoteXPC registry 상태를 함께 확인한다. 터널이 없으면 clone Xcode 프로젝트를 먼저 `open -g -a Xcode`로 연 뒤, 캐시된 `sudo -n` 또는 macOS 관리자 인증창으로 Appium tunnel을 백그라운드 시작하고 대상 UDID가 실제 registry에 나타날 때까지 bounded poll한다.
+- 기존 터널은 즉시 재사용하고, 동시 호출은 atomic lock으로 한 프로세스만 시작한다. owner 파일 기록 전의 짧은 구간도 활성 lock으로 취급해 중복 tunnel을 막는다. CI/비대화식 권한 실패는 멈추지 않고 `sudo -v` 재시도와 정확한 수동 fallback을 출력한다.
+- clone/copy 스킬과 command 문서를 자동 준비 계약에 맞췄다. `CLONE_AUTO_START_TUNNEL=0`으로 자동 시작을 끌 수 있고, 로그는 `.autobot/clone/remotexpc-tunnel.log`에 남는다.
+- 검증: `bash -n`, RemoteXPC/skill sync 회귀 44건, 동시 시작 테스트 20회 반복, `verify_spec_docs.py`, `git diff --check`가 통과했다. 전체 suite는 1,188건을 실행했고 최초 4건 실패 중 이번 동시성 실패는 수정 후 반복/대상 suite에서 통과했다. 나머지 3건은 변경하지 않은 `visual_contract.py`가 설치된 Pillow 11.3의 미지원 API를 호출하는 기존 호환성 실패로 단독 재현했다.
+
+## Working Notes
+
+- 현재 `_require_tunnel`은 OS/레지스트리 판정까지 수행하지만 터널이 없으면 별도 터미널 명령을 출력하고 종료한다.
+- `sudo -n true`는 현재 `a password is required`이므로, 테스트/에이전트 비대화식 실행은 암호 프롬프트를 열지 않는 경로가 필요하다.
+- 자동 시작 기본값은 활성화하되, 권한이 이미 캐시되었거나 제한된 sudo 정책이 준비된 경우에만 백그라운드 실행한다. 그렇지 않으면 한 번의 `sudo -v` 인증 후 같은 스킬 명령을 재실행하도록 안내한다.
+- Xcode 프로젝트는 tunnel-creation 명령의 입력은 아니지만, clone 흐름에서는 workspace 준비와 CoreDevice 연결 안정화를 선행하기 위해 tunnel 요청 전에 연다. 프로젝트를 빌드하거나 실행할 필요는 없다.
+- 저장소 스킬을 수정했으며 현재 세션에 이미 로드된 설치본에는 재설치/reload 전까지 반영되지 않는다.
+
+---
+
+# Autobot 0.13.10 패치 릴리스 — 2026-08-16
+
+- [x] 변경 범위, 브랜치, 원격 및 최근 릴리스 커밋 규칙 확인
+- [x] 플러그인·Python·lock 버전을 0.13.10으로 정렬하고 changelog 확정
+- [x] 릴리스 메타데이터와 RemoteXPC 회귀 검증
+- [x] 의도한 0.13.10 릴리스 파일만 커밋 대상으로 확정

@@ -206,5 +206,5 @@ scripts/device_wda.sh quit "$sid"
 
 ## Preconditions
 
-- **필수** — Appium + xcuitest 드라이버, 기동 중인 Appium 서버, `DEVELOPMENT_TEAM`, iPhone **1대** USB 연결 + 잠금 해제 + Developer Mode + Trust + **UI 자동화 ON**. 미충족 시 스킬 중지.
+- **필수** — Appium + xcuitest 드라이버, `DEVELOPMENT_TEAM`, iPhone **1대** USB 연결 + 잠금 해제 + Developer Mode + Trust + **UI 자동화 ON**. 로컬 Appium 서버와 iOS 18+ RemoteXPC tunnel은 `device_wda.sh session`이 필요할 때 자동 준비하며, tunnel 전에는 지정된 Xcode 프로젝트가 있으면 먼저 연다. 관리자 인증이 취소되거나 다른 필수 조건이 미충족이면 스킬을 중지한다.
 - **권장** — `mcp-appstore` MCP 도구(`mcp__mcp-appstore__*`). 없으면 Step 1 을 건너뛰고 기기 캡처만으로 브리프를 만들되, Hook & Retention 근거가 약해진다고 밝힌다.

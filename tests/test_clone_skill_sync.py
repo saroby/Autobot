@@ -109,5 +109,20 @@ class CloneSkillSyncTests(unittest.TestCase):
         self.assertEqual(installed.read_text(encoding="utf-8"), self.source.read_text(encoding="utf-8"))
 
 
+class CloneSkillContractTests(unittest.TestCase):
+    def test_remote_xpc_auto_start_contract_matches_command_surface(self):
+        skill = (ROOT / "skills" / "autobot-clone-app" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        command = (ROOT / "commands" / "clone.md").read_text(encoding="utf-8")
+
+        for text in (skill, command):
+            self.assertIn("CLONE_AUTO_START_TUNNEL=0", text)
+            self.assertIn("대상 UDID", text)
+            self.assertIn("Xcode", text)
+        self.assertIn("macOS 표준 관리자 인증", skill)
+        self.assertIn("remotexpc-tunnel.log", skill)
+
+
 if __name__ == "__main__":
     unittest.main()

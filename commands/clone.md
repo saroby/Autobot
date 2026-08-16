@@ -24,7 +24,7 @@ allowed-tools:
 - **시작 준비** — `scripts/clone_workspace.sh prepare`로 `.autobot/clone/project/CloneWorkspace.xcodeproj`를 만들고, `CLONE_XCODE_PROJECT`를 지정한 뒤 기기 게이트를 실행한다. Xcode workspace는 CoreDevice 복구와 이후 구현 빌드에 사용하며, 관찰 전에 실행하지 않는다.
 - **WDA 서명 격리** — `scripts/device_wda.sh session`은 기본적으로 WDA를 `.autobot/clone/wda`에 복사해 서명 후 bundle 변형 충돌을 격리한다. `CLONE_WDA_REFRESH=1`은 복사본을 갱신하고, 전역 Appium WDA를 직접 수정하지 않는다.
 
-탐험은 **중단돼도 이어서 한다** — `session`은 같은 대상의 살아 있는 세션을 재사용하고 필요하면 로컬 Appium을 자동 시작한다. iOS 18+는 별도 RemoteXPC tunnel이 필요하며, sudo가 필요한 tunnel을 플러그인이 몰래 띄우지 않고 `doctor`가 공식 명령을 제시한다. 탭은 `device_wda.sh step`으로 settle XML·도착 PNG·flow를 한 번에 남긴다. `device_flow.py next/stats`는 raw target과 반복 행을 묶은 behavior class 커버리지를 함께 복원하며, 키보드·정적 문구는 제외하고 팔로우/좋아요/게시 같은 상태 변경은 `withheld`로 보류한다. coarse `node`와 포커스·키보드·선택을 포함한 `state`를 분리하므로 같은 화면의 상호작용 상태를 잃지 않는다.
+탐험은 **중단돼도 이어서 한다** — `session`은 같은 대상의 살아 있는 세션을 재사용하고 필요하면 로컬 Appium을 자동 시작한다. iOS 18+ RemoteXPC tunnel이 없으면 `doctor`/`session`이 clone Xcode 프로젝트를 먼저 연 뒤 관리자 인증을 거쳐 자동 시작하고, registry에서 대상 UDID를 확인해야 계속한다. 기존 tunnel은 재사용하며 `CLONE_AUTO_START_TUNNEL=0`으로 자동 시작을 끌 수 있다. 탭은 `device_wda.sh step`으로 settle XML·도착 PNG·flow를 한 번에 남긴다. `device_flow.py next/stats`는 raw target과 반복 행을 묶은 behavior class 커버리지를 함께 복원하며, 키보드·정적 문구는 제외하고 팔로우/좋아요/게시 같은 상태 변경은 `withheld`로 보류한다. coarse `node`와 포커스·키보드·선택을 포함한 `state`를 분리하므로 같은 화면의 상호작용 상태를 잃지 않는다.
 
 반복 후처리는 `clone_postprocess.py --workers 4 --extract-assets`, 관찰 전이 연결은 `clone_flow_codegen.py`, 렌더는 `device_render.sh ... auto ...`, 대조는 `device_compare.py --measure ... --heatmap ...`를 기본 경로로 사용한다. 자세한 옵션·중지 조건은 SSOT 스킬을 따른다.
 

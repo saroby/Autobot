@@ -1,5 +1,11 @@
 # Lessons — Autobot 구조 개선 (2026-04-27)
 
+## 2026-08-15 장시간 전체 테스트 추적
+
+- **실패 모드**: `tests/run_tests.sh`가 출력 없이 계속 실행 중인데 완료 여부를 확인하려고 같은 전체 suite를 두 번 더 시작했다.
+- **검출 신호**: `ps`에서 같은 worktree의 `python3 -m unittest discover`가 서로 다른 PID로 3개 동시에 실행 중이었다.
+- **방지 규칙**: 장시간 검증은 최초 `exec_command`가 반환한 session ID 하나만 `write_stdin`으로 추적한다. 요약 출력이 필요해도 새 suite를 시작하지 말고 기존 프로세스 상태를 먼저 조회한다.
+
 ## 2026-08-15 clone target app listing
 
 - **실패 모드**: `devicectl device info apps`의 기본 목록을 전체 설치 앱 목록으로 해석하고, 다른 릴리스에서 본 Threads bundle ID를 고정해 WDA 대상 앱을 잘못 지정했다.
@@ -378,6 +384,12 @@
 - 실패 모드: 관리형 Appium의 bounded-start 테스트가 0.25초 안에 fake 프로세스의 첫 줄 기록까지 요구해, 여러 Xcode MCP가 함께 도는 호스트에서 프로세스가 스케줄되기 전에 종료되어 한 번 실패했다. 같은 테스트를 단독 실행하면 통과해 기능 결함과 구분됐다.
 - 검출 신호: 스크립트는 pid와 bounded-poll 오류를 정상 기록했지만 fake Appium의 side-effect 파일과 stdout log만 비어 있었고, 단독 재실행은 green이었다.
 - 예방 규칙: 비동기 프로세스 시작 테스트는 전체 timeout을 짧게 유지하되, CI/개발 호스트 스케줄링 지연을 흡수할 최소 wall-time을 준다. readiness의 엄격함과 첫 프로세스 instruction이 실행될 시간은 별도 계약으로 본다.
+
+## 2026-08-15 — lock directory 생성과 owner 기록은 하나의 atomic 연산이 아니다
+
+- 실패 모드: RemoteXPC 시작 lock을 `mkdir`로 획득한 직후 owner 파일을 썼는데, 동시 프로세스가 그 사이의 빈 directory를 stale lock으로 지우고 두 번째 tunnel을 시작했다.
+- 검출 신호: 단독 테스트는 통과했지만 전체 suite의 동시 세션 테스트에서 Appium start log가 2줄이 됐고, 짧은 반복 실행으로 경쟁 조건을 재현했다.
+- 예방 규칙: `mkdir` 성공 자체를 소유권 경계로 본다. contender가 owner 파일이 없거나 비어 있는 lock을 관찰하면 초기화 중인 활성 lock으로 취급하고, 유효한 owner PID가 확인된 경우에만 생존 여부를 판단해 stale cleanup한다.
 
 ## 2026-08-15 — zsh에서 변수 뒤 Git refspec을 붙일 때 변수 경계를 명시한다
 

@@ -2,11 +2,16 @@
 
 이 파일은 Autobot 플러그인의 주요 변경을 기록한다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르고, 버전은 [Semantic Versioning](https://semver.org/)을 사용한다.
 
-## [Unreleased]
+## [0.13.10] — 2026-08-16
+
+### Changed — iOS 18+ RemoteXPC tunnel을 clone 스킬이 자동 준비한다
+- `doctor`와 `session`이 대상 UDID의 tunnel을 재사용하고, 없을 때만 clone Xcode 프로젝트를 먼저 연 뒤 Appium `tunnel-creation`을 백그라운드로 시작한다. 시작 프로세스가 살아 있다는 사실만으로 통과하지 않고 registry에 **대상 UDID**가 실제 나타날 때까지 bounded poll한다.
+- 캐시된 `sudo -n`을 우선 사용하고, 대화형 macOS에서는 표준 관리자 인증창으로 전환한다. CI·headless 환경이나 인증 취소에서는 비밀번호 입력을 기다리며 멈추지 않고 `sudo -v` 재시도와 정확한 수동 fallback을 안내한다. `CLONE_AUTO_START_TUNNEL=0`과 `CLONE_TUNNEL_GUI_AUTH=0`으로 각각 자동 시작과 GUI 인증을 끌 수 있다.
+- 동시 `doctor`/`session` 호출은 atomic lock을 공유한다. `mkdir` 직후 owner 파일이 아직 비어 있는 짧은 구간도 활성 lock으로 취급해 중복 tunnel을 막고, 시작 로그는 `.autobot/clone/remotexpc-tunnel.log`에 남긴다.
 
 ### Added — `/autobot:clone` 반복 가능한 고속 수집·재현 파이프라인
 - `device_wda.sh doctor/step/stop-server`: Appium·Xcode·서명·기기·앱·디스크 preflight, 탭→settle→도착 PNG/XML→flow의 원자적 캡처, 스크립트가 시작한 Appium만 안전하게 종료한다. 같은 대상 세션은 descriptor로 재사용하고, 로컬 Appium은 필요할 때 자동 시작하며 `CLONE_METRICS=1`로 HTTP 시간을 기록한다.
-- iOS 18+ 실기기의 RemoteXPC registry를 session 전에 검사해 Appium의 불명확한 `Unknown device UDID` 대신 정확한 tunnel 생성 명령을 낸다. macOS TUN 생성은 sudo가 필요하므로 암묵 실행하지 않는다.
+- iOS 18+ 실기기의 RemoteXPC registry를 session 전에 검사해 Appium의 불명확한 `Unknown device UDID` 대신 대상 tunnel을 자동 준비하거나 정확한 복구 안내를 낸다.
 - `device`가 물리 기기의 UDID·marketing name·product type·OS/build·연결 정보를 `device-profile.json`에 저장한다. `device_render.sh ... auto ...`가 이를 이용해 같은 기종 시뮬레이터를 선택한다.
 - `clone_postprocess.py`가 변경된 raw pair만 bounded 병렬 측정하고 캐시된 화면은 재사용해 결정적인 JSON/Markdown 스펙을 만든다. `device_assets.py`는 AXImage/명시 요소를 배율에 맞춰 crop하고 SHA 중복 제거·선택적 `.imageset`·원자적 research provenance manifest를 생성한다.
 - `clone_flow_codegen.py`가 신·구 flow 로그에서 검토 가능한 state→View manifest와 컴파일 가능한 관찰 전이 router를 생성한다. 누락 매핑·모호한 state/action은 추측하지 않고 실패한다.
@@ -26,6 +31,10 @@
 - `device_wda.sh swipe`가 settle 후 `swipe` flow 이벤트를 남기고, `changed=true`인 swipe도 후속 `screen` 캡처가 없으면 `device_flow.py stats`에서 `incomplete`로 판정한다.
 - 같은 `nodekey`의 여러 화면 캡처에서 접근성 후보를 합쳐, Threads 같은 피드에서 스크롤로 새로 드러난 컨트롤이 `next` 재개 큐에서 사라지지 않게 했다. 각 후보가 나온 XML을 함께 출력한다.
 - 회귀 3건 추가: changed swipe 캡처 게이트, 스크롤 후보 병합, WDA swipe settle/flow 기록.
+
+### 검증
+- `uv lock --check`, `bash -n scripts/device_wda.sh`, RemoteXPC·스킬 sync·릴리스 메타데이터 회귀 **64건**, `scripts/verify_spec_docs.py`, `git diff --check` 통과.
+- 전체 suite는 **1,188건**을 실행했다. 최초 실패 4건 중 RemoteXPC 동시 시작 경쟁 조건은 수정 후 반복 20회와 대상 suite에서 통과했다. 남은 3건은 설치된 Pillow 11.3에 `get_flattened_data()`가 없어 발생하는 기존 `visual_contract.py` 호환성 실패로 단독 재현했으며, 이번 변경 범위에는 포함하지 않았다.
 
 ## [0.13.9] — 2026-08-15
 
