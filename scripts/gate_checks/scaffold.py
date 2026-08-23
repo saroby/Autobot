@@ -93,7 +93,11 @@ def check_scaffold_build_succeeded(proj: Path, app: str, state: dict) -> list[di
             "scaffold_build", True,
             f"xcodebuild build succeeded in {result.get('durationSeconds')}s",
         )]
-    sig = (result.get("errorSignature") or "").splitlines()[0] if result.get("errorSignature") else "no stderr"
+    first_error = next((d for d in result.get("diagnostics") or [] if d["severity"] == "error"), None)
+    if first_error:
+        sig = f"{first_error['file']}:{first_error['line']}: {first_error['message']}"
+    else:
+        sig = (result.get("errorSignature") or "").splitlines()[0] if result.get("errorSignature") else "no stderr"
     return [_ok(
         "scaffold_build", False,
         f"xcodebuild build failed (exit {result.get('exitCode')}): {sig[:160]} — log: {result.get('logPath')}",

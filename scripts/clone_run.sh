@@ -87,19 +87,67 @@ if len(identifiers) > 1:
 label = field(exact[0], "name", "appName", "bundleName", "displayName") or "?"
 print(f"INFO: resolved {target} to {identifiers[0]} by {how} (name: {label})",
       file=sys.stderr)
-# The clone carries the home-screen name of the original (device_install.sh
-# reads this); its bundle id stays its own. Written here because this is the
-# one place the name is known from evidence rather than from what was typed.
-import os
-root = sys.argv[2]
-os.makedirs(root, exist_ok=True)
-with open(os.path.join(root, "target.json"), "w", encoding="utf-8") as fh:
-    json.dump({"bundleId": identifiers[0], "name": label if label != "?" else "",
-               "resolvedBy": how, "query": target}, fh, ensure_ascii=False, indent=2)
-print(identifiers[0])
+# Resolution only reports a candidate. The caller checks it against the clone
+# already on disk, proves doctor + session can bind to it, and only then records
+# it. A lookup failure must never retarget an existing clone as a side effect.
+print(json.dumps({"bundleId": identifiers[0],
+                  "name": label if label != "?" else "",
+                  "resolvedBy": how, "query": target}, ensure_ascii=False))
 PY
 )"
-  python3 -c "$script" "$target" "$CLONE_ROOT" <<<"$apps"
+  python3 -c "$script" "$target" <<<"$apps"
+}
+
+_check_existing_target() {
+  local bundle_id="$1"
+  python3 - "$CLONE_ROOT/target.json" "$bundle_id" <<'PY'
+import json, sys
+from pathlib import Path
+
+path, candidate = Path(sys.argv[1]), sys.argv[2]
+if not path.is_file():
+    raise SystemExit(0)
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    print(f"ERROR: cannot verify existing clone target in {path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+current = payload.get("bundleId") if isinstance(payload, dict) else None
+if not isinstance(current, str) or not current.strip():
+    print(f"ERROR: {path} has no valid bundleId, so the existing clone target cannot be verified; "
+          "repair it or use a separate CLONE_ROOT", file=sys.stderr)
+    raise SystemExit(1)
+if current.strip() != candidate:
+    print(f"ERROR: {path} binds this clone to {current.strip()}, not {candidate}; "
+          "use a separate CLONE_ROOT for a different app", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+_record_target() {
+  local metadata="$1"
+  python3 - "$CLONE_ROOT/target.json" "$metadata" <<'PY'
+import json, os, sys, tempfile
+from pathlib import Path
+
+path, metadata = Path(sys.argv[1]), json.loads(sys.argv[2])
+bundle_id = metadata.get("bundleId") if isinstance(metadata, dict) else None
+if not isinstance(bundle_id, str) or not bundle_id.strip():
+    print("ERROR: resolved target metadata has no bundleId", file=sys.stderr)
+    raise SystemExit(1)
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
 }
 
 # Ask for the administrator password at the START, if it is going to be needed.
@@ -144,16 +192,20 @@ cmd_observe() {
     usage
     return 2
   fi
-  local udid bundle_id sid status=0
+  local udid bundle_id resolved_target sid status=0
   bash "$_HERE/clone_workspace.sh" prepare
   export CLONE_XCODE_PROJECT="${CLONE_XCODE_PROJECT:-$CLONE_ROOT/project/CloneWorkspace.xcodeproj}"
 
   udid="$(bash "$_HERE/device_wda.sh" device "${CLONE_DEVICE:-}")"
   _authorize_tunnel "$udid" || return 1
-  bundle_id="$(_resolve_bundle_id "$udid" "$target")"
+  resolved_target="$(_resolve_bundle_id "$udid" "$target")"
+  bundle_id="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["bundleId"])' \
+    "$resolved_target")"
+  _check_existing_target "$bundle_id" || return 1
   echo "INFO: target $bundle_id on $udid"
   bash "$_HERE/device_wda.sh" doctor "$udid" "$bundle_id"
   sid="$(bash "$_HERE/device_wda.sh" session "$udid" "$bundle_id")"
+  _record_target "$resolved_target"
 
   # Rounds, not one call: explore stops on its own guards (routing cap, a step
   # that failed), and a fresh round re-seeds from wherever the device now is.
@@ -206,7 +258,7 @@ cmd_observe() {
     status=1
   fi
   cmd_codegen || status=1
-  echo "OK: observed — specs in $CLONE_ROOT/screens, map at $CLONE_ROOT/flow-map.html"
+  echo "OK: observed — measurement evidence in $CLONE_ROOT/screens, map at $CLONE_ROOT/flow-map.html"
   return "$status"
 }
 
@@ -237,14 +289,20 @@ spec = importlib.util.spec_from_file_location("cfc", codegen_path)
 cfc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cfc)
 fresh = cfc.manifest_template(cfc.load_flow(flow))
 old = json.loads(views_path.read_text(encoding="utf-8")) if views_path.is_file() else {}
-merged = dict(fresh.get("views", {}))
-merged.update(old.get("views", {}))
+fresh_views = fresh.get("views", {})
+old_views = old.get("views", {}) if isinstance(old.get("views", {}), dict) else {}
+# The observed canonical state set is authoritative. Preserve a hand-chosen
+# view type only for the exact canonical key that still exists; stale alias
+# keys must not be reintroduced after load_flow has normalized the evidence.
+merged = {state: old_views.get(state, suggested)
+          for state, suggested in fresh_views.items()}
+old_initial = old.get("initial_state")
 out = {"version": old.get("version", fresh.get("version", 1)),
-       "initial_state": old.get("initial_state") or fresh.get("initial_state"),
+       "initial_state": old_initial if old_initial in merged else fresh.get("initial_state"),
        "views": dict(sorted(merged.items()))}
 views_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-added = len(out["views"]) - len(old.get("views", {}))
-print(f"INFO: views.json {len(old.get('views', {}))} -> {len(out['views'])} states ({added} new)")
+added = sum(state not in old_views for state in out["views"])
+print(f"INFO: views.json {len(old_views)} -> {len(out['views'])} states ({added} new)")
 PY
   python3 "$_HERE/clone_flow_codegen.py" generate "$FLOW" "$CLONE_ROOT/views.json" \
     "$CLONE_ROOT/Sources/ObservedFlow.swift" "$CLONE_ROOT/screens" || status=1

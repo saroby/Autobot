@@ -368,18 +368,14 @@ def main(argv: list[str]) -> int:
     for source, action, destination, why in broken:
         print(f"ERROR: {source} --{action}--> {destination}: {why}", file=sys.stderr)
     if unreachable:
-        # Not the reproduction's fault and not its to fix: the OBSERVED flow has
-        # no edge into these at all, so no clone of it could navigate there.
-        # Blaming the reproduction here would send someone to edit SwiftUI for a
-        # hole that only another `observe` run can close.
-        print(f"WARN: {len(unreachable)} mapped screen(s) have no observed path from "
+        # This is an observation gap rather than a clone-wiring defect, but the
+        # functional gate still cannot certify navigation it never exercised.
+        print(f"ERROR: {len(unreachable)} mapped screen(s) have no observed path from "
               f"{initial} — the exploration recorded the screen but never a way in. "
               f"Run 'clone_run.sh observe' again to close it: {', '.join(unreachable)}",
               file=sys.stderr)
     if skipped:
-        # Not a pass: these edges start somewhere the walk never gets to, so
-        # nothing here says whether they work.
-        print(f"WARN: {len(skipped)} observed transition(s) start from an "
+        print(f"ERROR: {len(skipped)} observed transition(s) start from an "
               "unreachable screen and were not exercised", file=sys.stderr)
     if inferred:
         # Inferred edges were never seen on the device; passing here proves the
@@ -394,7 +390,15 @@ def main(argv: list[str]) -> int:
           f"{len(mapped) - len(unreachable)}/{len(mapped)} mapped screen(s) reachable"
           + (f" ({len(unreachable)} unreachable in the observed flow itself)"
              if unreachable else ""))
+    failures = []
     if broken:
+        failures.append(f"{len(broken)} broken transition(s)")
+    if unreachable:
+        failures.append(f"{len(unreachable)} unreachable mapped screen(s)")
+    if skipped:
+        failures.append(f"{len(skipped)} skipped transition(s)")
+    if failures:
+        print(f"ERROR: functional gate failed: {'; '.join(failures)}", file=sys.stderr)
         return 1
     print("OK: the reproduction navigates exactly like the observed flow")
     return 0

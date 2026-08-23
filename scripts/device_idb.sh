@@ -153,7 +153,9 @@ cmd_screen() {
     echo "ERROR: screenshot failed — is the device unlocked and awake? ($(tail -1 <<<"$err"))" >&2
     return 1
   fi
-  if ! idb ui describe-all --udid "$udid" > "$a11y" 2>/dev/null; then
+  # --nested keeps the hierarchy (children arrays); device_a11y.py flattens it
+  # with depth/parent so ancestor checks match the WDA path.
+  if ! idb ui describe-all --udid "$udid" --json --nested > "$a11y" 2>/dev/null; then
     echo "WARN: captured $png but accessibility dump failed (app may disable accessibility)"
     return 0
   fi

@@ -214,7 +214,13 @@ def _parse_wda(raw: str) -> list[dict]:
 
 
 def _parse_idb(raw: str) -> list[dict]:
-    """idb `ui describe-all` — a flat JSON array (or one object per line)."""
+    """idb `ui describe-all` — flat JSON array (legacy) or `--nested` tree.
+
+    The nested form carries the same keys plus a `children` list per element.
+    It is flattened depth-first so `depth`/`parent` line up with `_parse_wda`
+    and the ancestor walks (`_ancestor_index`, alert detection) work on both
+    drivers. A flat dump has no `children`, so every element lands at depth 0.
+    """
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -222,9 +228,14 @@ def _parse_idb(raw: str) -> list[dict]:
     if isinstance(data, dict):
         data = [data]
     out = []
-    for e in data:
+    stack = [(e, 0, -1) for e in reversed(data)]  # (element, depth, parent-index)
+    while stack:
+        e, depth, parent = stack.pop()
         if not isinstance(e, dict):
             continue
+        index = len(out)
+        for child in reversed(e.get("children") or []):
+            stack.append((child, depth + 1, index))
         f = e.get("frame") if isinstance(e.get("frame"), dict) else {}
         out.append({
             "role": e.get("role") or e.get("type") or "?",
@@ -232,9 +243,8 @@ def _parse_idb(raw: str) -> list[dict]:
             "enabled": e.get("enabled") is not False,
             "visible": None,  # idb does not report it — fall back to a bounds check
             "frame": {k: float(f.get(k, 0) or 0) for k in ("x", "y", "width", "height")},
-            # idb's dump is already flat: no hierarchy to recover.
-            "depth": e.get("depth") if isinstance(e.get("depth"), int) else None,
-            "parent": e.get("parent") if isinstance(e.get("parent"), int) else -1,
+            "depth": depth,
+            "parent": parent,
             "accessible": _optional_bool(_first(
                 e, "accessible", "AXAccessible", "isAccessibilityElement",
                 "is_accessibility_element")),
@@ -445,14 +455,13 @@ def _classification(e: dict) -> dict:
     for effect, pattern in STATE_CHANGING:
         if any(pattern.search(clause) for clause in clauses):
             return {"category": "state-changing", "effect": effect, "state_changing": True}
-    # A switch flips and flips back, so the explore loop taps it, captures the
-    # flipped state, and taps it again in the same step. The tree cannot tell a
-    # local toggle from an account setting (Threads' "비공개 프로필" is a
-    # Switch) — CLONE_PROBE_SWITCHES=0 keeps every switch withheld for apps
-    # where that round-trip is not acceptable. Labels that reach the server were
-    # caught above and stay withheld whatever the role or the flag.
+    # A switch can be a local preference or a server-backed account setting, and
+    # the accessibility tree cannot tell which. Keep it withheld by default.
+    # Explicit probing is only for a target whose round-trip mutation is known to
+    # be acceptable; the explore loop must still prove that the revert restored
+    # the original state before it continues.
     if e["role"] == "AXSwitch":
-        if os.environ.get("CLONE_PROBE_SWITCHES", "1") != "0":
+        if os.environ.get("CLONE_PROBE_SWITCHES") == "1":
             return {"category": "reversible", "effect": "toggle", "state_changing": False}
         return {"category": "state-changing", "effect": "toggle", "state_changing": True}
     if e["role"] in TEXT_INPUT_ROLES:

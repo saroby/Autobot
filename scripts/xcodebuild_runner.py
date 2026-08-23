@@ -81,6 +81,31 @@ def _resolve_project(project_root: Path, app_name: str) -> Path | None:
     return None
 
 
+_DIAGNOSTIC_RE = re.compile(r"^(.+?):(\d+):(\d+):\s+(error|warning|note):\s+(.+)$", re.MULTILINE)
+
+
+def _parse_diagnostics(text: str, limit: int = 50) -> list[dict]:
+    """Structured `file:line:col: severity: message` entries from xcodebuild output.
+
+    The error signature below deliberately strips paths so the circuit breaker
+    sees "the same error"; this keeps them so the build-fix loop can be pointed
+    at the exact file and line without re-reading the log.
+    """
+    out, seen = [], set()
+    for m in _DIAGNOSTIC_RE.finditer(text):
+        key = m.group(0)
+        if key in seen:
+            continue  # xcodebuild repeats diagnostics per target/arch
+        seen.add(key)
+        out.append({
+            "file": m.group(1), "line": int(m.group(2)), "column": int(m.group(3)),
+            "severity": m.group(4), "message": m.group(5).strip(),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _normalize_error_signature(stderr: str) -> str:
     """Strip volatile noise (paths, line numbers, timestamps, hex addresses)
     so the same underlying error always hashes to the same signature.
@@ -169,6 +194,7 @@ def _build_result(
         "logPath": str(log_path),
         "errorSignature": signature,
         "errorSignatureHash": _signature_hash(signature) if signature else "",
+        "diagnostics": _parse_diagnostics(stderr + "\n" + stdout) if not succeeded else [],
         "project": str(project) if project else None,
     }
     if result_bundle is not None:

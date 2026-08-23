@@ -1063,6 +1063,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                     "CLONE_STATE_DIR": str(state_dir),
                     "CLONE_FLOW_LOG": str(flow),
                     "CLONE_TAP_SETTLE_TRIES": "1",
+                    "CLONE_TAP_SETTLE_QUIET": "1",
                 }
                 r = subprocess.run(
                     ["bash", str(SCRIPT), "step", "session-1", "187", "130",
@@ -1192,6 +1193,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                     "CLONE_STATE_DIR": str(state_dir),
                     "CLONE_FLOW_LOG": str(flow),
                     "CLONE_TAP_SETTLE_TRIES": "1",
+                    "CLONE_TAP_SETTLE_QUIET": "1",
                 }
                 r = subprocess.run(
                     ["bash", str(SCRIPT), "explore", "session-1", str(outdir), *explore_args],
@@ -1316,6 +1318,74 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(tap["type"], "tap")
         self.assertEqual(tap["changed"], "true", msg=result.stderr)
         self.assertNotEqual(tap["to_statekey"], tap["from_statekey"])
+
+    def test_step_does_not_promote_an_unsettled_destination_to_durable_evidence(self):
+        def tree(inner: str) -> str:
+            return (
+                '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+                '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App"'
+                ' label="App" enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+                + inner + '</XCUIElementTypeApplication></AppiumAUT>'
+            )
+
+        source = tree('<XCUIElementTypeButton type="XCUIElementTypeButton" label="open" name="open"'
+                      ' enabled="true" visible="true" x="10" y="100" width="100" height="44"/>')
+        moving_a = tree('<XCUIElementTypeActivityIndicator type="XCUIElementTypeActivityIndicator"'
+                        ' label="loading" name="loading" enabled="true" visible="true"'
+                        ' x="170" y="380" width="36" height="36"/>')
+        moving_b = tree('<XCUIElementTypeStaticText type="XCUIElementTypeStaticText"'
+                        ' label="first paint" name="first paint" enabled="true" visible="true"'
+                        ' x="20" y="80" width="180" height="24"/>')
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lib = root / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            (root / "device_a11y.py").write_text(
+                (SCRIPT.parent / "device_a11y.py").read_text(encoding="utf-8"), encoding="utf-8")
+            source_path, moving_a_path, moving_b_path = (
+                root / "source.xml", root / "moving-a.xml", root / "moving-b.xml")
+            source_path.write_text(source, encoding="utf-8")
+            moving_a_path.write_text(moving_a, encoding="utf-8")
+            moving_b_path.write_text(moving_b, encoding="utf-8")
+            outdir, flow = root / "raw", root / "flow.jsonl"
+            command = f"""
+source '{lib}'
+sleep() {{ :; }}
+_prepare_tap() {{
+  _TAP_FROM_STATE=source-state
+  _TAP_FROM_KEY=source-node
+  _TAP_PLANNED=source-sig
+  _TAP_LABEL=open
+  _TAP_BEHAVIOR=navigation:open
+  _TAP_EFFECT=none
+}}
+_actions() {{ :; }}
+_dump_n=0
+_live_dump() {{
+  _dump_n=$((_dump_n + 1))
+  if (( _dump_n % 2 )); then cp '{moving_a_path}' "$2"; else cp '{moving_b_path}' "$2"; fi
+}}
+cmd_step session-1 50 120 '{source_path}' '{outdir}' destination
+"""
+            result = subprocess.run(
+                ["bash", "-c", command], capture_output=True, text=True,
+                env={**os.environ, "CLONE_FLOW_LOG": str(flow),
+                     "CLONE_TAP_SETTLE_TRIES": "4", "CLONE_TAP_SETTLE_QUIET": "3"},
+            )
+            events = [json.loads(line) for line in flow.read_text(encoding="utf-8").splitlines()]
+            destination_xml_exists = (outdir / "destination.xml").exists()
+            destination_png_exists = (outdir / "destination.png").exists()
+
+        self.assertNotEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("destination evidence is unstable", result.stderr)
+        self.assertFalse(destination_xml_exists)
+        self.assertFalse(destination_png_exists)
+        taps = [event for event in events if event.get("type") == "tap"]
+        self.assertEqual(len(taps), 1)
+        self.assertEqual(taps[0].get("evidence"), "unstable")
+        self.assertFalse([event for event in events if event.get("type") == "screen"])
 
     def test_explore_drains_the_safe_frontier_without_a_human_per_tap(self):
         r, events, taps = self._run_explore()
@@ -2044,7 +2114,8 @@ class TestLiveContentDoesNotBlockTaps(unittest.TestCase):
                 tree = root / "auto-0001.xml"
                 tree.write_text(captured, encoding="utf-8")
                 env = {**os.environ, "APPIUM_URL": f"http://127.0.0.1:{server.server_port}",
-                       "CLONE_FLOW_LOG": str(log), "CLONE_TAP_SETTLE_TRIES": "1"}
+                       "CLONE_FLOW_LOG": str(log), "CLONE_TAP_SETTLE_TRIES": "1",
+                       "CLONE_TAP_SETTLE_QUIET": "1"}
                 r = subprocess.run(
                     ["bash", "-c",
                      f"source '{lib}'; cmd_step session-1 50 120 '{tree}' '{root}' auto-0002"],
@@ -2239,7 +2310,8 @@ class TestExploreScrollsForMoreCandidates(unittest.TestCase):
                 }), encoding="utf-8")
                 env = {**os.environ, "APPIUM_URL": appium_url,
                        "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
-                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_SWIPE_SETTLE_TRIES": "2",
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_TAP_SETTLE_QUIET": "1",
+                       "CLONE_SWIPE_SETTLE_TRIES": "2",
                        "CLONE_EXPLORE_MAX_SCROLL": "2"}
                 r = subprocess.run(
                     ["bash", str(SCRIPT), "explore", "session-1", str(root / "raw"), "6"],
@@ -2340,7 +2412,8 @@ class TestLeavingTheAppIsRecoverable(unittest.TestCase):
                 }), encoding="utf-8")
                 env = {**os.environ, "APPIUM_URL": appium_url,
                        "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
-                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_SWIPE_SETTLE_TRIES": "1",
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_TAP_SETTLE_QUIET": "1",
+                       "CLONE_SWIPE_SETTLE_TRIES": "1",
                        "CLONE_REACTIVATE_TRIES": "3", "CLONE_EXPLORE_MAX_SCROLL": "0"}
                 r = subprocess.run(
                     ["bash", str(SCRIPT), "explore", "session-1", str(root / "raw"), "4"],
@@ -2510,7 +2583,8 @@ class TestExploreTypesIntoTextFields(unittest.TestCase):
                 }), encoding="utf-8")
                 env = {**os.environ, "APPIUM_URL": appium_url,
                        "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
-                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_EXPLORE_MAX_SCROLL": "0",
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_TAP_SETTLE_QUIET": "1",
+                       "CLONE_EXPLORE_MAX_SCROLL": "0",
                        "CLONE_EXPLORE_MAX_RESTART": "0", "CLONE_TYPE_SETTLE": "0",
                        "CLONE_EXPLORE_PROBE_TEXT": "secret-probe"}
                 r = subprocess.run(["bash", str(SCRIPT), "explore", "session-1", str(outdir), "5"],
@@ -2545,15 +2619,17 @@ class TestExploreTypesIntoTextFields(unittest.TestCase):
 
 
 class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
-    """A switch is the one state-changing control that flips back.
+    """Switch probing is explicit and must prove its own rollback.
 
-    Exploration used to withhold every AXSwitch, so the clone never saw what a
-    toggle does. Now it taps the switch, captures the flipped screen, and taps
-    it again in the same step — the device ends where it started and the log
-    holds both edges for the functional gate to replay.
+    The tree cannot distinguish a local preference from an account setting, so
+    default exploration withholds switches. Explicit probing captures both
+    states but may continue only after the device is proven to be back at the
+    original state.
     """
 
-    def _run(self, max_steps: str = "6", probe: str = "1"):  # "1" = the default
+    def _run(self, max_steps: str = "6", probe: str | None = "1",
+             *, fail_revert: bool = False, sticky_revert: bool = False,
+             hide_value_change: bool = False):
         def tree(on: bool) -> str:
             return (
                 '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
@@ -2565,7 +2641,7 @@ class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
                 ' enabled="true" visible="true" x="300" y="200" width="51" height="31"/>'
                 '</XCUIElementTypeApplication></AppiumAUT>'
             )
-        state = {"on": False, "flips": 0}
+        state = {"on": False, "flips": 0, "actions": []}
 
         class Handler(BaseHTTPRequestHandler):
             def _reply(self, payload: dict):
@@ -2578,7 +2654,7 @@ class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
 
             def do_GET(self):
                 if self.path.endswith("/source"):
-                    self._reply({"value": tree(state["on"])})
+                    self._reply({"value": tree(False if hide_value_change else state["on"])})
                 elif self.path.endswith("/screenshot"):
                     self._reply({"value": base64.b64encode(b"png").decode()})
                 else:
@@ -2589,6 +2665,13 @@ class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
                 length = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(length).decode() if length else ""
                 if self.path.endswith("/actions") and "pointerDown" in body:
+                    state["actions"].append(body)
+                    if fail_revert and state["flips"] == 1:
+                        self.send_error(500)
+                        return
+                    if sticky_revert and state["flips"] == 1:
+                        self._reply({"value": None})
+                        return
                     state["on"] = not state["on"]
                     state["flips"] += 1
                     self._reply({"value": None})
@@ -2615,8 +2698,12 @@ class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
                 }), encoding="utf-8")
                 env = {**os.environ, "APPIUM_URL": appium_url,
                        "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
-                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_EXPLORE_MAX_SCROLL": "0",
-                       "CLONE_EXPLORE_MAX_RESTART": "0", "CLONE_PROBE_SWITCHES": probe}
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_TAP_SETTLE_QUIET": "1",
+                       "CLONE_EXPLORE_MAX_SCROLL": "0", "CLONE_EXPLORE_MAX_RESTART": "0"}
+                if probe is None:
+                    env.pop("CLONE_PROBE_SWITCHES", None)
+                else:
+                    env["CLONE_PROBE_SWITCHES"] = probe
                 r = subprocess.run(["bash", str(SCRIPT), "explore", "session-1", str(outdir), max_steps],
                                    capture_output=True, text=True, env=env)
                 events = [json.loads(line) for line in flow.read_text(encoding="utf-8").splitlines()]
@@ -2630,6 +2717,8 @@ class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
         r, events, state = self._run()
         self.assertEqual(state["flips"], 2, msg=r.stdout + r.stderr)
         self.assertFalse(state["on"], "the device must end where it started")
+        self.assertEqual(state["actions"][0], state["actions"][1],
+                         "the revert must be the immediate same-coordinate tap")
         taps = [e for e in events if e.get("type") == "tap"]
         self.assertEqual(len(taps), 2, msg=json.dumps(taps, ensure_ascii=False))
         self.assertEqual([t["changed"] for t in taps], ["true", "true"])
@@ -2642,10 +2731,30 @@ class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
         # by itself instead of flipping the switch until max steps.
         self.assertIn("nothing left to tap", r.stdout)
 
-    def test_switches_are_not_touched_when_probing_is_turned_off(self):
-        r, events, state = self._run(probe="0")
+    def test_switches_are_not_touched_by_default(self):
+        r, events, state = self._run(probe=None)
         self.assertEqual(state["flips"], 0, msg=r.stdout + r.stderr)
         self.assertEqual([e for e in events if e.get("type") == "tap"], [])
+
+    def test_revert_transport_failure_stops_with_the_setting_reported_as_changed(self):
+        r, events, state = self._run(fail_revert=True)
+        self.assertNotEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertTrue(state["on"], "the fixture must expose the unreverted setting")
+        self.assertIn("may be left changed", r.stderr)
+        self.assertNotIn("OK: explore made", r.stdout)
+
+    def test_revert_that_does_not_restore_the_original_state_stops(self):
+        r, events, state = self._run(sticky_revert=True)
+        self.assertNotEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertTrue(state["on"], "the fixture must expose the unreverted setting")
+        self.assertIn("did not prove", r.stderr)
+        self.assertNotIn("OK: explore made", r.stdout)
+
+    def test_probe_still_taps_twice_when_the_tree_hides_the_value_change(self):
+        r, events, state = self._run(hide_value_change=True)
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertEqual(state["flips"], 2)
+        self.assertFalse(state["on"], "two taps must restore even a hidden switch value")
 
     def test_the_flipped_screen_is_durable_evidence(self):
         r, events, state = self._run()
@@ -2731,7 +2840,8 @@ class TestExploreRestartsWhenBoxedIn(unittest.TestCase):
                 }), encoding="utf-8")
                 env = {**os.environ, "APPIUM_URL": appium_url,
                        "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
-                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_EXPLORE_MAX_SCROLL": "0",
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_TAP_SETTLE_QUIET": "1",
+                       "CLONE_EXPLORE_MAX_SCROLL": "0",
                        "CLONE_EXPLORE_MAX_RESTART": max_restart, "CLONE_RESTART_SETTLE": "0",
                        "CLONE_REACTIVATE_TRIES": "1"}
                 r = subprocess.run(["bash", str(SCRIPT), "explore", "session-1", str(outdir), "12"],

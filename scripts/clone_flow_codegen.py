@@ -63,9 +63,10 @@ _STATE_FIELDS = ("state", "statekey", "node", "nodekey",
 def state_aliases(flow_path: str | Path) -> dict[str, str]:
     """Declared state merges, read from ``state-aliases.json`` beside the flow.
 
-    ``{"aliases": {"<alias>": {"canonical": "<state>", "why": "..."}}}`` — the
-    value may also be the canonical string on its own. One hop only: a chain
-    would let two declarations disagree about where a state ends up.
+    ``{"aliases": {"<alias>": {"canonical": "<state>", "why": "..."}}}``.
+    The reason is part of the contract: aliases are human-reviewed evidence,
+    not a shorthand for silently collapsing two observed states. One hop only:
+    a chain would let two declarations disagree about where a state ends up.
     """
     path = Path(flow_path).parent / STATE_ALIAS_FILE
     if not path.is_file():
@@ -79,10 +80,20 @@ def state_aliases(flow_path: str | Path) -> dict[str, str]:
         raise FlowCodegenError(f"{path} must be an object with an 'aliases' object")
     aliases: dict[str, str] = {}
     for alias, value in entries.items():
-        canonical = value.get("canonical") if isinstance(value, dict) else value
+        alias = str(alias).strip()
+        if not alias:
+            raise FlowCodegenError(f"{path}: alias names must not be empty")
+        if not isinstance(value, dict):
+            raise FlowCodegenError(
+                f"{path}: alias {alias!r} must be an object with non-empty "
+                "'canonical' and 'why' strings")
+        canonical = value.get("canonical")
+        why = value.get("why")
         if not isinstance(canonical, str) or not canonical.strip():
             raise FlowCodegenError(f"{path}: alias {alias!r} names no canonical state")
-        alias, canonical = str(alias).strip(), canonical.strip()
+        if not isinstance(why, str) or not why.strip():
+            raise FlowCodegenError(f"{path}: alias {alias!r} gives no reason in 'why'")
+        canonical = canonical.strip()
         if alias == canonical:
             raise FlowCodegenError(f"{path}: alias {alias!r} points at itself")
         aliases[alias] = canonical

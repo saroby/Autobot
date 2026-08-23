@@ -211,11 +211,30 @@ class TestSwiftGeneration(CodegenCase):
 
     def test_alias_chains_and_self_alias_are_refused(self):
         self.write_flow([{"type": "screen", "state": "home", "name": "home"}])
-        for aliases in ({"a": "b", "b": "c"}, {"a": "a"}):
+        for aliases in (
+            {"a": {"canonical": "b", "why": "same screen"},
+             "b": {"canonical": "c", "why": "same screen"}},
+            {"a": {"canonical": "a", "why": "same screen"}},
+        ):
             (self.directory / "state-aliases.json").write_text(
                 json.dumps({"aliases": aliases}), encoding="utf-8")
             with self.assertRaises(codegen.FlowCodegenError):
                 codegen.load_flow(self.flow)
+
+    def test_alias_shorthand_and_missing_reason_are_refused(self):
+        self.write_flow([{"type": "screen", "state": "home", "name": "home"}])
+        invalid_aliases = (
+            {"loading": "loaded"},
+            {"loading": {"canonical": "loaded"}},
+            {"loading": {"canonical": "loaded", "why": "  "}},
+            {"  ": {"canonical": "loaded", "why": "same screen"}},
+        )
+        for aliases in invalid_aliases:
+            with self.subTest(aliases=aliases):
+                (self.directory / "state-aliases.json").write_text(
+                    json.dumps({"aliases": aliases}), encoding="utf-8")
+                with self.assertRaises(codegen.FlowCodegenError):
+                    codegen.load_flow(self.flow)
 
     def test_missing_view_mapping_fails_instead_of_guessing(self):
         self.write_flow([

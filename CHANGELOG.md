@@ -7,9 +7,9 @@
 ### Added — 실기기 클론은 원본의 이름을 단다
 - `observe` 가 bundle ID 를 확정하는 자리에서 기기가 보고한 앱 이름을 `.autobot/clone/target.json` 에 남기고, `clone_run.sh install` 이 그 이름을 `CFBundleDisplayName` 으로 넣는다(`clone_device_project.py --display-name`, `CLONE_APP_DISPLAY_NAME` 으로 덮어씀). bundle ID·타깃·바이너리는 clone 의 것 그대로 — 원본 옆에 나란히 설치되어야 대조가 된다. SKILL 에 Step 6c 로 적었다(그동안 `install` 은 문서에 없었다).
 
-### Added — 스위치 probe: 토글이 하는 일을 관찰한다
-- 탐험은 `AXSwitch` 를 전부 withheld 로 두어 재현본이 토글이 무엇을 하는지 영영 모르는 상태였다 — 설정 화면의 토글이 전부 죽은 채 복제된다. 켜면 `explore` 가 스위치를 탭해 바뀐 화면을 캡처하고 **같은 step 안에서 같은 자리를 한 번 더 탭해** 되돌린다(`via=revert`). 로그에는 `base → flipped`·`flipped → base` 두 엣지가 남아 `functional` 이 양방향을 재생하고, on/off 는 `statekey` 의 `switch:<label>=<value>` 토큰으로 서로 다른 state 다. 되돌리기 실패는 라벨·좌표와 함께 WARN 으로 말한다.
-- **기본 켜짐**, `CLONE_PROBE_SWITCHES=0` 으로 끈다. 트리는 로컬 토글과 계정 설정을 구분하지 못하므로(Threads 의 `비공개 프로필` 은 Switch) probe 는 계정 설정을 몇 초간 바꿨다 되돌릴 수 있다 — 그 왕복도 허용되지 않는 앱이면 끈다. 켜져 있어도 DESTRUCTIVE·STATE_CHANGING 라벨은 역할과 무관하게 withheld 다.
+### Added — 스위치 probe: 안전성을 확인한 대상에서 토글이 하는 일을 관찰한다
+- 탐험은 `AXSwitch` 를 기본 withheld 로 둔다. 트리는 로컬 토글과 계정 설정을 구분하지 못하므로 계정 쓰기 0이 안전 기본값이다. 대상 앱에서 왕복 변경이 허용됨을 확인한 경우에만 `CLONE_PROBE_SWITCHES=1`로 켠다.
+- probe는 스위치를 탭해 바뀐 화면을 캡처하고 **같은 step 안에서 같은 좌표·behavior를 다시 탭한 뒤 시작 state 복구까지 검증한다**(`via=revert`). 성공한 경우에만 `base → flipped`·`flipped → base` 두 엣지가 남는다. 복구 실패·다른 컨트롤·다른 state이면 ERROR와 non-zero로 중단하며 설정이 바뀌었을 수 있음을 알린다.
 - `device_a11y.py` 가 요소의 `value` 를 정규화해 실어 나르고, 스위치의 behavior fingerprint 는 라벨 단위다(행-열 묶기면 설정 목록의 스위치 중 첫 하나만 probe 된다). `device_wda.sh step` 은 선택적 7번째 인자 `via=<reason>` 을 받는다.
 
 ### Changed — clone SKILL: 게이트 준비는 Step 1 안으로, 인수인계 문서는 완주 경로 밖으로
@@ -19,7 +19,7 @@
 ### Fixed — 테스트 스위트가 실기기를 몰 수 있었다
 - `tests/test_clone_run.py::TestSudoGate` 는 `clone_run.sh observe Threads` 를 실환경으로 돌렸다. 기기가 붙어 있고 터널이 살아 있으면 게이트를 통과해 **사용자의 실제 계정에서 탐험을 시작한다**. 실측 2026-08-23: 한 번은 60스텝 넘게 돌았고, 세 사람의 게시물에서 알림 벨이 켜졌다 꺼졌다(순 변화 없음). 테스트가 실계정을 만질 수 있는 상태여서는 안 된다.
 - `CloneRunCase` 가 이제 `CLONE_DEVICES_JSON`/`CLONE_DEVICE_DETAILS_JSON` 픽스처(존재할 수 없는 UDID)와 `CLONE_STATE_DIR`·`CLONE_AUTO_{OPEN_XCODE,START_TUNNEL,START_APPIUM}=0`·`CLONE_TUNNEL_GUI_AUTH=0` 을 모든 하위 테스트에 준다. stdin 도 닫는다 — `_authorize_tunnel` 이 `[[ -t 0 ]]` 뒤에 `sudo -v` 를 부르므로 터미널에서 돌리면 암호 프롬프트에 멈춘다. 18개 전부 6.5초에 통과하며 기기를 건드리지 않는다.
-- **미해결로 남은 것**: `withheld` 패턴이 `알림이 비활성화되었습니다` 처럼 **동작 이름이 아닌 상태 서술형** 토글을 놓친다. `audit` 이 깨끗하다고 말하는 동안 계정이 바뀐다. 위 사고의 실제 원인이며, 고치기 전에는 `observe` 를 다시 돌리면 안 된다.
+- 상태 서술형 스위치를 서버 동작 denylist만으로 완전 분류할 수 없으므로, switch probe를 기본 OFF로 되돌렸다. 명시적으로 켠 경우에도 원상 복구를 증명하지 못하면 탐험을 실패시킨다.
 
 ### Changed — 화면 스펙의 소유권 경계를 문서와 일치시킨다
 - SKILL Step 4 는 스펙을 `screens/<NN>-<screen>.md` 에 쓰라고 했는데 그 경로는 `clone_postprocess.py` 가 소유하고 매 실행 덮어쓴다 — 손으로 쓴 동작 계약이 다음 `observe` 에서 사라진다. 스펙은 `specs/<ViewName>.md` 에 쓰고 측정 증거를 링크한다.
@@ -30,6 +30,7 @@
 
 ### Fixed — 화면을 떠난 것과 도착한 것은 다르다
 - `device_wda.sh` 의 탭 settle 루프가 statekey 가 **처음** 달라진 덤프에서 끊었다. 탭한 화면 위에 스피너가 뜬 것도, 목적 화면이 콘텐츠를 받기 전 첫 렌더도 이미 "다른 state" 이므로, 그 한 장이 목적지 증거로 기록되고 Step 3 가 **존재한 적 없는 화면**을 측정했다. 이제 새 state 가 연속으로 유지될 때까지(같은 `CLONE_TAP_SETTLE_QUIET` 규칙) 폴링하고, 한도까지 안정되지 않으면 swipe settle 처럼 "still moving" 을 말한다.
+- 한도까지 안정되지 않은 탭은 `evidence=unstable`로 남기되 마지막 덤프를 durable 화면으로 저장하지 않고 non-zero로 중단한다.
 - 실측 2026-08-23 (Threads, 60스텝): state 28개 중 2개가 이런 유령이었다 — `auto-0035`(요소 4개, 출발 화면 + `진행 중` 스피너), `auto-0050`(요소 41개, 같은 프로필의 안정 캡처는 122개). 둘 다 하류를 부쉈다. 하나는 `ambiguous transition` 으로 codegen 을 통째로 죽였고, 하나는 실재하는 화면을 재현본에서 도달 불가로 만들었다.
 - 두 유령 모두 **단일 캡처 + 나가는 전이 0** 이라는 같은 모양이었다. 그게 이 결함을 로그에서 찾는 방법이다.
 

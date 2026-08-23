@@ -1330,6 +1330,7 @@ _perform_tap_and_settle() {
   # reach. So quiet is measured on whichever identity the screen is currently
   # in: statekey once it has left the source, sig while it is still there.
   local identity prev_sig="" prev_state="" same=0 quiet="${CLONE_TAP_SETTLE_QUIET:-3}"
+  [[ "$quiet" =~ ^[1-9][0-9]*$ ]] || quiet=3
   local settled=false
   while [[ "$i" -lt "$tries" ]]; do
     sleep 0.3
@@ -1355,12 +1356,13 @@ _perform_tap_and_settle() {
     prev_sig="$_TAP_TO_SIG"
     if [[ "$same" -ge "$((quiet - 1))" ]]; then settled=true; break; fi
   done
-  # Say so rather than pass a mid-transition tree off as an arrival. The swipe
-  # settle already reports this; the tap settle used to have no such state.
-  if [[ "$settled" != true && "$i" -ge "$tries" && "$tries" -gt 1 ]]; then
-    echo "INFO: the screen was still moving after $i poll(s) — destination evidence may be mid-transition (raise CLONE_TAP_SETTLE_TRIES)" >&2
-  fi
   [[ -n "$_TAP_TO_STATE" && "$_TAP_TO_STATE" != "$_TAP_FROM_STATE" ]] && _TAP_CHANGED=true
+  # A tap has already happened, so preserve it as an incomplete transition, but
+  # never promote the last moving dump to durable destination evidence.
+  if [[ "$settled" != true ]]; then
+    echo "ERROR: the screen did not settle after $i poll(s) — destination evidence is unstable (raise CLONE_TAP_SETTLE_TRIES)" >&2
+    return 4
+  fi
   return 0
 }
 
@@ -1387,7 +1389,12 @@ cmd_tap() {
   fi
   _prepare_tap "$sid" "$x" "$y" "$tree" || return $?
   to_tree="$(mktemp -t device_wda)"
-  if ! _perform_tap_and_settle "$sid" "$x" "$y" "$to_tree"; then
+  local settle_status=0
+  _perform_tap_and_settle "$sid" "$x" "$y" "$to_tree" || settle_status=$?
+  if [[ "$settle_status" -ne 0 ]]; then
+    if [[ "$settle_status" -eq 4 ]]; then
+      _record_tap_transition "$x" "$y" "evidence=unstable"
+    fi
     rm -f "$to_tree"
     return 1
   fi
@@ -1422,7 +1429,12 @@ cmd_step() {
   rm -f "$xml_tmp" "$png_tmp"
 
   _prepare_tap "$sid" "$x" "$y" "$tree" || return $?
-  if ! _perform_tap_and_settle "$sid" "$x" "$y" "$xml_tmp" 1; then
+  local settle_status=0
+  _perform_tap_and_settle "$sid" "$x" "$y" "$xml_tmp" 1 || settle_status=$?
+  if [[ "$settle_status" -ne 0 ]]; then
+    if [[ "$settle_status" -eq 4 ]]; then
+      _record_tap_transition "$x" "$y" "evidence=unstable" "$via"
+    fi
     rm -f "$xml_tmp" "$png_tmp"
     return 1
   fi
@@ -1977,6 +1989,9 @@ cmd_explore() {
       continue
     fi
     if [[ "$rc" -ne 0 ]]; then
+      if [[ "$_TAP_EFFECT" == toggle ]]; then
+        echo "ERROR: switch probe for '$_TAP_LABEL' failed after the tap — its setting may be changed; inspect and restore it before retrying" >&2
+      fi
       echo "ERROR: explore stopped after $steps step(s) — the flow log keeps what was done; fix the condition above and re-run explore" >&2
       return 1
     fi
@@ -1986,21 +2001,28 @@ cmd_explore() {
     scrolls=0          # new screen (or new position) — its own scroll budget
     tree="$outdir/$name.xml"
     steps=$((steps + 1))
-    # A switch is the one state-changing control exploration taps, because it
-    # flips back. Flip it back NOW, from the capture just taken, so the device
-    # never carries a changed setting into the rest of the walk — the frontier
-    # would revert it eventually, but only if nothing else on the flipped screen
-    # gets tapped first. The revert is a step like any other: its own tap edge
-    # (flipped -> base) and its own arrival capture, so the functional gate can
-    # replay both directions.
-    if [[ "$_TAP_EFFECT" == toggle && "$_TAP_CHANGED" == true ]]; then
+    # An explicitly enabled switch probe is the one state-changing control that
+    # exploration may tap. Flip it back NOW, from the capture just taken, so the
+    # device never carries a changed setting into the rest of the walk — the
+    # frontier would revert it eventually, but only if nothing else on the
+    # flipped screen gets tapped first. The revert is a step like any other: its
+    # own tap edge and arrival capture, so the functional gate can replay both
+    # directions.
+    if [[ "$_TAP_EFFECT" == toggle ]]; then
+      local revert_state="$_TAP_FROM_STATE" revert_behavior="$_TAP_BEHAVIOR" revert_label="$_TAP_LABEL"
       n=$((n + 1))
       name="$(printf 'auto-%04d' "$n")"
       if cmd_step "$sid" "$x" "$y" "$tree" "$outdir" "$name" "via=revert"; then
+        if [[ -z "$revert_state" || "$_TAP_TO_STATE" != "$revert_state" ||
+              "$_TAP_BEHAVIOR" != "$revert_behavior" || "$_TAP_LABEL" != "$revert_label" ]]; then
+          echo "ERROR: revert did not prove that '$revert_label' returned to its original state — stopping with the device setting potentially changed" >&2
+          return 1
+        fi
         tree="$outdir/$name.xml"
         steps=$((steps + 1))
       else
-        echo "WARN: could not flip '$_TAP_LABEL' back at $x,$y — the device setting is left changed; revert it by hand" >&2
+        echo "ERROR: could not flip '$revert_label' back at $x,$y — the device setting may be left changed; revert it by hand" >&2
+        return 1
       fi
     fi
   done

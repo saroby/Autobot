@@ -393,6 +393,41 @@
 - [x] Verify: test_device_a11y 55 · test_device_wda(+3) · flow/codegen/skill_sync/doc 계약 227 passed
       (`test_concurrent_sessions_start_only_one_tunnel` 은 병렬 부하 flaky, 단독 2회 통과; tunnel 코드 미변경)
 - 해법 없음(의도적으로 안 함): 빈/에러 데이터 상태, 다크모드·Dynamic Type — 계정·네트워크·시스템 설정에 묶임
-- [x] (후속) 스위치 probe 기본 ON (`CLONE_PROBE_SWITCHES=0` 으로 끔)
+- [x] (후속, 이번 수정에서 철회) 스위치 probe 기본 ON은 계정/로컬 설정을 구분할 수 없어 안전 기본값 OFF로 복원
 - [x] (후속) 실기기 클론 표시 이름 = 원본: observe → `target.json`(기기가 보고한 name) → `install` → `CFBundleDisplayName`.
       bundle ID 는 clone 것 유지. SKILL Step 6c 신설. `test_clone_device_project.py` 3건.
+
+# 2026-08-23 — clone 확정 결함 수정
+
+## 목표·수용 기준
+
+- [x] 기본 탐험은 계정 설정일 수 있는 `AXSwitch`를 누르지 않는다. 명시적으로 probe를 켠 경우에도 원래 state로 복구됐음을 증명하지 못하면 탐험은 non-zero로 중단한다.
+- [x] tap settle이 한도 안에 안정되지 않으면 mid-transition 화면을 `evidence=durable`로 승격하지 않는다.
+- [x] `state-aliases.json`은 근거가 있는 객체 형식만 허용하고, codegen 재개 병합은 fresh canonical state 집합만 남긴다.
+- [x] `functional`은 unreachable 또는 skipped 상태/전이가 있으면 non-zero로 끝난다.
+- [x] 대상 앱의 `target.json`은 기존 clone root와 충돌을 검사하고, observe의 대상 바인딩 게이트가 성공한 뒤에만 원자적으로 갱신한다.
+- [x] 위 변경과 직접 충돌하던 clone 문서를 현재 동작과 일치시킨다.
+- [x] 실기기를 건드리지 않는 회귀 테스트, shell/Python 정적 검사, 문서 검사, 전체 테스트를 통과한다.
+
+## 작업 체크리스트
+
+- [x] 현재 구현 패턴과 테스트 fixture를 기준으로 최소 수정 설계
+- [x] 스위치 기본 OFF·복구 검증·settle failure 구현 및 테스트
+- [x] alias 계약·canonical merge 구현 및 테스트
+- [x] functional unreachable/skipped hard-fail 구현 및 테스트
+- [x] target binding 검증·원자적 기록 구현 및 테스트
+- [x] clone 문서 계약 정리
+- [x] 표적 및 전체 검증
+
+## Working Notes
+
+- 추론 전이, withheld 범위 자체, 같은 라벨 스위치 fingerprint처럼 제품 정책 판단이 더 필요한 항목은 이번 수정에서 제외한다.
+- 실제 iPhone/WDA 명령은 실행하지 않고 fake-device/fixture 테스트로만 검증한다.
+
+## Results
+
+- 기본 switch probe를 opt-in으로 되돌리고, revert 후 원래 state/behavior/label을 검증한다. settle 실패는 `evidence=unstable`과 non-zero로 남기며 durable 화면을 만들지 않는다.
+- alias 근거 형식, fresh canonical manifest, functional 완전 도달성, clone-root 대상 바인딩을 fail-closed로 강화했다.
+- 표적 회귀 173건, 전체 `bash tests/run_tests.sh` 1356건, spec 문서 검사, shell/Python 정적 검사, `git diff --check`가 통과했다.
+- 실제 iPhone/WDA는 실행하지 않았다. 실기기 동작은 이 작업의 검증 범위 밖이다.
+- 설치된 Autobot 0.13.10 런타임은 현재 워크트리와 drift 상태다. 설치/재로딩은 이번 요청 범위에 포함하지 않았다.

@@ -30,9 +30,12 @@ def run(mode: str, body: str, suffix: str) -> subprocess.CompletedProcess:
         f.write(body)
         fixture = f.name
     try:
+        env = os.environ.copy()
+        env.pop("CLONE_PROBE_SWITCHES", None)
         return subprocess.run(
             ["python3", str(SCRIPT), mode, fixture],
             capture_output=True, text=True,
+            env=env,
         )
     finally:
         Path(fixture).unlink()
@@ -42,15 +45,15 @@ def idb(elements: list[dict], mode: str = "candidates") -> subprocess.CompletedP
     return run(mode, json.dumps(elements), ".json")
 
 
-def idb_no_probing(elements: list[dict]) -> subprocess.CompletedProcess:
-    """`candidates` with CLONE_PROBE_SWITCHES=0 — switches stay withheld."""
+def idb_probing(elements: list[dict]) -> subprocess.CompletedProcess:
+    """`candidates` with explicit switch probing enabled."""
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
         f.write(json.dumps(elements))
         fixture = f.name
     try:
         return subprocess.run(["python3", str(SCRIPT), "candidates", fixture],
                               capture_output=True, text=True,
-                              env={**os.environ, "CLONE_PROBE_SWITCHES": "0"})
+                              env={**os.environ, "CLONE_PROBE_SWITCHES": "1"})
     finally:
         Path(fixture).unlink()
 
@@ -120,6 +123,28 @@ class TestActionabilityMetadata(unittest.TestCase):
         self.assertEqual(action["traits"], [])
         self.assertIsNone(action["focused"])
         self.assertIsNone(action["selected"])
+
+    def test_idb_nested_dump_is_flattened_with_depth_and_parent(self):
+        # `idb ui describe-all --json --nested` — same keys plus `children`.
+        tree = [dict(el("", 0, 0, 402, 874, role="AXApplication"), children=[
+            dict(el("", 0, 0, 402, 874, role="AXTabBar"), children=[
+                el("홈", 0, 800, 100, 60, role="AXButton"),
+                el("검색", 100, 800, 100, 60, role="AXButton"),
+            ]),
+            el("게시물", 0, 100, 402, 200, role="AXCell"),
+        ])]
+        parsed = DEVICE_A11Y._parse_idb(json.dumps(tree))
+        self.assertEqual([e["role"] for e in parsed],
+                         ["AXApplication", "AXTabBar", "AXButton", "AXButton", "AXCell"])
+        self.assertEqual([e["depth"] for e in parsed], [0, 1, 2, 2, 1])
+        self.assertEqual([e["parent"] for e in parsed], [-1, 0, 1, 1, 0])
+        # The ancestor walk that the WDA path relies on now works for idb too.
+        self.assertEqual(DEVICE_A11Y._ancestor_index(parsed, 2, {"AXTabBar"}), 1)
+        self.assertIsNone(DEVICE_A11Y._ancestor_index(parsed, 4, {"AXTabBar"}))
+
+    def test_idb_flat_dump_still_parses_at_depth_zero(self):
+        parsed = DEVICE_A11Y._parse_idb(json.dumps([el("a", 0, 0), el("b", 0, 50)]))
+        self.assertEqual([(e["depth"], e["parent"]) for e in parsed], [(0, -1), (0, -1)])
 
 
 class TestWdaFormat(unittest.TestCase):
@@ -269,28 +294,25 @@ class TestStateChangingGuard(unittest.TestCase):
         self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
         self.assertNotIn("category=state-changing", r.stdout)
 
-    def test_switch_is_a_reversible_tap_by_default(self):
-        # Exploration taps it and flips it back in the same step. Only labels
-        # that reach the server stay withheld.
+    def test_switch_is_withheld_by_default(self):
+        # The tree cannot tell a local preference from an account setting.
         r = idb([ROOT, el("비공개 프로필", 0, 200, role="AXSwitch")])
-        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
-        self.assertIn("category=reversible | effect=toggle", r.stdout)
-
-    def test_switch_is_withheld_when_probing_is_turned_off(self):
-        # CLONE_PROBE_SWITCHES=0 — for apps where even a net-zero round-trip
-        # on a switch is not acceptable.
-        r = idb_no_probing([ROOT, el("비공개 프로필", 0, 200, role="AXSwitch")])
         self.assertIn("WARN: withheld", r.stdout)
         self.assertIn("effect=toggle", r.stdout)
 
+    def test_switch_is_reversible_only_when_probing_is_explicitly_enabled(self):
+        r = idb_probing([ROOT, el("비공개 프로필", 0, 200, role="AXSwitch")])
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+        self.assertIn("category=reversible | effect=toggle", r.stdout)
+
     def test_two_switches_on_one_screen_are_two_behaviors(self):
-        r = idb([ROOT, el("알림", 0, 200, role="AXSwitch"), el("다크 모드", 0, 260, role="AXSwitch")])
+        r = idb_probing([ROOT, el("알림", 0, 200, role="AXSwitch"), el("다크 모드", 0, 260, role="AXSwitch")])
         behaviors = {line.split("behavior=")[1].split(" | ")[0]
                      for line in r.stdout.splitlines() if "candidate-meta" in line}
         self.assertEqual(len(behaviors), 2, msg=r.stdout)
 
     def test_switch_with_a_subscription_label_stays_withheld(self):
-        r = idb([ROOT, el("구독 자동 갱신", 0, 200, role="AXSwitch")])
+        r = idb_probing([ROOT, el("구독 자동 갱신", 0, 200, role="AXSwitch")])
         self.assertIn("WARN: withheld", r.stdout)
 
 

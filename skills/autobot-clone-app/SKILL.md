@@ -1,6 +1,6 @@
 ---
 name: autobot-clone-app
-description: Use when reproducing an existing iOS app's screens so they look and behave the same — same layout, spacing, colors, typography, navigation and per-screen behavior — as a buildable SwiftUI project. Not a pixel-diff exercise — the bar is "side by side it reads as the same screen, and the same taps do the same things". Drives a connected iPhone via Appium/WebDriverAgent (`scripts/device_wda.sh`), measures every element's exact frame from the accessibility tree, samples real colors from the screenshot pixels, and emits per-screen specs plus SwiftUI code under `.autobot/clone/`. Requires a connected device — aborts without one. Unlike `autobot-copy-analyze` (which extracts *direction* for an original app), this reproduces the screens themselves. Triggers on "이 앱 그대로 복제해줘", "화면 똑같이 만들어줘", "앱 클론", "/autobot:clone".
+description: Use when reproducing an existing iOS app's screens so they look and behave the same — same layout, spacing, colors, typography, navigation and per-screen behavior — as a buildable SwiftUI project. Not a pixel-diff exercise — the bar is "side by side it reads as the same screen, and the same taps do the same things". Drives a connected iPhone via Appium/WebDriverAgent (`scripts/device_wda.sh`), measures every element's exact frame from the accessibility tree, samples real colors from the screenshot pixels, and emits measurement evidence plus SwiftUI code under `.autobot/clone/`; optional human-authored screen specs are an `/autobot:mvp` handoff. Requires a connected device — aborts without one. Unlike `autobot-copy-analyze` (which extracts *direction* for an original app), this reproduces the screens themselves. Triggers on "이 앱 그대로 복제해줘", "화면 똑같이 만들어줘", "앱 클론", "/autobot:clone".
 ---
 
 # Autobot Clone — 화면을 있는 그대로 재현
@@ -9,7 +9,7 @@ description: Use when reproducing an existing iOS app's screens so they look and
 
 | | `/autobot:copy` | `/autobot:clone` (이 스킬) |
 |---|---|---|
-| 산출물 | 제품 브리프(기획 입력) | 화면 스펙 + 동작 계약 + SwiftUI 코드 |
+| 산출물 | 제품 브리프(기획 입력) | 측정 증거 + SwiftUI 코드 (선택: mvp용 화면 스펙·동작 계약) |
 | 충실도 | 방향(personality·팔레트 느낌) | **레이아웃 · 룩앤필 · 기능** |
 | 목적 | 다른 앱을 새로 만든다 | 같은 화면을 다시 만든다 |
 | 공유 | 둘 다 `scripts/device_wda.sh` 로 기기를 몬다 | |
@@ -28,7 +28,7 @@ clone 산출물은 별도 확인 질문 없이 기본적으로 `research-only`�
 
 ## Workflow
 
-**기본 경로는 세 명령이다.** 사이에 있는 것은 스크립트가 소유할 수 없는 저작뿐이다 — 화면 스펙 `.md` 와, 기계 생성본을 다듬는 손질.
+**기본 완주 경로는 세 명령이다:** `observe` → `functional` → `polish`. `codegen`은 기기 없는 복구 경로이고 `install`은 검증 뒤 실기기에 올리는 선택 단계다. 스크립트가 소유할 수 없는 것은 선택적인 mvp 화면 스펙과 기계 생성본의 손질이다.
 
 ```bash
 python3 scripts/clone_skill_sync.py check                 # Step 1-0 (레포에서 개발 중일 때만)
@@ -136,9 +136,9 @@ macOS TUN 인터페이스 생성에는 관리자 권한이 필요하다. 캐시�
 # 기본 경로: 현재 화면의 안전 frontier를 소진하고, 소진되면 **이미 관찰한 전이를 되짚어
 # 아직 소진되지 않은 화면으로 스스로 이동해** 계속한다 — 탭마다도, 화면마다도 사람이
 # 개입하지 않는다. 모든 탭은 step과 같은 가드(후보 출처·fresh sig·foreground)를 거치며
-# withheld 는 절대 탭하지 않는다. 스위치(AXSwitch)는 withheld 가 아니라 probe 다 —
-# 탭 → 바뀐 화면 캡처 → 같은 자리 한 번 더 탭(via=revert) 을 한 step 안에서 끝낸다
-# (CLONE_PROBE_SWITCHES=0 이면 스위치도 withheld).
+# withheld 는 절대 탭하지 않는다. 스위치(AXSwitch)는 기본 withheld 다.
+# 대상 앱에서 왕복 변경이 허용됨을 확인한 경우에만 CLONE_PROBE_SWITCHES=1 로 켠다.
+# probe 는 탭 → 바뀐 화면 캡처 → 같은 자리 재탭(via=revert) 뒤 원래 state 복구를 검증한다.
 # 전역 소진·max steps·경로 한도·가드 발동에서 멈춘다.
 scripts/device_wda.sh explore "$sid" .autobot/clone/raw 200
 scripts/device_flow.py next .autobot/clone/flow.jsonl     # 남은 미탐험(사람이 읽는 요약)
@@ -157,7 +157,7 @@ scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow
 
 **⓪-3 실행은 자신이 무엇을 눌렀는지 감사한다.** `observe` 는 끝에 `device_flow.py audit` 로 **실제로 탭한 것**을 지금의 가드로 다시 판정하고, 상태 변경 대상이 하나라도 있으면 non-zero 로 끝난다. 가드의 구멍은 열려 있는 동안 보이지 않는다 — 탭이 그냥 성공하기 때문이다. 실측 2026-08-22: 두 번의 실행이 사용자의 실제 Threads 계정으로 남의 게시물에 좋아요·공유를 눌렀고, 로그를 손으로 감사하고 나서야 드러났다. 원인은 `STATE_CHANGING` 패턴이 라벨 **끝**에 앵커돼 있는데 실제 라벨은 `좋아요. 226명이 이 게시물을 좋아합니다.` 처럼 **액션 이름 + 설명문**이었던 것. 감사가 실패하면 탐험을 재개하기 전에 가드를 고치고, **사용자에게 계정에서 무엇이 바뀌었는지 알린다.**
 
-**⓪-4 화면을 떠난 것은 도착한 것이 아니다.** 탭 뒤의 settle 은 statekey 가 처음 달라진 순간이 아니라 **새 state 가 유지될 때까지** 기다린다. 탭한 화면 위의 스피너도, 목적 화면의 첫 렌더도 이미 다른 state 이므로, 먼저 끊으면 존재한 적 없는 화면이 목적지 증거가 되고 Step 3 가 그것을 측정한다(실측 2026-08-23: 28개 중 2개). 그런 유령은 로그에서 **단일 캡처 + 나가는 전이 0** 으로 보인다. 한도 안에 안정되지 않으면 "still moving" 으로 말하고 넘어가며, `CLONE_TAP_SETTLE_TRIES`/`CLONE_TAP_SETTLE_QUIET` 로 조정한다.
+**⓪-4 화면을 떠난 것은 도착한 것이 아니다.** 탭 뒤의 settle 은 statekey 가 처음 달라진 순간이 아니라 **새 state 가 유지될 때까지** 기다린다. 탭한 화면 위의 스피너도, 목적 화면의 첫 렌더도 이미 다른 state 이므로, 먼저 끊으면 존재한 적 없는 화면이 목적지 증거가 되고 Step 3 가 그것을 측정한다(실측 2026-08-23: 28개 중 2개). 그런 유령은 로그에서 **단일 캡처 + 나가는 전이 0** 으로 보인다. 한도 안에 안정되지 않으면 탭 자체는 `evidence=unstable`로 남기되 도착 화면을 durable로 저장하지 않고 non-zero로 중단한다. `CLONE_TAP_SETTLE_TRIES`/`CLONE_TAP_SETTLE_QUIET` 로 한도를 조정한다.
 
 **⓪-2 목록은 스크롤해서 끝까지 본다.** 이 캡처에 탭할 것이 없다는 것은 앱을 다 봤다는 뜻이 아니다 — 목록은 다른 스크롤 위치에만 있는 타깃을 갖는다. 탭할 후보가 하나도 없을 때만(=원래 멈췄을 자리에서만) 스크롤 후 재캡처하고 다시 고른다. `frontier` 는 한 state 의 모든 캡처의 후보를 합치므로 새 캡처의 후보가 곧바로 탐험 대상이 된다. 화면당 `CLONE_EXPLORE_MAX_SCROLL`(기본 6)회, 그리고 **화면이 실제로 움직이지 않으면 그 자리가 끝**이다(무한 피드가 실행을 독점하지 못한다). 스크롤 시도는 움직이지 않았어도 `swipe`+`screen` 으로 기록한다 — "봤는데 더 없었다"도 결과다. 이것 없이는 피드 앱 탐험이 첫 화면분에서 끝난다: Threads 실측(2026-08-22)에서 타깃 235개 중 34개, 나머지는 **애초에 어떤 캡처에도 없었다**.
 
@@ -167,7 +167,7 @@ scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow
 
 **② 화면 정체성은 세 층이다.** `sig`(라벨 집합 해시)는 stale-coordinate 탭 가드, `node`/`nodekey`는 데이터 변화·스크롤을 흡수하는 coarse 구조, `state`/`statekey`는 키보드·포커스·선택·모달을 포함하는 상호작용 상태다. flow와 생성 라우터는 `state`를 우선하고 옛 로그의 `node`로 fallback한다. 같은 coarse node라도 검색 포커스 전후는 다른 상태이므로 기능 복제에서 사라지지 않는다.
 
-**③ 후보 수와 커버리지는 안전성을 포함한다.** 역할·actionable trait가 없는 설명문, `AXKey`/`KeyboardKey`와 키보드 하위 요소는 후보가 아니다. 팔로우·언팔로우·좋아요·리포스트·게시·전송·추천 숨기기 등 계정이나 콘텐츠를 바꾸는 동작은 `withheld`로 분류해 자동 탭하지 않는다. 선은 **되돌릴 수 있는가**다: 스위치(`AXSwitch`)는 `reversible` 로 분류해 탭하고 같은 step 안에서 되돌린다(아래 ⑤; `CLONE_PROBE_SWITCHES=0` 으로 끈다). 라벨이 서버에 닿는 것(구독·좋아요)이면 역할이 스위치여도 withheld 다. `stats`는 실제 좌표 단위 raw target coverage와 반복 행을 묶은 behavior-class coverage를 둘 다 보여주고, 완료 판정은 안전한 behavior class 기준으로 한다.
+**③ 후보 수와 커버리지는 안전성을 포함한다.** 역할·actionable trait가 없는 설명문, `AXKey`/`KeyboardKey`와 키보드 하위 요소는 후보가 아니다. 팔로우·언팔로우·좋아요·리포스트·게시·전송·추천 숨기기 등 계정이나 콘텐츠를 바꾸는 동작은 `withheld`로 분류해 자동 탭하지 않는다. 스위치(`AXSwitch`)도 로컬 설정과 계정 설정을 구분할 수 없어 기본 withheld 다. 왕복 변경이 허용된 대상에서만 `CLONE_PROBE_SWITCHES=1`로 `reversible` probe를 켠다(아래 ⑤). 라벨이 서버 동작으로 분류되면 역할이 스위치여도 probe하지 않는다. `stats`는 실제 좌표 단위 raw target coverage와 반복 행을 묶은 behavior-class coverage를 둘 다 보여주고, 완료 판정은 안전한 behavior class 기준으로 한다.
 
 **④ 중단은 실패가 아니라 정상 종료다.** 실기기에서는 세션 만료·잠금·로그인 벽 중 하나에 반드시 걸린다. 완주가 예외고 중단이 기본이다. 그래서 **재개가 1급 경로**다 — `device_flow.py next` 가 로그를 읽어 미방문 후보를 복원하므로, 새 세션을 열고 이어서 탐험한다. 처음부터 다시 하지 않는다.
 
@@ -177,8 +177,7 @@ scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow
 
 **탐험이 끝나는 조건은 "이 화면에 할 게 없다"가 아니다.** `explore` 는 한 화면이 마르면 ① 텍스트 필드에 probe 를 한 번 입력해 보고(검색 결과 화면은 키보드 너머에만 있다) ② 스크롤해 보고 ③ 관측된 경로로 미탐험 화면에 가고 ④ 그 길도 없으면 **앱을 재시작**해 초기 화면에서 이어간다. 종료는 전역 frontier 소진·max steps·재시작 한도(`CLONE_EXPLORE_MAX_RESTART`, 기본 8)뿐이다. 관측되지 않은 버튼은 재현본에서 아무 일도 하지 않으므로, 커버리지가 곧 재현본의 기능이다.
 
-**⑤ 스위치는 probe 하고 되돌린다.** 스위치를 withheld 로 두면 재현본은 토글이 무엇을 하는지 영영 모른다 — 설정 화면의 토글이 전부 죽은 채 복제된다. 그래서 `explore` 는 스위치를 탭해 **바뀐 화면을 캡처하고, 그 캡처에서 같은 자리를 한 번 더 탭해** 원래 값으로 되돌린다 — 하나의 step 안에서, 다른 후보를 건드리기 전에. 기기는 시작한 값으로 끝나고, 로그에는 `base → flipped` 와 `flipped → base`(`via=revert`) 두 엣지가 남아 `functional` 이 양방향을 재생한다. on/off 는 `statekey` 의 `switch:<label>=<value>` 토큰이라 두 상태는 서로 다른 화면(뷰)이다. 되돌리기에 실패하면 WARN 으로 **라벨과 좌표를 말하고** 계속한다 — 사용자가 손으로 되돌릴 수 있게.
-  **알고 켜 두는 것**: 트리는 로컬 토글과 계정 설정을 구분하지 못한다(Threads 의 `비공개 프로필` 은 Switch 다) — 스위치 probe 는 계정 설정을 몇 초간 바꿨다 되돌릴 수 있다. 그 왕복도 허용되지 않는 앱이면 `CLONE_PROBE_SWITCHES=0` 으로 끈다. 켜져 있어도 DESTRUCTIVE·STATE_CHANGING 라벨은 그대로 withheld 다. 세그먼트·슬라이더는 원래 navigation 후보였고, 텍스트 입력은 ①의 probe 가 맡는다.
+**⑤ 스위치는 명시적으로 켠 경우에만 probe 하고 복구를 증명한다.** 스위치를 withheld 로 두면 재현본의 토글 동작은 미관측으로 남지만, 트리는 로컬 토글과 계정 설정을 구분하지 못한다(Threads 의 `비공개 프로필` 은 Switch 다). 그래서 기본은 계정 쓰기 0을 지키는 withheld다. 대상 앱에서 왕복 변경이 허용됨을 확인한 경우에만 `CLONE_PROBE_SWITCHES=1`을 설정한다. 이때 `explore`는 스위치를 탭해 바뀐 화면을 캡처하고 같은 좌표·같은 behavior를 즉시 재탭한 뒤 **도착 state가 시작 state와 같은지 검증한다.** 복구 실패·다른 컨트롤·다른 state이면 라벨과 좌표를 ERROR로 알리고 non-zero로 중단한다. 성공한 경우에만 `base → flipped`와 `flipped → base`(`via=revert`)가 남는다. 세그먼트·슬라이더는 기존 navigation 후보이고 텍스트 입력은 ①의 probe가 맡는다.
 
 **관측하지 않는 것도 있다 — 의도적으로.** 좋아요·팔로우·게시·공유 같은 상태 변경(`withheld`)은 절대 탭하지 않는다. 그 버튼들은 재현본에서도 죽어 있고, 그게 맞다. `device_flow.py stats` 가 몇 개인지 센다.
 
@@ -245,7 +244,7 @@ python3 scripts/clone_postprocess.py .autobot/clone --workers 4 \
 - **요소 표**: 역할 · 텍스트 · 프레임(x,y,w,h) · 색 · 텍스트 스타일
 - **레이아웃 트리**: 어떤 스택에 무엇이 어떤 간격으로 들어가는지
 - **동작 계약**: 이 화면이 *무엇을 하는가*. 요소별로 — 탭하면 어느 화면(sig)으로 가는지, 무엇이 바뀌는지, 어떤 상태(빈/채워짐/로딩/에러)에서 무엇이 보이는지. **기능 동일성은 여기서 나온다** — 이 표가 곧 `/autobot:mvp` 가 읽는 기능 명세이므로, 화면이 하는 일을 빠뜨리면 재현본은 껍데기가 된다.
-  **모든 행은 근거 열을 갖는다.** 실제로 탭해 본 전이만 실측이고(`sig A → sig B`), 라벨을 보고 짐작한 것은 `미탐험` 으로 표시한다. 스위치는 probe 로 양방향이 실측된다(`base → flipped`, `flipped → base`) — 바뀐 화면에서 무엇이 달라졌는지는 두 statekey 의 측정 JSON 을 비교해 적는다. `CLONE_PROBE_SWITCHES=0` 으로 탐험했다면 스위치 행도 `미탐험` 이다. 짐작을 실측처럼 적으면 `/autobot:mvp` 가 그걸 명세로 믿고 구현한다 — 이 레포가 같은 실패(존재하지 않는 능력을 문서가 전제)를 이미 세 번 겪었다. `미탐험` 행은 명세가 아니라 미확인 가설이다.
+  **모든 행은 근거 열을 갖는다.** 실제로 탭해 본 전이만 실측이고(`sig A → sig B`), 라벨을 보고 짐작한 것은 `미탐험` 으로 표시한다. `CLONE_PROBE_SWITCHES=1`로 복구까지 검증한 스위치만 양방향 실측이다(`base → flipped`, `flipped → base`). 기본 경로의 스위치 행은 `미탐험`이다. 짐작을 실측처럼 적으면 `/autobot:mvp` 가 그걸 명세로 믿고 구현한다 — 이 레포가 같은 실패(존재하지 않는 능력을 문서가 전제)를 이미 세 번 겪었다. `미탐험` 행은 명세가 아니라 미확인 가설이다.
 - **재현 불가 항목**: 접근 가능한 원본 파일이 없는 바이너리 에셋, 커스텀 폰트, 애니메이션 타이밍 등 측정으로 알 수 없는 것을 명시한다. 연구용 캡처 crop을 썼다면 원본 바이너리가 아니라는 점과 품질 손실을 적는다. 숨기지 않는다. 룩앤필에 필요해서 **근사한 값(모서리 반경 등)은 근사라고 적는다** — 측정값과 섞이면 다음 사람이 구분할 수 없다.
 - **자산 출처**: 연구용 원본 자산을 사용한 화면은 `assets/manifest.json`의 파일명·출처 캡처·원본 프레임·획득 방법·`research-only` 범위를 링크한다.
 
@@ -391,7 +390,7 @@ scripts/clone_run.sh install [RootView]     # 기본 RootView = ObservedFlowRoot
 
 시뮬레이터에만 있는 클론은 손에 쥘 수 있는 앱의 클론이 아니다. `install` 은 생성 뷰를 `clone_device_project.py` 가 만든 최소 프로젝트로 묶어 서명·설치한다. **스펙은 둘이다:**
 
-- **홈 화면 이름 = 원본 앱 이름.** `observe` 가 기기에서 bundle ID 를 확정할 때 그 앱의 이름도 함께 `.autobot/clone/target.json` 에 남기고(`{"bundleId","name","resolvedBy","query"}`), `install` 이 그 `name` 을 `CFBundleDisplayName` 으로 넣는다. 사용자가 입력한 검색어가 아니라 **기기가 보고한 이름**이다 — `Threads` 를 `threads` 로 찾았어도 홈 화면에는 `Threads`. `CLONE_APP_DISPLAY_NAME` 으로 덮어쓴다. `target.json` 이 없으면(옛 observe 로그) WARN 과 함께 `CloneApp` 으로 설치하고 멈추지 않는다.
+- **홈 화면 이름 = 원본 앱 이름.** `observe` 가 후보 bundle ID를 기존 `target.json`과 대조하고, doctor와 WDA session이 그 대상에 바인딩된 뒤 기기가 보고한 이름을 원자적으로 기록한다(`{"bundleId","name","resolvedBy","query"}`). 기존 root가 다른 bundle ID에 묶여 있으면 별도 `CLONE_ROOT`를 요구한다. `install`은 그 `name`을 `CFBundleDisplayName`으로 넣는다. 사용자가 입력한 검색어가 아니라 **기기가 보고한 이름**이다. `CLONE_APP_DISPLAY_NAME`으로 덮어쓴다. `target.json`이 없으면(옛 observe 로그) WARN과 함께 `CloneApp`으로 설치하고 멈추지 않는다.
 - **bundle ID · 타깃 · 바이너리는 clone 의 것**(`com.axi.clone.<rootview>`, `CloneApp`). 원본과 같은 기기에 나란히 설치되어야 대조가 되고, 원본의 식별자를 쓰면 원본을 덮어쓴다. 이름이 같고 식별자가 다른 앱 둘이 홈 화면에 보이는 것이 의도된 상태다.
 
 시뮬레이터 프리뷰(`device_render.sh` 의 `ClonePreview`)는 대조 스크린샷용 하네스라 이름을 바꾸지 않는다.
@@ -419,7 +418,7 @@ scripts/clone_run.sh install [RootView]     # 기본 RootView = ObservedFlowRoot
 | 대상 앱 바인딩(bundle ID · 기기가 보고한 이름) | `.autobot/clone/target.json` | Step 6c 표시 이름 · 감사 |
 | 실기기 설치 프로젝트 | `.autobot/clone/device-app/` | Step 6c |
 
-두 진입 명령은 `scripts/clone_run.sh` 다 — `observe` 가 위 표의 `flow.jsonl`·`raw/`·`screens/`·`flow-map.html`·`views.json`·`assets/` 를 만들고, `verify` 가 `compare/` 를 만든다.
+기계 진입점은 `scripts/clone_run.sh` 하나다. 기본 완주 경로는 `observe`·`functional`·`polish`이고, `verify`는 뒤의 두 게이트를 순서대로 실행한다. `codegen`은 기기 없는 복구, `install`은 선택적 실기기 설치다.
 
 ## CRITICAL RULES
 
@@ -427,7 +426,7 @@ scripts/clone_run.sh install [RootView]     # 기본 RootView = ObservedFlowRoot
 2. **원본 바이너리 에셋 추출을 약속하지 않는다** — 접근 가능한 승인 파일·payload·화면 crop이 있으면 연구 전용 산출물에 사용할 수 있고, 없으면 자리표시자 + 명시한다. 샌드박스·암호화·서명 경계를 우회하지 않는다.
 3. **대조 이미지 없이 완료 선언 금지** (Step 6).
 4. **파이프라인 상태 위조 금지** — `build-state.json`/`architecture.json` 을 만들지 않는다. 산출물은 `/autobot:mvp`·`/autobot:plan` 의 입력이거나 독립 참고물이다.
-5. **flow 를 확보하기 전에 재현하지 않는다** — 화면 하나만 보고 코드를 쓰면 그 화면이 앱에서 어떤 위치인지 모른 채 복제하게 된다. Step 2 → 2a → 2b → 2c 를 거친 뒤 Step 3 으로 간다.
+5. **flow 를 확보하기 전에 재현하지 않는다** — 화면 하나만 보고 코드를 쓰면 그 화면이 앱에서 어떤 위치인지 모른 채 복제하게 된다. 기본 완주 경로는 Step 2 → 2a → 2c 뒤 Step 3 으로 간다. Step 2b 역기획은 `/autobot:mvp` 인수인계가 필요할 때 작성하는 선택 산출물이다.
 6. **커버리지와 근거를 숨기지 않는다** — 부분 탐험은 부분이라고 말하고(`stats`), 역기획의 해석은 관찰과 분리하고, 동작 계약의 미확인 행은 `미탐험` 으로 표시한다. 변경된 탭/스와이프의 도착 캡처가 없거나 원본 트리가 빠진 경우도 `incomplete`로 남긴다. 셋 다 추측이 명세로 승격되는 걸 막는 같은 규칙이다.
 7. **관찰 전에 clone 앱을 실행하지 않는다** — clone workspace는 Xcode/CoreDevice 준비용으로만 열고, 대상 앱의 화면·전이를 수집하기 전에는 빌드·설치·실행하지 않는다.
 8. **연구용 자산은 provenance를 남긴다** — `assets/manifest.json` 없이 원본 자산을 생성본에 넣지 않는다. 연구용 기본값과 기술적으로 접근 가능한 출처를 혼동하지 않는다.

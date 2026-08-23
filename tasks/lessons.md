@@ -1,5 +1,11 @@
 # Lessons — Autobot 구조 개선 (2026-04-27)
 
+## 2026-08-23 canonical unittest가 수집하지 않는 pytest 함수
+
+- **실패 모드**: 새 `clone_functional` 회귀 테스트를 pytest의 `tmp_path` fixture를 받는 모듈 함수로 작성해 `pytest`에서는 통과했지만, 저장소 표준인 `unittest discover`에서는 수집되지 않았다.
+- **검출 신호**: 표적 pytest는 3 passed였으나 `PYTHONPATH=tests:scripts python3 -m unittest ...`에서 새 테스트 수가 늘지 않았다.
+- **방지 규칙**: 이 저장소의 새 회귀 테스트는 `unittest.TestCase` 메서드로 작성하고 임시 경로는 `tempfile.TemporaryDirectory`를 사용한다. 표적 pytest 결과만으로 완료하지 않고 canonical runner의 수집 건수를 확인한다.
+
 ## 2026-08-16 RemoteXPC 관리자 background launch
 
 - **실패 모드**: macOS 관리자 `do shell script` 안에서 `/usr/bin/nohup ... &`를 실행하자 `nohup: can't detach from console`로 종료되어, 인증은 성공했지만 tunnel 프로세스가 시작되지 않았다.
@@ -764,3 +770,13 @@ y=700 에서 ~29pt. 44pt 는 그 오차를 ±22 로 덮었을 뿐이다. **실�
   그 크기에서 통과하는지 한 번 묻는다 — 여기서 22pt 는 정확히 하단의 드리프트 폭이었다.
 - 원인을 좁히는 데 결정적이었던 것은 **좌표 스윕**(한 열에서 y 를 10pt 씩 올리며 어디서
   발화하는지)이었다. 가설 여섯 개를 세우는 것보다 빨랐다.
+
+## 2026-08-23 — 검색 패턴의 백틱이 명령 치환으로 실행됨
+
+**실패 모드.** Markdown 문구를 찾는 `rg` 패턴을 셸의 큰따옴표 안에 넣어, 패턴 속 백틱의
+`bash tests/run_tests.sh`가 검색 문자열이 아니라 명령 치환으로 실행됐다.
+
+**검출 신호.** 단순 검색 명령에서 갑자기 unittest 출력이 시작됐고 새 PTY 세션이 남았다.
+
+**예방 규칙.** 셸 검색 패턴에 백틱, `$()`, `$`가 포함되면 작은따옴표를 사용하거나 해당 문자를
+패턴에서 제외한다. 실행 전 `cmd` 문자열에 명령 치환 문법이 없는지 확인한다.

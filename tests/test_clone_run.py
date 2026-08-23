@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -185,6 +186,137 @@ class TestCodegenOnItsOwn(CloneRunCase):
         self.assertEqual(r.returncode, 0, msg=r.stderr)
         views = json.loads((self.root / "views.json").read_text(encoding="utf-8"))["views"]
         self.assertEqual(views["state-a"], "HomeFeedView")
+
+    def test_codegen_drops_stale_alias_keys_and_repairs_the_initial_state(self):
+        self.write_flow([
+            {"type": "screen", "statekey": "loading", "name": "01-profile",
+             "tree": "t", "png": "p"},
+            {"type": "screen", "statekey": "home", "name": "02-home",
+             "tree": "t", "png": "p"},
+        ])
+        for stem in ("01-profile", "02-home"):
+            self.write_measurement(stem)
+        (self.root / "state-aliases.json").write_text(json.dumps({"aliases": {
+            "loading": {"canonical": "loaded", "why": "same settled profile screen"},
+        }}), encoding="utf-8")
+        (self.root / "views.json").write_text(json.dumps({
+            "version": 1,
+            "initial_state": "loading",
+            "views": {
+                "loading": "StaleLoadingView",
+                "loaded": "ProfileView",
+                "home": "HomeFeedView",
+                "unobserved": "StaleView",
+            },
+        }), encoding="utf-8")
+
+        r = self.run_clone("codegen")
+
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        manifest = json.loads((self.root / "views.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["initial_state"], "loaded")
+        self.assertEqual(manifest["views"], {
+            "home": "HomeFeedView",
+            "loaded": "ProfileView",
+        })
+
+
+class TestTargetBinding(CloneRunCase):
+    """Target resolution may not silently retarget an existing clone."""
+
+    def setUp(self):
+        super().setUp()
+        self.harness = self.dir / "harness"
+        self.harness.mkdir()
+        shutil.copy2(SCRIPT, self.harness / "clone_run.sh")
+        (self.harness / "clone_workspace.sh").write_text(
+            "#!/bin/bash\nmkdir -p \"$CLONE_ROOT/project\"\n", encoding="utf-8")
+        (self.harness / "device_wda.sh").write_text(f"""#!/bin/bash
+case "$1" in
+  device) echo "{FIXTURE_UDID}" ;;
+  doctor)
+    echo "doctor:$3" >>"$FAKE_DEVICE_LOG"
+    exit "${{FAKE_DOCTOR_STATUS:-0}}"
+    ;;
+  session)
+    echo "session:$3" >>"$FAKE_DEVICE_LOG"
+    [[ "${{FAKE_SESSION_STATUS:-0}}" == "0" ]] || exit "$FAKE_SESSION_STATUS"
+    echo "fixture-session"
+    ;;
+  explore) exit 1 ;;
+esac
+""", encoding="utf-8")
+        self.device_log = self.dir / "device.log"
+        self.bin = self.dir / "bin"
+        self.bin.mkdir()
+        xcrun = self.bin / "xcrun"
+        xcrun.write_text("""#!/bin/bash
+printf '%s\n' '{"result":{"apps":[{"bundleIdentifier":"com.example.threads","name":"Threads"}]}}'
+""", encoding="utf-8")
+        xcrun.chmod(0o755)
+
+    def observe(self, **extra: str) -> subprocess.CompletedProcess:
+        env = self.offline_env(
+            CLONE_REQUIRE_SUDO="0",
+            FAKE_DEVICE_LOG=str(self.device_log),
+            PATH=f"{self.bin}:{os.environ['PATH']}",
+            **extra,
+        )
+        return subprocess.run(
+            ["bash", str(self.harness / "clone_run.sh"), "observe", "Threads"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env,
+        )
+
+    def test_a_different_existing_target_aborts_before_doctor_or_session(self):
+        target = self.root / "target.json"
+        original = {"bundleId": "com.example.other", "name": "Other"}
+        target.write_text(json.dumps(original), encoding="utf-8")
+
+        result = self.observe()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("use a separate CLONE_ROOT", result.stderr)
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")), original)
+        self.assertFalse(self.device_log.exists())
+
+    def test_existing_target_without_a_bundle_id_fails_closed(self):
+        target = self.root / "target.json"
+        original = {"name": "Unknown legacy target"}
+        target.write_text(json.dumps(original), encoding="utf-8")
+
+        result = self.observe()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cannot be verified", result.stderr)
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")), original)
+        self.assertFalse(self.device_log.exists())
+
+    def test_doctor_or_session_failure_does_not_record_the_candidate(self):
+        for failure in ({"FAKE_DOCTOR_STATUS": "1"}, {"FAKE_SESSION_STATUS": "1"}):
+            with self.subTest(failure=failure):
+                target = self.root / "target.json"
+                target.unlink(missing_ok=True)
+                self.device_log.unlink(missing_ok=True)
+                result = self.observe(**failure)
+                self.assertEqual(result.returncode, 1)
+                self.assertFalse(target.exists())
+
+    def test_target_is_recorded_after_doctor_and_session_bind(self):
+        result = self.observe()
+
+        # The harness intentionally stops at explore. Target binding is already
+        # proven and recorded before evidence collection starts.
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.device_log.read_text(encoding="utf-8").splitlines(), [
+            "doctor:com.example.threads", "session:com.example.threads",
+        ])
+        self.assertEqual(json.loads((self.root / "target.json").read_text(
+            encoding="utf-8")), {
+                "bundleId": "com.example.threads",
+                "name": "Threads",
+                "resolvedBy": "exact-name",
+                "query": "Threads",
+            })
 
 
 class TestUnwrittenViews(CloneRunCase):
