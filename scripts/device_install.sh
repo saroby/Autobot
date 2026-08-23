@@ -38,12 +38,22 @@ main() {
     return 1
   fi
   bundle_id="${bundle_id:-com.axi.clone.$(printf '%s' "$view" | tr '[:upper:]' '[:lower:]')}"
+  # Home-screen name = the original app's, as `observe` resolved it on the
+  # device (target.json). Only the display name; the bundle id above stays the
+  # clone's own so both can sit on one phone.
+  local display="${CLONE_APP_DISPLAY_NAME:-}"
+  if [[ -z "$display" && -f "$CLONE_ROOT/target.json" ]]; then
+    display="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("name",""))' \
+               "$CLONE_ROOT/target.json" 2>/dev/null || true)"
+  fi
+  [[ -n "$display" ]] || echo "WARN: no original app name in $CLONE_ROOT/target.json — the clone keeps the name $APP_NAME (set CLONE_APP_DISPLAY_NAME)" >&2
 
   local project="$CLONE_ROOT/device-app" stage="$CLONE_ROOT/device-app/$APP_NAME"
   rm -rf "$stage"
   mkdir -p "$stage"
   python3 "$_HERE/clone_device_project.py" "$project" --name "$APP_NAME" \
-    --bundle-id "$bundle_id" --team "$team" --deployment-target "$DEPLOY_TARGET"
+    --bundle-id "$bundle_id" --team "$team" --deployment-target "$DEPLOY_TARGET" \
+    ${display:+--display-name "$display"}
 
   cp "$src"/*.swift "$stage/"
   # The capture crops travel with the app. The synchronized group makes every

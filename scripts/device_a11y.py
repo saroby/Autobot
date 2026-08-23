@@ -445,14 +445,14 @@ def _classification(e: dict) -> dict:
     for effect, pattern in STATE_CHANGING:
         if any(pattern.search(clause) for clause in clauses):
             return {"category": "state-changing", "effect": effect, "state_changing": True}
-    # A switch flips and flips back, so with CLONE_PROBE_SWITCHES=1 the explore
-    # loop taps it, captures the flipped state, and taps it again in the same
-    # step. Off by default: the tree cannot tell a local toggle from an account
-    # setting (Threads' "비공개 프로필" is a Switch), and this repo's bar is no
-    # account write at all, net-zero included. Labels that reach the server were
+    # A switch flips and flips back, so the explore loop taps it, captures the
+    # flipped state, and taps it again in the same step. The tree cannot tell a
+    # local toggle from an account setting (Threads' "비공개 프로필" is a
+    # Switch) — CLONE_PROBE_SWITCHES=0 keeps every switch withheld for apps
+    # where that round-trip is not acceptable. Labels that reach the server were
     # caught above and stay withheld whatever the role or the flag.
     if e["role"] == "AXSwitch":
-        if os.environ.get("CLONE_PROBE_SWITCHES") == "1":
+        if os.environ.get("CLONE_PROBE_SWITCHES", "1") != "0":
             return {"category": "reversible", "effect": "toggle", "state_changing": False}
         return {"category": "state-changing", "effect": "toggle", "state_changing": True}
     if e["role"] in TEXT_INPUT_ROLES:

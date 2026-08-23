@@ -393,3 +393,6 @@
 - [x] Verify: test_device_a11y 55 · test_device_wda(+3) · flow/codegen/skill_sync/doc 계약 227 passed
       (`test_concurrent_sessions_start_only_one_tunnel` 은 병렬 부하 flaky, 단독 2회 통과; tunnel 코드 미변경)
 - 해법 없음(의도적으로 안 함): 빈/에러 데이터 상태, 다크모드·Dynamic Type — 계정·네트워크·시스템 설정에 묶임
+- [x] (후속) 스위치 probe 기본 ON (`CLONE_PROBE_SWITCHES=0` 으로 끔)
+- [x] (후속) 실기기 클론 표시 이름 = 원본: observe → `target.json`(기기가 보고한 name) → `install` → `CFBundleDisplayName`.
+      bundle ID 는 clone 것 유지. SKILL Step 6c 신설. `test_clone_device_project.py` 3건.

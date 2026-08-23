@@ -2553,7 +2553,7 @@ class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
     holds both edges for the functional gate to replay.
     """
 
-    def _run(self, max_steps: str = "6", probe: str = "1"):
+    def _run(self, max_steps: str = "6", probe: str = "1"):  # "1" = the default
         def tree(on: bool) -> str:
             return (
                 '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
@@ -2642,7 +2642,7 @@ class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
         # by itself instead of flipping the switch until max steps.
         self.assertIn("nothing left to tap", r.stdout)
 
-    def test_switches_are_not_touched_unless_probing_is_on(self):
+    def test_switches_are_not_touched_when_probing_is_turned_off(self):
         r, events, state = self._run(probe="0")
         self.assertEqual(state["flips"], 0, msg=r.stdout + r.stderr)
         self.assertEqual([e for e in events if e.get("type") == "tap"], [])

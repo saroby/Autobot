@@ -27,14 +27,23 @@ def uid(seed: str) -> str:
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24].upper()
 
 
-def pbxproj(name: str, bundle_id: str, team: str, deployment_target: str) -> str:
+def _pbx_string(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def pbxproj(name: str, bundle_id: str, team: str, deployment_target: str,
+            display_name: str = "") -> str:
+    # The home-screen name is the original app's; the product, binary and
+    # bundle id stay the clone's own so the two never collide on a device.
+    display = (f"\n\t\t\t\tINFOPLIST_KEY_CFBundleDisplayName = {_pbx_string(display_name)};"
+               if display_name else "")
     ids = {key: uid(f"{name}:{key}") for key in (
         "root", "mainGroup", "products", "target", "product", "syncGroup",
         "sources", "frameworks", "resources", "configList", "targetConfigList",
         "debug", "release", "targetDebug", "targetRelease")}
     common = f"""				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = {team};
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = YES;{display}
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = {deployment_target};
@@ -261,6 +270,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--bundle-id", required=True)
     parser.add_argument("--team", required=True)
     parser.add_argument("--deployment-target", default="17.0")
+    parser.add_argument("--display-name", default="",
+                        help="CFBundleDisplayName — the original app's name")
     args = parser.parse_args(argv[1:])
 
     root = Path(args.project_dir)
@@ -275,7 +286,8 @@ def main(argv: list[str]) -> int:
     (schemes / f"{args.name}.xcscheme").write_text(
         scheme(args.name, uid(f"{args.name}:target")), encoding="utf-8")
     (xcodeproj / "project.pbxproj").write_text(
-        pbxproj(args.name, args.bundle_id, args.team, args.deployment_target),
+        pbxproj(args.name, args.bundle_id, args.team, args.deployment_target,
+                args.display_name),
         encoding="utf-8")
     print(f"OK: wrote {xcodeproj}")
     return 0

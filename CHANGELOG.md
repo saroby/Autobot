@@ -4,9 +4,12 @@
 
 ## [Unreleased]
 
-### Added — 스위치 probe (`CLONE_PROBE_SWITCHES=1`): 토글이 하는 일을 관찰한다
+### Added — 실기기 클론은 원본의 이름을 단다
+- `observe` 가 bundle ID 를 확정하는 자리에서 기기가 보고한 앱 이름을 `.autobot/clone/target.json` 에 남기고, `clone_run.sh install` 이 그 이름을 `CFBundleDisplayName` 으로 넣는다(`clone_device_project.py --display-name`, `CLONE_APP_DISPLAY_NAME` 으로 덮어씀). bundle ID·타깃·바이너리는 clone 의 것 그대로 — 원본 옆에 나란히 설치되어야 대조가 된다. SKILL 에 Step 6c 로 적었다(그동안 `install` 은 문서에 없었다).
+
+### Added — 스위치 probe: 토글이 하는 일을 관찰한다
 - 탐험은 `AXSwitch` 를 전부 withheld 로 두어 재현본이 토글이 무엇을 하는지 영영 모르는 상태였다 — 설정 화면의 토글이 전부 죽은 채 복제된다. 켜면 `explore` 가 스위치를 탭해 바뀐 화면을 캡처하고 **같은 step 안에서 같은 자리를 한 번 더 탭해** 되돌린다(`via=revert`). 로그에는 `base → flipped`·`flipped → base` 두 엣지가 남아 `functional` 이 양방향을 재생하고, on/off 는 `statekey` 의 `switch:<label>=<value>` 토큰으로 서로 다른 state 다. 되돌리기 실패는 라벨·좌표와 함께 WARN 으로 말한다.
-- **기본은 꺼짐.** 트리는 로컬 토글과 계정 설정을 구분하지 못하고(Threads 의 `비공개 프로필` 은 Switch), 이 레포의 기준은 순변화 0 이어도 계정 쓰기 0 이다. 켜도 DESTRUCTIVE·STATE_CHANGING 라벨은 역할과 무관하게 withheld 다.
+- **기본 켜짐**, `CLONE_PROBE_SWITCHES=0` 으로 끈다. 트리는 로컬 토글과 계정 설정을 구분하지 못하므로(Threads 의 `비공개 프로필` 은 Switch) probe 는 계정 설정을 몇 초간 바꿨다 되돌릴 수 있다 — 그 왕복도 허용되지 않는 앱이면 끈다. 켜져 있어도 DESTRUCTIVE·STATE_CHANGING 라벨은 역할과 무관하게 withheld 다.
 - `device_a11y.py` 가 요소의 `value` 를 정규화해 실어 나르고, 스위치의 behavior fingerprint 는 라벨 단위다(행-열 묶기면 설정 목록의 스위치 중 첫 하나만 probe 된다). `device_wda.sh step` 은 선택적 7번째 인자 `via=<reason>` 을 받는다.
 
 ### Changed — clone SKILL: 게이트 준비는 Step 1 안으로, 인수인계 문서는 완주 경로 밖으로

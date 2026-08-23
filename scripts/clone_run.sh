@@ -87,10 +87,19 @@ if len(identifiers) > 1:
 label = field(exact[0], "name", "appName", "bundleName", "displayName") or "?"
 print(f"INFO: resolved {target} to {identifiers[0]} by {how} (name: {label})",
       file=sys.stderr)
+# The clone carries the home-screen name of the original (device_install.sh
+# reads this); its bundle id stays its own. Written here because this is the
+# one place the name is known from evidence rather than from what was typed.
+import os
+root = sys.argv[2]
+os.makedirs(root, exist_ok=True)
+with open(os.path.join(root, "target.json"), "w", encoding="utf-8") as fh:
+    json.dump({"bundleId": identifiers[0], "name": label if label != "?" else "",
+               "resolvedBy": how, "query": target}, fh, ensure_ascii=False, indent=2)
 print(identifiers[0])
 PY
 )"
-  python3 -c "$script" "$target" <<<"$apps"
+  python3 -c "$script" "$target" "$CLONE_ROOT" <<<"$apps"
 }
 
 # Ask for the administrator password at the START, if it is going to be needed.
