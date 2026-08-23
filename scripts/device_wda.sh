@@ -1310,7 +1310,20 @@ _perform_tap_and_settle() {
   # has dozens of those (measured 2026-08-23: p90 26.8s against a 4.5s median,
   # all no-op taps). Three identical consecutive dumps is the same rule the
   # swipe settle already uses.
-  local identity prev_sig="" same=0 quiet="${CLONE_TAP_SETTLE_QUIET:-3}"
+  #
+  # Leaving the source screen is NOT arriving. A spinner drawn over the screen
+  # you tapped is already a different statekey, and so is the destination on its
+  # first paint before its content loads — breaking on the first changed dump
+  # records one of those as the destination, and Step 3 then measures a screen
+  # that never existed. Measured 2026-08-23 on Threads: 2 of 28 states in a
+  # 60-step run were such ghosts (`auto-0035`, 4 elements, the source screen
+  # plus a "진행 중" spinner; `auto-0050`, 41 elements, a profile whose settled
+  # capture has 122). Both broke the pipeline downstream — one as an ambiguous
+  # transition that killed codegen outright, one as a screen the clone cannot
+  # reach. So quiet is measured on whichever identity the screen is currently
+  # in: statekey once it has left the source, sig while it is still there.
+  local identity prev_sig="" prev_state="" same=0 quiet="${CLONE_TAP_SETTLE_QUIET:-3}"
+  local settled=false
   while [[ "$i" -lt "$tries" ]]; do
     sleep 0.3
     i=$((i + 1))
@@ -1325,17 +1338,23 @@ _perform_tap_and_settle() {
     # destination evidence Step 3 then measures.
     _TAP_TO_STATE="$(sed -n 's/^INFO: statekey //p' <<<"$identity" | head -n 1)"
     if [[ -n "$_TAP_TO_STATE" && "$_TAP_TO_STATE" != "$_TAP_FROM_STATE" ]]; then
-      _TAP_CHANGED=true
-      break
-    fi
-    if [[ -n "$_TAP_TO_SIG" && "$_TAP_TO_SIG" == "$prev_sig" ]]; then
+      if [[ "$_TAP_TO_STATE" == "$prev_state" ]]; then same=$((same + 1)); else same=0; fi
+    elif [[ -n "$_TAP_TO_SIG" && "$_TAP_TO_SIG" == "$prev_sig" ]]; then
       same=$((same + 1))
-      [[ "$same" -ge "$((quiet - 1))" ]] && break
     else
       same=0
     fi
+    prev_state="$_TAP_TO_STATE"
     prev_sig="$_TAP_TO_SIG"
+    if [[ "$same" -ge "$((quiet - 1))" ]]; then settled=true; break; fi
   done
+  # Say so rather than pass a mid-transition tree off as an arrival. The swipe
+  # settle already reports this; the tap settle used to have no such state.
+  if [[ "$settled" != true && "$i" -ge "$tries" && "$tries" -gt 1 ]]; then
+    echo "INFO: the screen was still moving after $i poll(s) — destination evidence may be mid-transition (raise CLONE_TAP_SETTLE_TRIES)" >&2
+  fi
+  [[ -n "$_TAP_TO_STATE" && "$_TAP_TO_STATE" != "$_TAP_FROM_STATE" ]] && _TAP_CHANGED=true
+  return 0
 }
 
 _record_tap_transition() {

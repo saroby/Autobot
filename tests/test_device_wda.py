@@ -1205,6 +1205,118 @@ class TestSigningTeamResolution(unittest.TestCase):
                 server.server_close()
         return r, events, taps
 
+    def test_step_waits_for_arrival_not_just_for_the_screen_to_change(self):
+        """Leaving the source screen is not arriving at the destination.
+
+        Measured 2026-08-23 on Threads: the settle loop broke on the first dump
+        whose statekey differed from the source, so a spinner drawn over the
+        screen that was tapped — and a destination on its first paint — got
+        recorded as the destination. 2 of 28 states in a 60-step run were such
+        ghosts; one killed codegen as an ambiguous transition, the other left a
+        real screen unreachable. The loop must wait for the new state to hold.
+        """
+        def tree(inner: str) -> str:
+            # Statekey is structural, so the three trees must differ in SHAPE —
+            # relabelling one element is the same state with different content.
+            return (
+                '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+                '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App"'
+                ' label="App" enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+                + inner + '</XCUIElementTypeApplication></AppiumAUT>'
+            )
+
+        row = ('<XCUIElementTypeCell type="XCUIElementTypeCell" label="source.row" name="source.row"'
+               ' enabled="true" visible="true" x="0" y="100" width="375" height="60"/>')
+        before = tree(row)
+        spinner = tree(row + '<XCUIElementTypeActivityIndicator'
+                             ' type="XCUIElementTypeActivityIndicator" label="progress.spinner"'
+                             ' name="progress.spinner" enabled="true" visible="true"'
+                             ' x="170" y="400" width="36" height="36"/>')
+        after = tree('<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" label="arrived.screen"'
+                     ' name="arrived.screen" enabled="true" visible="true"'
+                     ' x="16" y="60" width="200" height="24"/>'
+                     '<XCUIElementTypeButton type="XCUIElementTypeButton" label="back" name="back"'
+                     ' enabled="true" visible="true" x="8" y="20" width="44" height="44"/>')
+        state = {"tapped": False, "post_tap_gets": 0}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    if not state["tapped"]:
+                        self._reply({"value": before})
+                        return
+                    state["post_tap_gets"] += 1
+                    # One transient dump, then the real destination, held.
+                    self._reply({"value": spinner if state["post_tap_gets"] == 1 else after})
+                elif self.path.endswith("/screenshot"):
+                    self._reply({"value": base64.b64encode(b"fixture-png").decode()})
+                else:
+                    self._reply({"value": {"capabilities": {
+                        "appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                if self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                elif self.path.endswith("/actions"):
+                    state["tapped"] = True
+                    self._reply({"value": {}})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source_tree = root / "source.xml"
+            source_tree.write_text(before, encoding="utf-8")
+            outdir, flow = root / "raw", root / "flow.jsonl"
+            state_dir = root / "state"
+            state_dir.mkdir()
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                appium_url = f"http://127.0.0.1:{server.server_port}"
+                (state_dir / "wda-session.json").write_text(json.dumps({
+                    "sid": "session-1", "udid": "00008101-AAA",
+                    "bundleId": "com.example.target", "appiumUrl": appium_url,
+                }), encoding="utf-8")
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "step", "session-1", "187", "130",
+                     str(source_tree), str(outdir), "destination"],
+                    capture_output=True, text=True,
+                    env={**os.environ, "APPIUM_URL": appium_url,
+                         "CLONE_STATE_DIR": str(state_dir),
+                         "CLONE_FLOW_LOG": str(flow),
+                         "CLONE_TAP_SETTLE_TRIES": "8"},
+                )
+                final_xml = (outdir / "destination.xml").read_text(encoding="utf-8")
+                events = [json.loads(line) for line in flow.read_text(encoding="utf-8").splitlines()]
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertNotIn("progress.spinner", final_xml,
+                         msg="the transient dump must not become the destination evidence")
+        self.assertEqual(final_xml, after)
+        self.assertGreaterEqual(state["post_tap_gets"], 3,
+                                msg="the new state has to be read more than once to be called settled")
+        tap = events[0]
+        self.assertEqual(tap["type"], "tap")
+        self.assertEqual(tap["changed"], "true", msg=result.stderr)
+        self.assertNotEqual(tap["to_statekey"], tap["from_statekey"])
+
     def test_explore_drains_the_safe_frontier_without_a_human_per_tap(self):
         r, events, taps = self._run_explore()
         self.assertEqual(r.returncode, 0, msg=r.stderr + r.stdout)

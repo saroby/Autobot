@@ -177,6 +177,46 @@ class TestSwiftGeneration(CodegenCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("ambiguous transition", result.stderr)
 
+    def test_declared_state_alias_merges_one_screen_captured_twice(self):
+        """A screen captured mid-load and settled gets two state keys.
+
+        Measured on Threads 2026-08-23: auto-0050 and auto-0052 are one
+        profile screen, and the split made a single action look like it had
+        two destinations. The alias is declared by a human beside the flow;
+        the evidence log itself is never rewritten.
+        """
+        base = [
+            {"type": "screen", "state": state, "name": state}
+            for state in ("home", "loaded", "loading")
+        ]
+        transition = {
+            "type": "tap", "from_state": "home", "to_state": "loaded",
+            "label": "profile", "changed": True,
+        }
+        self.write_flow(base + [transition, transition | {"to_state": "loading"}])
+        self.complete_manifest(
+            {"home": "HomeView", "loaded": "LoadedView", "loading": "LoadingView"})
+        result = self.run_codegen("generate", str(self.flow), str(self.manifest))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ambiguous transition", result.stderr)
+
+        (self.directory / "state-aliases.json").write_text(json.dumps(
+            {"aliases": {"loading": {"canonical": "loaded", "why": "same screen"}}}
+        ), encoding="utf-8")
+        events = codegen.load_flow(self.flow)
+        self.assertNotIn("loading", set(codegen.captured_states(events)))
+        self.complete_manifest({"home": "HomeView", "loaded": "LoadedView"})
+        swift = codegen.generate_swift(events, codegen.load_manifest(self.manifest))
+        self.assertIn('"profile": "loaded"', swift)
+
+    def test_alias_chains_and_self_alias_are_refused(self):
+        self.write_flow([{"type": "screen", "state": "home", "name": "home"}])
+        for aliases in ({"a": "b", "b": "c"}, {"a": "a"}):
+            (self.directory / "state-aliases.json").write_text(
+                json.dumps({"aliases": aliases}), encoding="utf-8")
+            with self.assertRaises(codegen.FlowCodegenError):
+                codegen.load_flow(self.flow)
+
     def test_missing_view_mapping_fails_instead_of_guessing(self):
         self.write_flow([
             {"type": "screen", "state": "home", "name": "home"},

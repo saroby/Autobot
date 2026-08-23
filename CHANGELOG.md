@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### Fixed — 테스트 스위트가 실기기를 몰 수 있었다
+- `tests/test_clone_run.py::TestSudoGate` 는 `clone_run.sh observe Threads` 를 실환경으로 돌렸다. 기기가 붙어 있고 터널이 살아 있으면 게이트를 통과해 **사용자의 실제 계정에서 탐험을 시작한다**. 실측 2026-08-23: 한 번은 60스텝 넘게 돌았고, 세 사람의 게시물에서 알림 벨이 켜졌다 꺼졌다(순 변화 없음). 테스트가 실계정을 만질 수 있는 상태여서는 안 된다.
+- `CloneRunCase` 가 이제 `CLONE_DEVICES_JSON`/`CLONE_DEVICE_DETAILS_JSON` 픽스처(존재할 수 없는 UDID)와 `CLONE_STATE_DIR`·`CLONE_AUTO_{OPEN_XCODE,START_TUNNEL,START_APPIUM}=0`·`CLONE_TUNNEL_GUI_AUTH=0` 을 모든 하위 테스트에 준다. stdin 도 닫는다 — `_authorize_tunnel` 이 `[[ -t 0 ]]` 뒤에 `sudo -v` 를 부르므로 터미널에서 돌리면 암호 프롬프트에 멈춘다. 18개 전부 6.5초에 통과하며 기기를 건드리지 않는다.
+- **미해결로 남은 것**: `withheld` 패턴이 `알림이 비활성화되었습니다` 처럼 **동작 이름이 아닌 상태 서술형** 토글을 놓친다. `audit` 이 깨끗하다고 말하는 동안 계정이 바뀐다. 위 사고의 실제 원인이며, 고치기 전에는 `observe` 를 다시 돌리면 안 된다.
+
+### Changed — 화면 스펙의 소유권 경계를 문서와 일치시킨다
+- SKILL Step 4 는 스펙을 `screens/<NN>-<screen>.md` 에 쓰라고 했는데 그 경로는 `clone_postprocess.py` 가 소유하고 매 실행 덮어쓴다 — 손으로 쓴 동작 계약이 다음 `observe` 에서 사라진다. 스펙은 `specs/<ViewName>.md` 에 쓰고 측정 증거를 링크한다.
+
+### Added — `clone_run.sh codegen`: 기기 없는 절반을 따로 돌린다
+- 생성(`views.json` → `ObservedFlow.swift` → 화면 뷰)은 `observe` 의 **마지막** 단계인데 기기가 전혀 필요 없다. 로그의 모순(ambiguous transition, 매핑 없는 state)은 실기기 실행이 다 끝난 뒤에야 터지고 `Sources/` 를 비운 채 끝난다 — 실측 2026-08-23: 그 한 번으로 생성 뷰 27개가 통째로 사라졌고, 문서에 적힌 회복 경로는 라이브 앱을 몇 분 더 탐험하는 `observe` 재실행뿐이었다.
+- 이제 로그를 고치고 `clone_run.sh codegen` 을 돌리면 탐험을 그대로 둔 채 생성만 다시 한다. `views.json` 병합도 `cmd_observe` 안의 heredoc 이 아니라 이 명령이 소유하므로, 손으로 복제할 일이 없다.
+
+### Fixed — 화면을 떠난 것과 도착한 것은 다르다
+- `device_wda.sh` 의 탭 settle 루프가 statekey 가 **처음** 달라진 덤프에서 끊었다. 탭한 화면 위에 스피너가 뜬 것도, 목적 화면이 콘텐츠를 받기 전 첫 렌더도 이미 "다른 state" 이므로, 그 한 장이 목적지 증거로 기록되고 Step 3 가 **존재한 적 없는 화면**을 측정했다. 이제 새 state 가 연속으로 유지될 때까지(같은 `CLONE_TAP_SETTLE_QUIET` 규칙) 폴링하고, 한도까지 안정되지 않으면 swipe settle 처럼 "still moving" 을 말한다.
+- 실측 2026-08-23 (Threads, 60스텝): state 28개 중 2개가 이런 유령이었다 — `auto-0035`(요소 4개, 출발 화면 + `진행 중` 스피너), `auto-0050`(요소 41개, 같은 프로필의 안정 캡처는 122개). 둘 다 하류를 부쉈다. 하나는 `ambiguous transition` 으로 codegen 을 통째로 죽였고, 하나는 실재하는 화면을 재현본에서 도달 불가로 만들었다.
+- 두 유령 모두 **단일 캡처 + 나가는 전이 0** 이라는 같은 모양이었다. 그게 이 결함을 로그에서 찾는 방법이다.
+
+### Added — 한 화면이 두 state 로 갈라졌을 때의 탈출구
+- `.autobot/clone/state-aliases.json` — 사람이 두 캡처를 읽고 같은 화면임을 확인했을 때 선언하는 state 병합. `clone_flow_codegen.load_flow` 한 곳에서 적용되므로 전이 추출·캡처 선택·탭 좌표·기능 워크가 전부 같은 이름을 본다. 증거인 `flow.jsonl` 은 절대 고쳐 쓰지 않는다. 한 홉만 허용하고 체인·자기참조는 실패한다(`why` 없이 선언하지 않는다).
+- 위 settle 수정이 이 갈라짐의 흔한 원인을 없앴으므로, 이 파일은 상시 경로가 아니라 예외용 탈출구다.
+
 ### Changed — clone 은 기능을 먼저 세우고 픽셀은 그 다음이다
 - `clone_run.sh` 가 `functional` 과 `polish` 로 나뉘고 `verify` 는 그 둘을 이 순서로 돈다. 앞이 실패하면 뒤로 넘어가지 않는다 — 도달할 수 없는 화면의 간격을 맞추는 것은 그 값이 셈에 들어가는지 모르는 채 쓰는 시간이다.
 - `scripts/clone_functional.py` — 재현본을 시뮬레이터에 띄우고 관측된 전이를 **앱 안에서 실제로 탭해** 목적 화면에 도착하는지 본다. 도착 화면은 각 뷰가 내보내는 `clone-state:<statekey>` 접근성 라벨로 읽는다. 현재 위치에서 나가는 엣지를 먼저 소진해 재실행 횟수를 줄인다.

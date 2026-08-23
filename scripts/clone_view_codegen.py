@@ -681,15 +681,14 @@ def _measurement_labels(path: Path) -> set[str]:
 
 
 def captures_by_state(flow: Path, screens: Path) -> dict[str, list[str]]:
-    """Every measurement captured for each state, in the order it was taken."""
+    """Every measurement captured for each state, in the order it was taken.
+
+    Read through ``flow_codegen.load_flow`` so declared state aliases apply
+    here too. Parsing the log a second time by hand is how this file would
+    otherwise key captures by a state the router no longer knows about.
+    """
     captures: dict[str, list[str]] = {}
-    for line in flow.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for event in flow_codegen.load_flow(flow):
         if event.get("type") != "screen":
             continue
         for key in ("statekey", "state", "node"):
@@ -742,13 +741,7 @@ def state_to_stem(flow: Path, screens: Path,
 def tap_points(flow: Path) -> dict[tuple[str, str], tuple[float, float]]:
     """Where on screen each observed action was tapped, per originating state."""
     points: dict[tuple[str, str], tuple[float, float]] = {}
-    for line in flow.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for event in flow_codegen.load_flow(flow):
         if event.get("type") != "tap":
             continue
         source = event.get("from_statekey") or event.get("from_state") or event.get("from")

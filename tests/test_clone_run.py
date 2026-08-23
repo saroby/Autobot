@@ -17,6 +17,9 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "clone_run.sh"
+# A UDID no attached device can have, so anything that reaches devicectl fails
+# fast instead of driving a phone.
+FIXTURE_UDID = "00008101-000FIXTURE0001E"
 
 
 class CloneRunCase(unittest.TestCase):
@@ -27,12 +30,43 @@ class CloneRunCase(unittest.TestCase):
         (self.root / "screens").mkdir(parents=True)
         (self.root / "raw").mkdir()
         self.addCleanup(self._dir.cleanup)
+        # Device enumeration must come from a fixture, never from whatever
+        # phone happens to be plugged in. Without this the `observe` tests
+        # resolved the developer's real device and drove it: measured
+        # 2026-08-23, one run walked 60+ steps through the user's live Threads
+        # account, and the notification bell on three strangers' posts was
+        # toggled on and back off before anyone noticed. A test suite must not
+        # be able to touch a real account.
+        self.devices_json = self.dir / "devices.json"
+        self.devices_json.write_text(json.dumps({"result": {"devices": [{
+            "hardwareProperties": {"udid": FIXTURE_UDID, "reality": "physical"},
+            "deviceProperties": {"name": "fixture iPhone"},
+            "connectionProperties": {"tunnelState": "connected"},
+        }]}}), encoding="utf-8")
+        self.device_details_json = self.dir / "details.json"
+        self.device_details_json.write_text(json.dumps({"result": {"properties": {
+            "connection": {"state": "connected"},
+            "hardware": {"reality": "physical", "udid": FIXTURE_UDID,
+                         "marketingName": "iPhone 12 mini", "productType": "iPhone13,1"},
+            "software": {"osVersionNumber": {"stringValue": "26.5.2"},
+                         "osBuildVersions": {"buildVersion": {"name": "23F84"}}},
+        }}}), encoding="utf-8")
 
-    def run_clone(self, *args: str) -> subprocess.CompletedProcess:
-        env = {
+    def offline_env(self, **extra: str) -> dict:
+        """Everything that keeps a run inside this temp directory."""
+        return {
             **os.environ,
             "CLONE_ROOT": str(self.root),
             "CLONE_FLOW_LOG": str(self.root / "flow.jsonl"),
+            "CLONE_STATE_DIR": str(self.dir / "state"),
+            "CLONE_DEVICES_JSON": str(self.devices_json),
+            "CLONE_DEVICE_DETAILS_JSON": str(self.device_details_json),
+            # Nothing here may open the developer's Xcode, start a server, or
+            # run a privileged tunnel command.
+            "CLONE_AUTO_OPEN_XCODE": "0",
+            "CLONE_AUTO_START_TUNNEL": "0",
+            "CLONE_TUNNEL_GUI_AUTH": "0",
+            "CLONE_AUTO_START_APPIUM": "0",
             # `auto` resolves the simulator from this profile; pointing it at a
             # path that does not exist makes rendering fail before swiftc runs.
             "CLONE_DEVICE_PROFILE": str(self.dir / "no-profile.json"),
@@ -40,9 +74,16 @@ class CloneRunCase(unittest.TestCase):
             # Resolution is a property of the RUN, not of a screen, so verify
             # settles it once up front — see test_no_simulator_fails_once.
             "CLONE_RENDER_SIMULATOR": "SIM-UDID",
+            **extra,
         }
+
+    def run_clone(self, *args: str, **env_extra: str) -> subprocess.CompletedProcess:
+        # stdin closed: `_authorize_tunnel` asks `[[ -t 0 ]]` before `sudo -v`,
+        # and a suite run from a terminal would otherwise sit on a password
+        # prompt.
         return subprocess.run(["bash", str(SCRIPT), *args],
-                              capture_output=True, text=True, env=env)
+                              capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, env=self.offline_env(**env_extra))
 
     def write_flow(self, events: list[dict]) -> None:
         (self.root / "flow.jsonl").write_text(
@@ -97,6 +138,53 @@ class TestRefusals(CloneRunCase):
         r = self.run_clone("polish")
         self.assertEqual(r.returncode, 1)
         self.assertIn("no screen has both", r.stderr)
+
+
+class TestCodegenOnItsOwn(CloneRunCase):
+    """The half that needs no phone must be runnable without one.
+
+    Generation is the LAST thing `observe` does, so a contradiction in the log
+    fails after the whole device run and leaves Sources/ empty. Measured
+    2026-08-23 on Threads: recovering meant re-exploring a live app for minutes
+    to redo work no device is involved in.
+    """
+
+    def test_codegen_before_observe_names_the_command_that_produces_the_log(self):
+        r = self.run_clone("codegen")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("clone_run.sh observe", r.stderr)
+
+    def test_codegen_rebuilds_the_manifest_router_and_views_from_the_log_alone(self):
+        self.write_flow([
+            {"type": "screen", "statekey": "state-a", "name": "01-home",
+             "tree": "t", "png": "p"},
+            {"type": "screen", "statekey": "state-b", "name": "02-detail",
+             "tree": "t", "png": "p"},
+            {"type": "tap", "from_statekey": "state-a", "to_statekey": "state-b",
+             "label": "열기", "changed": True, "x": 10, "y": 20},
+        ])
+        for stem in ("01-home", "02-detail"):
+            self.write_measurement(stem)
+        r = self.run_clone("codegen")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        views = json.loads((self.root / "views.json").read_text(encoding="utf-8"))["views"]
+        self.assertEqual(set(views), {"state-a", "state-b"})
+        router = (self.root / "Sources" / "ObservedFlow.swift").read_text(encoding="utf-8")
+        self.assertIn('"열기"', router)
+        for view in views.values():
+            self.assertTrue((self.root / "Sources" / f"{view}.swift").is_file(), view)
+
+    def test_codegen_keeps_names_already_chosen_for_a_state(self):
+        # compare/ evidence and hand-polished files are keyed by the view name,
+        # so re-running generation must not rename a state that already has one.
+        self.write_flow([{"type": "screen", "statekey": "state-a", "name": "01-home",
+                          "tree": "t", "png": "p"}])
+        self.write_measurement("01-home")
+        self.write_views({"state-a": "HomeFeedView"})
+        r = self.run_clone("codegen")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        views = json.loads((self.root / "views.json").read_text(encoding="utf-8"))["views"]
+        self.assertEqual(views["state-a"], "HomeFeedView")
 
 
 class TestUnwrittenViews(CloneRunCase):
@@ -263,12 +351,10 @@ class TestSudoGate(CloneRunCase):
         self.assertIn("tunnel-creation", r.stderr)
 
     def test_the_gate_can_be_turned_off(self):
-        r = subprocess.run(["bash", str(SCRIPT), "observe", "Threads"],
-                           capture_output=True, text=True,
-                           env={**os.environ, "CLONE_ROOT": str(self.root),
-                                "CLONE_FLOW_LOG": str(self.root / "flow.jsonl"),
-                                "CLONE_REQUIRE_SUDO": "0"})
+        r = self.run_clone("observe", "Threads", CLONE_REQUIRE_SUDO="0")
         self.assertNotIn("no terminal to ask for a password", r.stderr)
+        # Turning the gate off must not turn the run loose on a real phone.
+        self.assertNotIn("INFO: explore round", r.stdout)
 
 
 if __name__ == "__main__":

@@ -44,7 +44,64 @@ def load_flow(path: str | Path) -> list[dict[str, Any]]:
                     f"flow line {line_number} must be a JSON object"
                 )
             events.append(event)
+    _apply_state_aliases(events, state_aliases(path))
     return events
+
+
+STATE_ALIAS_FILE = "state-aliases.json"
+
+# Every field that names a state. A live screen gets captured mid-load and again
+# once it settles, and the two carry different state keys — one screen, twice.
+# Nothing in the log can tell that they are the same screen, so a human declares
+# it here after reading both captures, and every consumer of the flow reads the
+# canonical name. The evidence in flow.jsonl is never rewritten.
+_STATE_FIELDS = ("state", "statekey", "node", "nodekey",
+                 "from", "from_state", "from_statekey",
+                 "to", "to_state", "to_statekey")
+
+
+def state_aliases(flow_path: str | Path) -> dict[str, str]:
+    """Declared state merges, read from ``state-aliases.json`` beside the flow.
+
+    ``{"aliases": {"<alias>": {"canonical": "<state>", "why": "..."}}}`` — the
+    value may also be the canonical string on its own. One hop only: a chain
+    would let two declarations disagree about where a state ends up.
+    """
+    path = Path(flow_path).parent / STATE_ALIAS_FILE
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise FlowCodegenError(f"invalid JSON in {path}: {exc.msg}") from exc
+    entries = payload.get("aliases") if isinstance(payload, dict) else None
+    if not isinstance(entries, dict):
+        raise FlowCodegenError(f"{path} must be an object with an 'aliases' object")
+    aliases: dict[str, str] = {}
+    for alias, value in entries.items():
+        canonical = value.get("canonical") if isinstance(value, dict) else value
+        if not isinstance(canonical, str) or not canonical.strip():
+            raise FlowCodegenError(f"{path}: alias {alias!r} names no canonical state")
+        alias, canonical = str(alias).strip(), canonical.strip()
+        if alias == canonical:
+            raise FlowCodegenError(f"{path}: alias {alias!r} points at itself")
+        aliases[alias] = canonical
+    chained = sorted(set(aliases.values()) & set(aliases))
+    if chained:
+        raise FlowCodegenError(
+            f"{path}: canonical state(s) {', '.join(chained)} are themselves aliased "
+            "— declare one hop, not a chain")
+    return aliases
+
+
+def _apply_state_aliases(events: list[dict[str, Any]], aliases: dict[str, str]) -> None:
+    if not aliases:
+        return
+    for event in events:
+        for key in _STATE_FIELDS:
+            value = event.get(key)
+            if isinstance(value, str) and value in aliases:
+                event[key] = aliases[value]
 
 
 def _identifier(event: dict[str, Any], *keys: str) -> str | None:

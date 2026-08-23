@@ -26,7 +26,8 @@ FLOW="${CLONE_FLOW_LOG:-$CLONE_ROOT/flow.jsonl}"
 
 usage() {
   echo "Usage: clone_run.sh observe <app name or bundle id>" >&2
-  echo "       clone_run.sh functional | polish [screen] | verify | install [RootView]" >&2
+  echo "       clone_run.sh codegen | functional | polish [screen] | verify | install [RootView]" >&2
+  echo "       codegen redoes views.json + router + views from flow.jsonl — no device" >&2
   echo "       polish takes a measurement stem or a view name to do just that screen" >&2
 }
 
@@ -195,6 +196,26 @@ cmd_observe() {
     echo "ERROR: this run tapped state-changing targets — see above and tell the user" >&2
     status=1
   fi
+  cmd_codegen || status=1
+  echo "OK: observed — specs in $CLONE_ROOT/screens, map at $CLONE_ROOT/flow-map.html"
+  return "$status"
+}
+
+# The generation half on its own: flow.jsonl -> views.json -> router -> views.
+#
+# It is its own command because it is the half that needs no phone, and it is
+# the half that fails LAST. A contradiction in the log (an ambiguous transition,
+# a state with no view mapping) surfaces only after the whole device run and
+# leaves Sources/ empty — measured 2026-08-23: one such failure lost every
+# generated view, and the only documented way back was `observe`, which would
+# re-explore a live app for minutes to redo work no device is involved in. Fix
+# the log, run this, keep the exploration.
+cmd_codegen() {
+  local status=0
+  if [[ ! -s "$FLOW" ]]; then
+    echo "ERROR: no $FLOW — run 'clone_run.sh observe' first" >&2
+    return 1
+  fi
   # Every run can add screens, so the manifest, the router and the views are
   # refreshed together EVERY time — an interrupted run included. Names already
   # in views.json are kept (hand edits and compare/ evidence are keyed by them);
@@ -223,7 +244,6 @@ PY
   # element missing) and the author had no idea which screens were close. This
   # never touches a file whose generated marker has been removed.
   python3 "$_HERE/clone_view_codegen.py" "$CLONE_ROOT" --flow "$FLOW" || status=1
-  echo "OK: observed — specs in $CLONE_ROOT/screens, map at $CLONE_ROOT/flow-map.html"
   return "$status"
 }
 
@@ -429,6 +449,7 @@ cmd_verify() {
 
 case "${1:-}" in
   observe)    shift; cmd_observe "$@" ;;
+  codegen)    shift; cmd_codegen "$@" ;;
   functional) shift; cmd_functional "$@" ;;
   polish)     shift; cmd_polish "$@" ;;
   verify)     shift; cmd_verify "$@" ;;
