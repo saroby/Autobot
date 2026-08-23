@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added — 스위치 probe (`CLONE_PROBE_SWITCHES=1`): 토글이 하는 일을 관찰한다
+- 탐험은 `AXSwitch` 를 전부 withheld 로 두어 재현본이 토글이 무엇을 하는지 영영 모르는 상태였다 — 설정 화면의 토글이 전부 죽은 채 복제된다. 켜면 `explore` 가 스위치를 탭해 바뀐 화면을 캡처하고 **같은 step 안에서 같은 자리를 한 번 더 탭해** 되돌린다(`via=revert`). 로그에는 `base → flipped`·`flipped → base` 두 엣지가 남아 `functional` 이 양방향을 재생하고, on/off 는 `statekey` 의 `switch:<label>=<value>` 토큰으로 서로 다른 state 다. 되돌리기 실패는 라벨·좌표와 함께 WARN 으로 말한다.
+- **기본은 꺼짐.** 트리는 로컬 토글과 계정 설정을 구분하지 못하고(Threads 의 `비공개 프로필` 은 Switch), 이 레포의 기준은 순변화 0 이어도 계정 쓰기 0 이다. 켜도 DESTRUCTIVE·STATE_CHANGING 라벨은 역할과 무관하게 withheld 다.
+- `device_a11y.py` 가 요소의 `value` 를 정규화해 실어 나르고, 스위치의 behavior fingerprint 는 라벨 단위다(행-열 묶기면 설정 목록의 스위치 중 첫 하나만 probe 된다). `device_wda.sh step` 은 선택적 7번째 인자 `via=<reason>` 을 받는다.
+
+### Changed — clone SKILL: 게이트 준비는 Step 1 안으로, 인수인계 문서는 완주 경로 밖으로
+- Step 0/0a/0b(스킬 계약·workspace·터널 인증)는 복제 논리가 아니라 iOS 18+ 에서 Appium/CoreDevice 를 세우는 준비였고, 0a 는 "bundle ID 확인 후"라고 적혀 있었지만 실제 `observe` 는 bundle 바인딩보다 먼저 workspace 를 만든다. 전부 Step 1 의 하위 항목(1-0 ~ 1-3)으로 접고 순서를 실행과 맞췄다.
+- Step 2b 역기획·Step 4 화면 스펙은 `observe → functional → polish` 의 어느 게이트도 읽지 않는 `/autobot:mvp` 인수인계 문서다. Workflow 머리에 산출물이 두 종류임을 적고 두 Step 헤딩에 소속을 표시했다 — 클론은 이것 없이도 완주된다.
+
 ### Fixed — 테스트 스위트가 실기기를 몰 수 있었다
 - `tests/test_clone_run.py::TestSudoGate` 는 `clone_run.sh observe Threads` 를 실환경으로 돌렸다. 기기가 붙어 있고 터널이 살아 있으면 게이트를 통과해 **사용자의 실제 계정에서 탐험을 시작한다**. 실측 2026-08-23: 한 번은 60스텝 넘게 돌았고, 세 사람의 게시물에서 알림 벨이 켜졌다 꺼졌다(순 변화 없음). 테스트가 실계정을 만질 수 있는 상태여서는 안 된다.
 - `CloneRunCase` 가 이제 `CLONE_DEVICES_JSON`/`CLONE_DEVICE_DETAILS_JSON` 픽스처(존재할 수 없는 UDID)와 `CLONE_STATE_DIR`·`CLONE_AUTO_{OPEN_XCODE,START_TUNNEL,START_APPIUM}=0`·`CLONE_TUNNEL_GUI_AUTH=0` 을 모든 하위 테스트에 준다. stdin 도 닫는다 — `_authorize_tunnel` 이 `[[ -t 0 ]]` 뒤에 `sudo -v` 를 부르므로 터미널에서 돌리면 암호 프롬프트에 멈춘다. 18개 전부 6.5초에 통과하며 기기를 건드리지 않는다.

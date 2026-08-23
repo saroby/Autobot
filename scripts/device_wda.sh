@@ -1285,6 +1285,13 @@ _prepare_tap() {
       exit
     }
   ' <<<"$candidate_output")"
+  _TAP_EFFECT="$(awk -v k="INFO: candidate-meta $x $y " '
+    index($0, k) == 1 {
+      count = split($0, parts, "effect=")
+      if (count > 1) { split(parts[2], tail, " | "); print tail[1] }
+      exit
+    }
+  ' <<<"$candidate_output")"
 }
 
 _perform_tap_and_settle() {
@@ -1392,9 +1399,9 @@ cmd_tap() {
 
 cmd_step() {
   local sid="${1:-}" x="${2:-}" y="${3:-}" tree="${4:-}"
-  local outdir="${5:-}" name="${6:-}" xml png xml_tmp png_tmp
+  local outdir="${5:-}" name="${6:-}" via="${7:-via=step}" xml png xml_tmp png_tmp
   if [[ -z "$sid" || -z "$x" || -z "$y" || -z "$tree" || -z "$outdir" || -z "$name" ]]; then
-    echo "ERROR: usage: device_wda.sh step <sid> <x> <y> <tree.xml> <outdir> <name>" >&2
+    echo "ERROR: usage: device_wda.sh step <sid> <x> <y> <tree.xml> <outdir> <name> [via=<reason>]" >&2
     return 1
   fi
   if [[ ! -f "$tree" ]]; then
@@ -1461,9 +1468,9 @@ cmd_step() {
     return 1
   fi
 
-  _record_tap_transition "$x" "$y" "tree=$xml" "png=$png" "evidence=durable" "via=step"
+  _record_tap_transition "$x" "$y" "tree=$xml" "png=$png" "evidence=durable" "$via"
   _flow_event screen "node=${_TAP_TO_KEY:-?}" "statekey=${_TAP_TO_STATE:-?}" "sig=${_TAP_TO_SIG:-?}" \
-    "name=$name" "tree=$xml" "png=$png" "via=step"
+    "name=$name" "tree=$xml" "png=$png" "$via"
   echo "OK: tapped $x,$y${_TAP_LABEL:+ ($_TAP_LABEL)} and captured $png + $xml"
   [[ "$_TAP_CHANGED" == true ]] || echo "INFO: screen did not change — durable evidence records the no-op destination"
 }
@@ -1979,6 +1986,23 @@ cmd_explore() {
     scrolls=0          # new screen (or new position) — its own scroll budget
     tree="$outdir/$name.xml"
     steps=$((steps + 1))
+    # A switch is the one state-changing control exploration taps, because it
+    # flips back. Flip it back NOW, from the capture just taken, so the device
+    # never carries a changed setting into the rest of the walk — the frontier
+    # would revert it eventually, but only if nothing else on the flipped screen
+    # gets tapped first. The revert is a step like any other: its own tap edge
+    # (flipped -> base) and its own arrival capture, so the functional gate can
+    # replay both directions.
+    if [[ "$_TAP_EFFECT" == toggle && "$_TAP_CHANGED" == true ]]; then
+      n=$((n + 1))
+      name="$(printf 'auto-%04d' "$n")"
+      if cmd_step "$sid" "$x" "$y" "$tree" "$outdir" "$name" "via=revert"; then
+        tree="$outdir/$name.xml"
+        steps=$((steps + 1))
+      else
+        echo "WARN: could not flip '$_TAP_LABEL' back at $x,$y — the device setting is left changed; revert it by hand" >&2
+      fi
+    fi
   done
   if [[ "$steps" -ge "$max_steps" ]]; then
     echo "INFO: reached max steps ($max_steps) — re-run explore to continue"

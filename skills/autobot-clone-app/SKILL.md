@@ -31,8 +31,8 @@ clone 산출물은 별도 확인 질문 없이 기본적으로 `research-only`�
 **기본 경로는 세 명령이다.** 사이에 있는 것은 스크립트가 소유할 수 없는 저작뿐이다 — 화면 스펙 `.md` 와, 기계 생성본을 다듬는 손질.
 
 ```bash
-python3 scripts/clone_skill_sync.py check                 # Step 0
-scripts/clone_run.sh observe '<앱 이름 또는 bundle id>'    # Step 0a–3, + Step 5 기계 초안
+python3 scripts/clone_skill_sync.py check                 # Step 1-0 (레포에서 개발 중일 때만)
+scripts/clone_run.sh observe '<앱 이름 또는 bundle id>'    # Step 1–3, + Step 5 기계 초안
 scripts/clone_run.sh functional                           # Step 6a — 앱이 동작하는가
 scripts/clone_run.sh polish                               # Step 6b — 화면이 같아 보이는가
 #   scripts/clone_run.sh verify 는 위 둘을 이 순서로 돈다.
@@ -51,7 +51,15 @@ scripts/clone_run.sh codegen                              # 기기 없이 생성
 
 아래 Step 들은 그 두 명령이 각각 무엇을 보장하는지와, 개별 진단에 쓰는 하위 명령을 정의한다.
 
-### Step 0 — 저장소/설치 스킬 계약 확인
+**산출물은 두 종류다 — 섞지 않는다.**
+- **clone 완주 경로** (Step 1 → 2 → 3 → 5 → 6a → 6b): `observe`·`functional`·`polish` 가 만들고 검증하는 것. 이것만으로 "같아 보이고 같이 움직이는" 재현본이 나온다.
+- **`/autobot:mvp` 인수인계 문서** (Step 2b 역기획 · Step 4 화면 스펙): 사람이 쓰고, 완주 경로의 어느 게이트도 읽지 않는다. 클론이 아니라 *다음 기획*의 입력이다. 없어도 클론은 완주되고, 있으면 mvp 가 추측 대신 실측을 받는다.
+
+### Step 1 — 기기 게이트 + 대상 앱 바인딩 (HARD)
+
+한 단계지만 순서가 있다: 스킬 계약 → workspace → 기기 확정 → 터널 → bundle ID → doctor → session. `observe` 가 이 순서로 돌고, 어느 항목이든 실패하면 **중지**한다. 1-0 ~ 1-2 는 복제 논리가 아니라 Appium/CoreDevice 를 iOS 18+ 에서 세우기 위한 준비이며, 이 게이트 밖에서는 의미가 없다.
+
+#### 1-0 저장소/설치 스킬 계약 확인
 
 저장소에서 플러그인을 개발 중이면 실행 전에 canonical 스킬과 설치된 플러그인의 버전·내용을 확인한다.
 
@@ -61,9 +69,9 @@ python3 scripts/clone_skill_sync.py check
 
 같은 버전이 설치되어 있고 스킬이 참조하는 clone runtime 스크립트의 존재·해시가 모두 같은데 **스킬 문서만** drift한 경우에만, 변경을 검토한 뒤 `sync`를 쓴다. 저장소와 설치본의 버전이 다르거나 스크립트가 빠졌으면 동기화하지 않는다. 먼저 일치하는 플러그인 패키지를 설치·reload해야 하며, 새 문서와 옛 스크립트를 섞어 실행하지 않는다.
 
-### Step 0a — clone workspace 준비
+#### 1-1 clone workspace 준비
 
-대상 bundle ID 확인이 끝나면, 관찰에 사용할 Xcode workspace를 먼저 만든다. 이 프로젝트는 Xcode/CoreDevice를 깨우기 위한 **clone 전용 작업공간**이며, Threads의 bundle ID를 그대로 쓰지 않는다. 출처를 기록한 이름·로고·이미지는 별도 자산으로 넣을 수 있지만, clone 앱의 bundle ID·서명·앱 식별자는 별개로 유지한다.
+기기 확정보다 **먼저** 관찰에 사용할 Xcode workspace를 만든다 — 다음 항목의 `device` 가 CoreDevice 복구에 이 프로젝트를 연다. 이 프로젝트는 Xcode/CoreDevice를 깨우기 위한 **clone 전용 작업공간**이며, Threads의 bundle ID를 그대로 쓰지 않는다. 출처를 기록한 이름·로고·이미지는 별도 자산으로 넣을 수 있지만, clone 앱의 bundle ID·서명·앱 식별자는 별개로 유지한다.
 
 ```bash
 scripts/clone_workspace.sh prepare
@@ -72,7 +80,7 @@ export CLONE_XCODE_PROJECT=".autobot/clone/project/CloneWorkspace.xcodeproj"
 
 `device_wda.sh device`는 연결된 물리 기기가 없을 때 이 프로젝트를 `open -a Xcode`로 열고 최대 30초 동안 `devicectl` 상태를 재조회한다. 이는 CoreDevice 터널을 깨우는 best-effort 복구다. 계속 `paired`/`unavailable`이면 연결된 것으로 간주하지 않고 중지한다 — 그때는 Xcode의 **Window > Devices and Simulators**를 한 번 열거나 USB·잠금 해제·Developer Mode·Trust를 확인한다. 프로젝트를 먼저 빌드하거나 실행하지 않는다. 관찰 전에 foreground 앱을 바꾸면 대상 앱 바인딩 증거가 흐려진다.
 
-### Step 0b — 터널 인증은 시작 시점에 묻는다
+#### 1-2 터널 인증은 시작 시점에 묻는다
 
 iOS 18+ 실기기는 RemoteXPC 터널이 필요하고 그 TUN 인터페이스 생성에는 root 가 든다. `clone_run.sh observe` 는 기기를 확정한 **직후** 터널을 세운다 — 터미널이면 `sudo -v`, 아니면 macOS 관리자 대화상자로 그 자리에서 묻는다.
 
@@ -85,7 +93,7 @@ scripts/device_wda.sh tunnel-start  <udid>   # 세운다 (필요하면 인증을
 
 `tunnel-status` 는 프로필이 **다른 기기**를 가리키면 통과가 아니라 exit 2 로 거부한다. "판단 불가"를 "불필요"로 흘리면 iOS 26 기기가 조용히 통과한다(실측 2026-08-23). `CLONE_REQUIRE_SUDO=0` 으로 이 단계를 건너뛴다.
 
-### Step 1 — 기기 게이트 + 대상 앱 바인딩 (HARD)
+#### 1-3 기기 확정 · bundle ID 바인딩 · doctor · session
 
 대상 앱을 단순히 현재 포그라운드 앱으로 추정하지 않는다. **같은 UDID에서 bundle ID를 먼저 확인하고 Appium 세션에 `appium:bundleId`로 주입**한다. `devicectl device info apps`는 기본값이 developer 앱만 표시하므로, App Store로 설치된 원본 앱까지 찾으려면 반드시 `--include-all-apps`를 쓴다. 과거에 알려진 bundle ID나 앱 프로세스 경로만으로 추정하지 않는다.
 
@@ -127,7 +135,9 @@ macOS TUN 인터페이스 생성에는 관리자 권한이 필요하다. 캐시�
 # 기본 경로: 현재 화면의 안전 frontier를 소진하고, 소진되면 **이미 관찰한 전이를 되짚어
 # 아직 소진되지 않은 화면으로 스스로 이동해** 계속한다 — 탭마다도, 화면마다도 사람이
 # 개입하지 않는다. 모든 탭은 step과 같은 가드(후보 출처·fresh sig·foreground)를 거치며
-# withheld 는 절대 탭하지 않는다. 전역 소진·max steps·경로 한도·가드 발동에서 멈춘다.
+# withheld 는 절대 탭하지 않는다. CLONE_PROBE_SWITCHES=1 이면 스위치(AXSwitch)는 probe 다 —
+# 탭 → 바뀐 화면 캡처 → 같은 자리 한 번 더 탭(via=revert) 을 한 step 안에서 끝낸다.
+# 전역 소진·max steps·경로 한도·가드 발동에서 멈춘다.
 scripts/device_wda.sh explore "$sid" .autobot/clone/raw 200
 scripts/device_flow.py next .autobot/clone/flow.jsonl     # 남은 미탐험(사람이 읽는 요약)
 scripts/device_flow.py next-tap .autobot/clone/flow.jsonl <현재.xml>   # 지금 할 탭 하나
@@ -155,7 +165,7 @@ scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow
 
 **② 화면 정체성은 세 층이다.** `sig`(라벨 집합 해시)는 stale-coordinate 탭 가드, `node`/`nodekey`는 데이터 변화·스크롤을 흡수하는 coarse 구조, `state`/`statekey`는 키보드·포커스·선택·모달을 포함하는 상호작용 상태다. flow와 생성 라우터는 `state`를 우선하고 옛 로그의 `node`로 fallback한다. 같은 coarse node라도 검색 포커스 전후는 다른 상태이므로 기능 복제에서 사라지지 않는다.
 
-**③ 후보 수와 커버리지는 안전성을 포함한다.** 역할·actionable trait가 없는 설명문, `AXKey`/`KeyboardKey`와 키보드 하위 요소는 후보가 아니다. 팔로우·언팔로우·좋아요·리포스트·게시·전송·추천 숨기기·토글 등 계정이나 콘텐츠를 바꾸는 동작은 `withheld`로 분류해 자동 탭하지 않는다. `stats`는 실제 좌표 단위 raw target coverage와 반복 행을 묶은 behavior-class coverage를 둘 다 보여주고, 완료 판정은 안전한 behavior class 기준으로 한다.
+**③ 후보 수와 커버리지는 안전성을 포함한다.** 역할·actionable trait가 없는 설명문, `AXKey`/`KeyboardKey`와 키보드 하위 요소는 후보가 아니다. 팔로우·언팔로우·좋아요·리포스트·게시·전송·추천 숨기기 등 계정이나 콘텐츠를 바꾸는 동작은 `withheld`로 분류해 자동 탭하지 않는다. 스위치(`AXSwitch`)도 기본은 withheld 다 — `CLONE_PROBE_SWITCHES=1` 일 때만 `reversible` 로 분류해 탭하고 같은 step 안에서 되돌린다(아래 ⑤). 라벨이 서버에 닿는 것(구독·좋아요)이면 역할이 스위치여도, 플래그가 켜져 있어도 withheld 다. `stats`는 실제 좌표 단위 raw target coverage와 반복 행을 묶은 behavior-class coverage를 둘 다 보여주고, 완료 판정은 안전한 behavior class 기준으로 한다.
 
 **④ 중단은 실패가 아니라 정상 종료다.** 실기기에서는 세션 만료·잠금·로그인 벽 중 하나에 반드시 걸린다. 완주가 예외고 중단이 기본이다. 그래서 **재개가 1급 경로**다 — `device_flow.py next` 가 로그를 읽어 미방문 후보를 복원하므로, 새 세션을 열고 이어서 탐험한다. 처음부터 다시 하지 않는다.
 
@@ -164,6 +174,9 @@ scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow
 **커버리지를 숨기지 않는다.** `device_flow.py stats`가 raw target과 behavior class를 따로 낸다. raw 6/30 또는 class 4/12를 탐험하고 "전수 완료"라고 말하지 않는다. withheld는 안전한 미탐험 작업으로 세지 않는다. 후보가 모두 탭됐더라도 변경된 탭/스와이프의 도착 화면 캡처가 없거나 접근성 트리가 빠졌으면 `incomplete`이며, 재현 완료로 보고하지 않는다.
 
 **탐험이 끝나는 조건은 "이 화면에 할 게 없다"가 아니다.** `explore` 는 한 화면이 마르면 ① 텍스트 필드에 probe 를 한 번 입력해 보고(검색 결과 화면은 키보드 너머에만 있다) ② 스크롤해 보고 ③ 관측된 경로로 미탐험 화면에 가고 ④ 그 길도 없으면 **앱을 재시작**해 초기 화면에서 이어간다. 종료는 전역 frontier 소진·max steps·재시작 한도(`CLONE_EXPLORE_MAX_RESTART`, 기본 8)뿐이다. 관측되지 않은 버튼은 재현본에서 아무 일도 하지 않으므로, 커버리지가 곧 재현본의 기능이다.
+
+**⑤ 스위치는 probe 하고 되돌린다 — 켰을 때만.** 스위치를 withheld 로 두면 재현본은 토글이 무엇을 하는지 영영 모른다 — 설정 화면의 토글이 전부 죽은 채 복제된다. `CLONE_PROBE_SWITCHES=1` 이면 `explore` 는 스위치를 탭해 **바뀐 화면을 캡처하고, 그 캡처에서 같은 자리를 한 번 더 탭해** 원래 값으로 되돌린다 — 하나의 step 안에서, 다른 후보를 건드리기 전에. 기기는 시작한 값으로 끝나고, 로그에는 `base → flipped` 와 `flipped → base`(`via=revert`) 두 엣지가 남아 `functional` 이 양방향을 재생한다. on/off 는 `statekey` 의 `switch:<label>=<value>` 토큰이라 두 상태는 서로 다른 화면(뷰)이다. 되돌리기에 실패하면 WARN 으로 **라벨과 좌표를 말하고** 계속한다 — 사용자가 손으로 되돌릴 수 있게.
+  **기본이 꺼진 이유**: 트리는 로컬 토글과 계정 설정을 구분하지 못한다(Threads 의 `비공개 프로필` 은 Switch 다). 이 레포의 기준은 순변화 0 이어도 계정 쓰기 0 이므로, 대상 앱의 스위치가 로컬이라고 사용자가 판단했을 때 켠다. 켜도 DESTRUCTIVE·STATE_CHANGING 라벨은 그대로 withheld 다. 세그먼트·슬라이더는 원래 navigation 후보였고, 텍스트 입력은 ①의 probe 가 맡는다.
 
 **관측하지 않는 것도 있다 — 의도적으로.** 좋아요·팔로우·게시·공유 같은 상태 변경(`withheld`)은 절대 탭하지 않는다. 그 버튼들은 재현본에서도 죽어 있고, 그게 맞다. `device_flow.py stats` 가 몇 개인지 센다.
 
@@ -176,7 +189,9 @@ open .autobot/clone/flow-map.html
 
 화면 썸네일을 진입 화면으로부터의 깊이별로 놓고, 어떤 탭이 어디로 가는지와 **미탐험 후보**를 함께 보여준다. `observe` 가 매번 다시 생성하며, **이 지점에서 멈추지 않는다** — 사람이 보는 창이지 게이트가 아니다. 더 탐험할 곳이 남았으면 `observe` 를 다시 실행하는 것이 답이고, 지도를 보고 결정할 필요가 없다.
 
-### Step 2b — 역기획 (관찰과 해석을 섞지 않는다)
+### Step 2b — 역기획 (mvp 인수인계 · 완주 경로 밖)
+
+관찰과 해석을 섞지 않는다.
 
 `.autobot/clone/reverse-brief.md` 에 **두 섹션으로** 쓴다. 섞으면 다음 사람이 사실과 내 추측을 구분할 수 없고, 그 문서가 `/autobot:mvp` 입력이 되면 추측이 명세가 된다.
 
@@ -218,7 +233,7 @@ python3 scripts/clone_postprocess.py .autobot/clone --workers 4 \
 
 측정값은 JSON 으로 남긴다. 이후 단계는 이 JSON 만 보고 코드를 쓴다 — 스크린샷을 눈으로 보고 "대충 이 정도"로 쓰지 않는다.
 
-### Step 4 — 화면 스펙
+### Step 4 — 화면 스펙 (mvp 인수인계 · 완주 경로 밖)
 
 화면당 스펙을 쓴다. **쓰는 곳은 `.autobot/clone/specs/<ViewName>.md` 다** — `screens/<NN>-<screen>.md` 는 `clone_postprocess.py` 가 소유하는 *측정 증거*이고 실행할 때마다 결정적으로 덮어쓰므로, 거기 쓴 동작 계약은 다음 `observe` 에서 사라진다(생성 뷰의 `// Generated by` 같은 소유권 표시가 그 파일에는 없다). 스펙은 증거를 **링크**하고 복사하지 않는다 — 요소 표·프레임·색의 SSOT 는 측정 JSON 하나다.
 
@@ -228,7 +243,7 @@ python3 scripts/clone_postprocess.py .autobot/clone --workers 4 \
 - **요소 표**: 역할 · 텍스트 · 프레임(x,y,w,h) · 색 · 텍스트 스타일
 - **레이아웃 트리**: 어떤 스택에 무엇이 어떤 간격으로 들어가는지
 - **동작 계약**: 이 화면이 *무엇을 하는가*. 요소별로 — 탭하면 어느 화면(sig)으로 가는지, 무엇이 바뀌는지, 어떤 상태(빈/채워짐/로딩/에러)에서 무엇이 보이는지. **기능 동일성은 여기서 나온다** — 이 표가 곧 `/autobot:mvp` 가 읽는 기능 명세이므로, 화면이 하는 일을 빠뜨리면 재현본은 껍데기가 된다.
-  **모든 행은 근거 열을 갖는다.** 실제로 탭해 본 전이만 실측이고(`sig A → sig B`), 라벨을 보고 짐작한 것은 `미탐험` 으로 표시한다. 짐작을 실측처럼 적으면 `/autobot:mvp` 가 그걸 명세로 믿고 구현한다 — 이 레포가 같은 실패(존재하지 않는 능력을 문서가 전제)를 이미 세 번 겪었다. `미탐험` 행은 명세가 아니라 미확인 가설이다.
+  **모든 행은 근거 열을 갖는다.** 실제로 탭해 본 전이만 실측이고(`sig A → sig B`), 라벨을 보고 짐작한 것은 `미탐험` 으로 표시한다. `CLONE_PROBE_SWITCHES=1` 로 탐험했다면 스위치는 양방향이 실측된다(`base → flipped`, `flipped → base`) — 바뀐 화면에서 무엇이 달라졌는지는 두 statekey 의 측정 JSON 을 비교해 적는다. 아니면 스위치 행도 `미탐험` 이다. 짐작을 실측처럼 적으면 `/autobot:mvp` 가 그걸 명세로 믿고 구현한다 — 이 레포가 같은 실패(존재하지 않는 능력을 문서가 전제)를 이미 세 번 겪었다. `미탐험` 행은 명세가 아니라 미확인 가설이다.
 - **재현 불가 항목**: 접근 가능한 원본 파일이 없는 바이너리 에셋, 커스텀 폰트, 애니메이션 타이밍 등 측정으로 알 수 없는 것을 명시한다. 연구용 캡처 crop을 썼다면 원본 바이너리가 아니라는 점과 품질 손실을 적는다. 숨기지 않는다. 룩앤필에 필요해서 **근사한 값(모서리 반경 등)은 근사라고 적는다** — 측정값과 섞이면 다음 사람이 구분할 수 없다.
 - **자산 출처**: 연구용 원본 자산을 사용한 화면은 `assets/manifest.json`의 파일명·출처 캡처·원본 프레임·획득 방법·`research-only` 범위를 링크한다.
 

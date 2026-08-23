@@ -383,3 +383,13 @@
 ## 정직한 한계 (변함없음)
 - 상태 변경 97건은 설계상 죽은 버튼. 스크롤은 한 화면분. 기능 게이트는 배선을 증명.
 - 추론 47건은 **앱에서 본 적 없는** 전이다 — 통과해도 "추론과 일치"이지 "앱과 일치"가 아니다.
+
+## 2026-08-23 — clone 프로세스 비판 후 수정 (①·②·⑤)
+- [x] ① Step 0/0a/0b → Step 1 하위 항목(1-0~1-3), 0a 의 "bundle ID 확인 후" 순서 오류 정정
+- [x] ② 스위치 probe: `CLONE_PROBE_SWITCHES=1` 이면 AXSwitch 탭 → 캡처 → 같은 자리 revert(`via=revert`).
+      statekey 에 `switch:<label>=<value>`, behavior 는 라벨 단위. **기본 꺼짐** — 트리는 로컬/계정 설정을
+      못 가르고(비공개 프로필=Switch) 레포 기준은 순변화 0 이어도 계정 쓰기 0.
+- [x] ⑤ Workflow 머리에 "산출물 두 종류"(완주 경로 vs mvp 인수인계), Step 2b·4 헤딩에 소속 표시
+- [x] Verify: test_device_a11y 55 · test_device_wda(+3) · flow/codegen/skill_sync/doc 계약 227 passed
+      (`test_concurrent_sessions_start_only_one_tunnel` 은 병렬 부하 flaky, 단독 2회 통과; tunnel 코드 미변경)
+- 해법 없음(의도적으로 안 함): 빈/에러 데이터 상태, 다크모드·Dynamic Type — 계정·네트워크·시스템 설정에 묶임

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -204,6 +205,8 @@ def _parse_wda(raw: str) -> list[dict]:
                 # Appium's `accessibility id` locator matches, and it is how a
                 # text field can be typed into without guessing coordinates.
                 "name": _clean(node.get("name")),
+                # A switch's on/off lives here, not in the label.
+                "value": _clean(node.get("value")),
             })
         for child in reversed(list(node)):
             stack.append((child, depth + 1, index if index >= 0 else parent))
@@ -239,6 +242,7 @@ def _parse_idb(raw: str) -> list[dict]:
             "focused": _optional_bool(_first(e, "AXFocused", "focused")),
             "selected": _optional_bool(_first(e, "AXSelected", "selected")),
             "name": _clean(_first(e, "AXUniqueId", "identifier", "name")),
+            "value": _clean(_first(e, "AXValue", "value")),
         })
     return out
 
@@ -424,6 +428,10 @@ def statekey(els: list[dict]) -> None:
             tokens.append("selected:" + identity)
         if "alert" in e["role"].lower() or "sheet" in e["role"].lower() or SYSTEM_DIALOG.match(e["label"]):
             tokens.append("modal:" + e["role"])
+        # On/off is interaction state: the probe below flips a switch and must
+        # see a different statekey, or the toggle records as a no-op tap.
+        if e["role"] == "AXSwitch" and e.get("value"):
+            tokens.append(f"switch:{_normalized_label(e['label'])}={e['value']}")
     state = hashlib.sha1("\n".join([node] + sorted(set(tokens))).encode()).hexdigest()[:12]
     print(f"INFO: statekey {state}")
     print(f"INFO: state {' '.join(sorted(set(tokens))) or 'base'}")
@@ -437,7 +445,15 @@ def _classification(e: dict) -> dict:
     for effect, pattern in STATE_CHANGING:
         if any(pattern.search(clause) for clause in clauses):
             return {"category": "state-changing", "effect": effect, "state_changing": True}
+    # A switch flips and flips back, so with CLONE_PROBE_SWITCHES=1 the explore
+    # loop taps it, captures the flipped state, and taps it again in the same
+    # step. Off by default: the tree cannot tell a local toggle from an account
+    # setting (Threads' "비공개 프로필" is a Switch), and this repo's bar is no
+    # account write at all, net-zero included. Labels that reach the server were
+    # caught above and stay withheld whatever the role or the flag.
     if e["role"] == "AXSwitch":
+        if os.environ.get("CLONE_PROBE_SWITCHES") == "1":
+            return {"category": "reversible", "effect": "toggle", "state_changing": False}
         return {"category": "state-changing", "effect": "toggle", "state_changing": True}
     if e["role"] in TEXT_INPUT_ROLES:
         return {"category": "input", "effect": "none", "state_changing": False}
@@ -459,7 +475,11 @@ def _behavior_fingerprint(els: list[dict], index: int, classification: dict) -> 
     e = els[index]
     row = (index if e["role"] == "AXCell" and _is_data_cell(els, index)
            else _data_cell_index(els, index))
-    if classification["effect"] != "none":
+    if classification["effect"] == "toggle":
+        # Row-control grouping would make every switch in a settings list one
+        # behavior and probe only the first. Each switch is its own setting.
+        subject = "toggle:" + _normalized_label(e["label"])
+    elif classification["effect"] != "none":
         subject = classification["effect"]
     elif row is not None and e["role"] == "AXCell":
         subject = "row-item"

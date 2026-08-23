@@ -2544,6 +2544,116 @@ class TestExploreTypesIntoTextFields(unittest.TestCase):
         self.assertEqual(len(value_posts), 1)
 
 
+class TestExploreProbesAndRevertsSwitches(unittest.TestCase):
+    """A switch is the one state-changing control that flips back.
+
+    Exploration used to withhold every AXSwitch, so the clone never saw what a
+    toggle does. Now it taps the switch, captures the flipped screen, and taps
+    it again in the same step — the device ends where it started and the log
+    holds both edges for the functional gate to replay.
+    """
+
+    def _run(self, max_steps: str = "6", probe: str = "1"):
+        def tree(on: bool) -> str:
+            return (
+                '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+                '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+                ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+                '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" label="알림" name="알림"'
+                ' enabled="true" visible="true" x="16" y="200" width="200" height="31"/>'
+                f'<XCUIElementTypeSwitch type="XCUIElementTypeSwitch" label="알림" name="알림" value="{1 if on else 0}"'
+                ' enabled="true" visible="true" x="300" y="200" width="51" height="31"/>'
+                '</XCUIElementTypeApplication></AppiumAUT>'
+            )
+        state = {"on": False, "flips": 0}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    self._reply({"value": tree(state["on"])})
+                elif self.path.endswith("/screenshot"):
+                    self._reply({"value": base64.b64encode(b"png").decode()})
+                else:
+                    self._reply({"value": {"capabilities": {
+                        "appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length).decode() if length else ""
+                if self.path.endswith("/actions") and "pointerDown" in body:
+                    state["on"] = not state["on"]
+                    state["flips"] += 1
+                    self._reply({"value": None})
+                elif self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            outdir, flow, state_dir = root / "raw", root / "flow.jsonl", root / "state"
+            state_dir.mkdir()
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                appium_url = f"http://127.0.0.1:{server.server_port}"
+                (state_dir / "wda-session.json").write_text(json.dumps({
+                    "sid": "session-1", "udid": "00008101-AAA",
+                    "bundleId": "com.example.target", "appiumUrl": appium_url,
+                }), encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": appium_url,
+                       "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_EXPLORE_MAX_SCROLL": "0",
+                       "CLONE_EXPLORE_MAX_RESTART": "0", "CLONE_PROBE_SWITCHES": probe}
+                r = subprocess.run(["bash", str(SCRIPT), "explore", "session-1", str(outdir), max_steps],
+                                   capture_output=True, text=True, env=env)
+                events = [json.loads(line) for line in flow.read_text(encoding="utf-8").splitlines()]
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+        return r, events, state
+
+    def test_the_switch_is_flipped_once_and_flipped_back(self):
+        r, events, state = self._run()
+        self.assertEqual(state["flips"], 2, msg=r.stdout + r.stderr)
+        self.assertFalse(state["on"], "the device must end where it started")
+        taps = [e for e in events if e.get("type") == "tap"]
+        self.assertEqual(len(taps), 2, msg=json.dumps(taps, ensure_ascii=False))
+        self.assertEqual([t["changed"] for t in taps], ["true", "true"])
+        # Forward edge base -> flipped, revert edge flipped -> base.
+        self.assertEqual(taps[0]["from_statekey"], taps[1]["to_statekey"])
+        self.assertEqual(taps[0]["to_statekey"], taps[1]["from_statekey"])
+        self.assertNotEqual(taps[0]["from_statekey"], taps[0]["to_statekey"])
+        self.assertEqual(taps[1].get("via"), "revert")
+        # Both edges are in the log, so the frontier is drained: the walk ends
+        # by itself instead of flipping the switch until max steps.
+        self.assertIn("nothing left to tap", r.stdout)
+
+    def test_switches_are_not_touched_unless_probing_is_on(self):
+        r, events, state = self._run(probe="0")
+        self.assertEqual(state["flips"], 0, msg=r.stdout + r.stderr)
+        self.assertEqual([e for e in events if e.get("type") == "tap"], [])
+
+    def test_the_flipped_screen_is_durable_evidence(self):
+        r, events, state = self._run()
+        flipped = [e for e in events if e.get("type") == "tap"][0]["to_statekey"]
+        self.assertTrue(any(e.get("type") == "screen" and e.get("statekey") == flipped
+                            and e.get("png") for e in events), msg=r.stdout)
+
+
 class TestExploreRestartsWhenBoxedIn(unittest.TestCase):
     """A screen with nothing left AND no observed route onward is not the end.
 
