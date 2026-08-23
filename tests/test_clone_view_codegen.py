@@ -347,13 +347,33 @@ class TestScrolling(unittest.TestCase):
         generate(root)
         return (root / "Sources" / "Auto0001View.swift").read_text(encoding="utf-8")
 
-    def test_the_feed_is_inside_a_scroll_view_sized_to_its_content(self):
+    def test_the_feed_is_inside_a_scroll_area_sized_to_its_content(self):
         with tempfile.TemporaryDirectory() as directory:
             swift = self.build(Path(directory))
-            self.assertIn("ScrollView(.vertical", swift)
+            self.assertIn("CloneScrollArea(viewport: CGSize(width: 375.0, height: 600.0)", swift)
             # Content reaches y=920 inside a container starting at y=100.
-            self.assertIn("height: 820.0, alignment: .topLeading", swift)
-            self.assertIn(".frame(width: 375.0, height: 600.0)", swift)
+            self.assertIn("content: CGSize(width: 375.0, height: 820.0)", swift)
+
+    def test_the_drag_lives_on_the_screen_root_not_on_the_scroll_area(self):
+        # A gesture on the full-screen scroll area — a sibling drawn under the
+        # chrome — stole the tab bar's taps (measured 2026-08-23: remove it and
+        # the tab bar works again). On the root, an ancestor of every target, a
+        # simultaneousGesture composes with their taps instead of competing.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            swift = self.build(root)
+            runtime = (root / "Sources" / codegen.RUNTIME).read_text(encoding="utf-8")
+            self.assertIn(".modifier(CloneScrollDrag(offset: $scrollOffset, maxOffset: 220.0))", swift)
+            area = runtime[runtime.index("struct CloneScrollArea"):runtime.index("struct CloneScrollDrag")]
+            self.assertNotIn("Gesture", area)
+            self.assertNotIn("ScrollView(", runtime)
+
+    def test_a_platform_scroll_view_is_never_emitted(self):
+        # Under the iOS 26 simulator a ScrollView beneath fixed chrome in a
+        # ZStack swallowed that chrome's taps near the screen edges.
+        with tempfile.TemporaryDirectory() as directory:
+            swift = self.build(Path(directory))
+            self.assertNotIn("ScrollView(", swift)
 
     def test_scrolling_elements_are_re_origined_to_the_container(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -372,7 +392,8 @@ class TestScrolling(unittest.TestCase):
                       [{"type": "screen", "statekey": "s1", "name": "auto-0001"}])
             generate(root)
             swift = (root / "Sources" / "Auto0001View.swift").read_text(encoding="utf-8")
-            self.assertNotIn("ScrollView(", swift)
+            self.assertNotIn("CloneScrollArea(", swift)
+            self.assertNotIn("CloneScrollDrag(", swift)
 
 
 class TestOwnership(unittest.TestCase):

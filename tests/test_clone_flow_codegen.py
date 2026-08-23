@@ -292,3 +292,81 @@ class TestBackActions(unittest.TestCase):
         self.assertIn("private var history: [String] = []", swift)
         self.assertIn("history.popLast()", swift)
         self.assertIn("history.append(state)", swift)
+
+
+class TestInferredTransitions(unittest.TestCase):
+    """A persistent control goes to the same place from every screen it is on.
+
+    A tab bar is the same control on every screen that shows it, and tapping
+    "프로필" from any of them lands on the profile. Observing it once per screen
+    would cost a tap per screen per control — and until then every unobserved
+    copy is a dead button. A back button is NOT inferred: where it lands depends
+    on where you were, and structurally it is absent from the screen it leads to.
+    """
+
+    def workspace(self, root: Path):
+        def element(label, role, x, y, w, h):
+            return {"role": role, "label": label, "parent": -1,
+                    "frame": {"x": x, "y": y, "width": w, "height": h}, "colors": {}}
+        tab = lambda: [element("홈", "AXButton", 20, 733, 75, 54),
+                       element("프로필", "AXButton", 276, 733, 75, 54)]
+        back = element("돌아가기", "AXButton", 16, 59, 24, 24)
+        screens = {
+            "home": tab(),
+            "profile": tab() + [element("프로필 편집", "AXButton", 14, 186, 96, 31)],
+            "settings": tab() + [back],          # reached from profile
+            "detail": [back] + tab(),            # reached from home
+        }
+        (root / "screens").mkdir(parents=True, exist_ok=True)
+        for name, elements in screens.items():
+            (root / "screens" / f"{name}.json").write_text(json.dumps({
+                "screen": {"points": {"width": 375, "height": 812}}, "elements": elements}),
+                encoding="utf-8")
+        events = []
+        for name in screens:
+            events.append({"type": "screen", "statekey": name, "node": name, "name": name})
+        for source, label, destination in [
+            ("home", "프로필", "profile"), ("profile", "설정", "settings"),
+            ("home", "상세", "detail"), ("settings", "돌아가기", "profile"),
+            ("detail", "돌아가기", "home"),
+        ]:
+            events.append({"type": "tap", "from_statekey": source, "to_statekey": destination,
+                           "label": label, "changed": "true", "x": "1", "y": "1"})
+        return events
+
+    def test_a_tab_observed_once_is_inferred_on_every_screen_that_has_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            events = self.workspace(root)
+            captured = set(codegen.captured_states(events))
+            observed, inferred = codegen.all_transitions(events, captured, root / "screens")
+            self.assertIn(("home", "프로필", "profile"), observed)
+            self.assertIn(("settings", "프로필", "profile"), inferred)
+            self.assertIn(("detail", "프로필", "profile"), inferred)
+            # Not on the screen it leads to, and not where it was observed.
+            self.assertNotIn(("profile", "프로필", "profile"), inferred)
+
+    def test_a_back_button_is_never_inferred(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            events = self.workspace(root)
+            captured = set(codegen.captured_states(events))
+            _observed, inferred = codegen.all_transitions(events, captured, root / "screens")
+            self.assertEqual([edge for edge in inferred if edge[1] == "돌아가기"], [])
+
+    def test_without_measurements_nothing_is_inferred(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            events = self.workspace(root)
+            captured = set(codegen.captured_states(events))
+            _observed, inferred = codegen.all_transitions(events, captured, None)
+            self.assertEqual(inferred, [])
+
+    def test_the_router_marks_inferred_edges(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            events = self.workspace(root)
+            manifest = {"initial_state": "home",
+                        "views": {s: f"V{i}" for i, s in enumerate(codegen.captured_states(events))}}
+            swift = codegen.generate_swift(events, manifest, root / "screens")
+            self.assertIn("// inferred: persistent control", swift)

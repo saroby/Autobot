@@ -21,8 +21,10 @@ import argparse
 import importlib.util
 import json
 import os
+import struct
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -92,25 +94,110 @@ def relaunch(udid: str, bundle_id: str) -> None:
 ACTION_ID = "clone-action:"
 SYNTH_ID = "clone-action-synth:"
 
+_TAP_SCALE: dict[str, float] = {}
+
+
+def tap_scale(udid: str) -> float:
+    """How far AXe's tap coordinates drift from the app's, per point.
+
+    iPhone 12/13 mini render at 375x812 @3x (1125x2436) and the simulator
+    downsamples that to the 1080x2340 panel. AXe maps points to the PANEL, the
+    app hit-tests in the render buffer, so a tap requested at y lands at
+    y*2436/2340 — 4% low, ~30pt by the tab bar. Measured 2026-08-23 with a
+    four-target probe: every bottom-of-screen target missed and the tap fell
+    through onto the tab bar beneath it. A finger on the real device has no
+    such drift; only this driver does, so only this driver corrects for it.
+    """
+    if udid in _TAP_SCALE:
+        return _TAP_SCALE[udid]
+    scale = 1.0
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+            shot = handle.name
+        subprocess.run(["xcrun", "simctl", "io", udid, "screenshot", shot],
+                       capture_output=True, check=True)
+        with open(shot, "rb") as handle:
+            head = handle.read(24)
+        panel_w, panel_h = struct.unpack(">II", head[16:24])
+        tree = subprocess.run(["axe", "describe-ui", "--udid", udid],
+                              capture_output=True, text=True, check=True).stdout
+        root = json.loads(tree)
+        root = root[0] if isinstance(root, list) else root
+        frame = root.get("frame") or {}
+        logical_h = float(frame.get("height") or 0)
+        if logical_h > 0:
+            render_scale = round(panel_h / logical_h)          # 3 for a 12 mini
+            scale = panel_h / (logical_h * render_scale)       # 2340 / 2436
+    except (OSError, ValueError, subprocess.CalledProcessError, json.JSONDecodeError,
+            struct.error, KeyError, TypeError):
+        scale = 1.0
+    finally:
+        try:
+            os.unlink(shot)
+        except (OSError, NameError):
+            pass
+    _TAP_SCALE[udid] = scale
+    return scale
+
+
+def _find_target(tree, label: str) -> tuple[str, dict] | None:
+    wanted = {ACTION_ID + label: "measured", SYNTH_ID + label: "synthesised"}
+    by_label = None
+
+    def walk(node):
+        nonlocal by_label
+        if not isinstance(node, dict):
+            return None
+        uid = node.get("AXUniqueId") or ""
+        if uid in wanted and node.get("frame"):
+            return wanted[uid], node["frame"]
+        if by_label is None and (node.get("AXLabel") or "") == label and node.get("frame"):
+            by_label = node["frame"]
+        for child in node.get("children") or []:
+            found = walk(child)
+            if found:
+                return found
+        return None
+
+    for root in (tree if isinstance(tree, list) else [tree]):
+        found = walk(root)
+        if found:
+            return found
+    return ("measured", by_label) if by_label else None
+
 
 def tap(udid: str, label: str) -> str | None:
-    """Tap by identifier, not by label.
+    """Tap the target's centre by corrected coordinates.
 
-    A measured screen repeats the same label down its container chain — five
-    elements labelled "게시 옵션" at one frame in the Threads feed — and AXe
-    refuses an ambiguous label outright. The generated views put the action on
-    exactly one element and give it this identifier.
+    Resolved by identifier, not label: a measured screen repeats the same label
+    down its container chain — five elements labelled "게시 옵션" at one frame
+    in the Threads feed. The generated views put the action on exactly one
+    element and give it this identifier. The centre is then corrected for the
+    driver's coordinate drift (see tap_scale) before tapping.
     """
-    for kind, selector in (("measured", ["--id", ACTION_ID + label]),
-                           ("synthesised", ["--id", SYNTH_ID + label]),
-                           ("measured", ["--label", label])):
-        result = subprocess.run(
-            ["axe", "tap", *selector, "--udid", udid,
-             "--post-delay", "0.25", "--wait-timeout", "2"],
-            capture_output=True, text=True)
-        if result.returncode == 0:
-            return kind
-    return None
+    result = subprocess.run(["axe", "describe-ui", "--udid", udid],
+                            capture_output=True, text=True)
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        tree = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    found = _find_target(tree, label)
+    if not found:
+        return None
+    kind, frame = found
+    try:
+        cx = float(frame["x"]) + float(frame["width"]) / 2
+        cy = float(frame["y"]) + float(frame["height"]) / 2
+    except (KeyError, TypeError, ValueError):
+        return None
+    factor = tap_scale(udid)
+    result = subprocess.run(
+        ["axe", "tap", "-x", f"{cx * factor:.1f}", "-y", f"{cy * factor:.1f}",
+         "--udid", udid, "--post-delay", "0.25"],
+        capture_output=True, text=True)
+    return kind if result.returncode == 0 else None
 
 
 def shortest_paths(transitions: list[tuple[str, str, str]],
@@ -163,11 +250,16 @@ def main(argv: list[str]) -> int:
 
     root = Path(args.root)
     events = flow_codegen.load_flow(root / "flow.jsonl")
-    captured = set(flow_codegen.captured_states(events))
-    transitions = flow_codegen.observed_transitions(events, captured)
     views = json.loads((root / "views.json").read_text(encoding="utf-8"))
     initial = views.get("initial_state")
     mapped = set(views.get("views", {}))
+    # The router is generated from views.json, so that is the state set the
+    # walk may expect. Using every captured state instead reported edges into
+    # screens the router had never heard of as BROKEN — after an interrupted
+    # observe appended new captures the router was not regenerated for.
+    observed, inferred = flow_codegen.all_transitions(events, mapped, root / "screens")
+    transitions = observed + inferred
+    inferred_keys = {(s_, a_) for s_, a_, _d in inferred}
     if not initial:
         print("ERROR: views.json has no initial_state", file=sys.stderr)
         return 1
@@ -184,6 +276,7 @@ def main(argv: list[str]) -> int:
     # single tap.
     pending = list(edges)
     wired, synthesised, broken, relaunches = 0, 0, [], 0
+    inferred_wired = 0
     # Mirrors the router's own history. The walk takes whatever edge leaves the
     # screen it is already on, so it does NOT always arrive by the shortest
     # path — computing a pop's expected landing from `paths` guessed the wrong
@@ -232,6 +325,7 @@ def main(argv: list[str]) -> int:
         if landed == destination:
             wired += 1
             synthesised += kind == "synthesised"
+            inferred_wired += (source, action) in inferred_keys
             if popping:
                 if walked:
                     walked.pop()
@@ -249,6 +343,26 @@ def main(argv: list[str]) -> int:
         state = landed
     for edge in pending:
         broken.append((*edge, "never exercised — the walk could not reach its screen"))
+
+    # An edge the clone has no target for (an ambiguous synthesised target was
+    # dropped, say) takes every screen behind it with it. Those downstream
+    # edges are not wired wrong — they were never reached. Re-derive
+    # reachability without the missing targets and report them as such, so the
+    # one real gap is counted once and the fix (re-observe, or a capture that
+    # has the label) is named once.
+    missing = {(s_, a_) for s_, a_, _d, why in broken if why == "no element with that label"}
+    if missing:
+        remaining = [edge for edge in transitions if (edge[0], edge[1]) not in missing]
+        still = shortest_paths(remaining, initial)
+        downstream = [entry for entry in broken
+                      if entry[3].startswith("could not get to") and entry[0] not in still]
+        for entry in downstream:
+            broken.remove(entry)
+        if downstream:
+            lost = sorted({entry[0] for entry in downstream})
+            print(f"WARN: {len(downstream)} transition(s) start from screen(s) the clone "
+                  f"cannot reach without a missing target ({', '.join(lost)}) — "
+                  "fix the missing target and these follow", file=sys.stderr)
     print(f"INFO: {relaunches} relaunch(es) for {len(edges)} transition(s)")
 
     for source, action, destination, why in broken:
@@ -267,6 +381,11 @@ def main(argv: list[str]) -> int:
         # nothing here says whether they work.
         print(f"WARN: {len(skipped)} observed transition(s) start from an "
               "unreachable screen and were not exercised", file=sys.stderr)
+    if inferred:
+        # Inferred edges were never seen on the device; passing here proves the
+        # clone's wiring matches the INFERENCE, not the app. Say how many.
+        print(f"INFO: {len(inferred)} transition(s) are inferred from persistent controls "
+              f"observed on other screens (tab bar and the like) — {inferred_wired} of them wired")
     print(f"INFO: {wired}/{len(edges)} reachable transition(s) wired"
           + (f" ({synthesised} of them on a target synthesised at a recorded tap "
              "point, because the label is not in the capture that screen is "

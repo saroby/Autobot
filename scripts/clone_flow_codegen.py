@@ -229,6 +229,133 @@ def observed_transitions(
     )
 
 
+def _element_keys(measurement: dict[str, Any]) -> set[tuple[str, str, int, int, int, int]]:
+    """Identity of every labelled element: label, role, frame on an 8pt grid."""
+    keys = set()
+    for element in measurement.get("elements") or []:
+        label = str(element.get("label") or "").strip()
+        frame = element.get("frame") or {}
+        if not label or not frame:
+            continue
+        try:
+            keys.add((label, str(element.get("role") or ""),
+                      round(float(frame.get("x", 0)) / 8), round(float(frame.get("y", 0)) / 8),
+                      round(float(frame.get("width", 0)) / 8), round(float(frame.get("height", 0)) / 8)))
+        except (TypeError, ValueError):
+            continue
+    return keys
+
+
+def _element_keys_by_state(events: list[dict[str, Any]], screens_dir: Path) -> dict[str, set]:
+    """Per state, the element identities present in EVERY capture of it.
+
+    Chrome survives every capture of a screen; feed content does not. Taking
+    the intersection is what makes a tab bar qualify and a post row not.
+    """
+    per_state: dict[str, set | None] = {}
+    for event in events:
+        if event.get("type") != "screen":
+            continue
+        state = _identifier(event, "statekey", "state", "node")
+        name = str(event.get("name") or "")
+        path = screens_dir / f"{name}.json"
+        if not state or not name or not path.is_file():
+            continue
+        try:
+            keys = _element_keys(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            continue
+        per_state[state] = keys if per_state.get(state) is None else (per_state[state] & keys)
+    return {state: keys for state, keys in per_state.items() if keys}
+
+
+def inferred_transitions(
+    events: list[dict[str, Any]], captured: set[str], screens_dir: Path | str,
+) -> list[tuple[str, str, str]]:
+    """Transitions the clone may carry on screens where they were NOT observed.
+
+    A tab bar is the same control on every screen that shows it, and tapping
+    "프로필" from any of them goes to the same place. Observing it once per
+    screen would cost a tap per screen per control — and until then every
+    unobserved copy is a dead button, which is most of what a user feels when
+    a clone "does nothing" (Codex review, 2026-08-23: coverage, not rendering).
+
+    The rule is narrow on purpose: the control must be the SAME element — label,
+    role and frame on an 8pt grid — on the source where it was observed AND
+    present in every capture of the target screen (chrome passes, content does
+    not). Back actions (pops) are never inferred: where they land depends on
+    history. These are guesses, so callers report them separately from what was
+    observed; they never replace an observed transition.
+    """
+    screens_dir = Path(screens_dir)
+    observed = observed_transitions(events, captured)
+    present = _element_keys_by_state(events, screens_dir)
+    have: dict[str, set[str]] = {}
+    for source, action, _destination in observed:
+        have.setdefault(source, set()).add(action)
+
+    # Which observed controls are PERSISTENT — still there on the screen they
+    # lead to. A tab bar is; a back or close button is not (you land somewhere
+    # that does not have it). That structural fact is what separates "tap this
+    # anywhere and you get there" from "tap this and you go back to wherever
+    # you came from", and it needs no vocabulary of back-button labels.
+    # Measured 2026-08-23: keyed on destination statekey alone, the tab bar
+    # looked history-dependent too, because the same profile screen was
+    # captured under several interaction states.
+    by_action: dict[str, list[tuple[str, str, set]]] = {}
+    for source, action, destination in observed:
+        if destination == POP:
+            continue
+        keys = {key for key in present.get(source, set()) if key[0] == action}
+        if keys:
+            by_action.setdefault(action, []).append((source, destination, keys))
+
+    # Coarse screen identity, so "the profile screen in three interaction
+    # states" reads as one destination — the selected tab's label changes on
+    # its own screen, which defeats the persistence test, yet the tab still
+    # goes to one place from everywhere.
+    node_of: dict[str, str] = {}
+    for event in events:
+        if event.get("type") == "screen":
+            state = _identifier(event, "statekey", "state", "node")
+            node = _identifier(event, "node", "nodekey") or state
+            if state and state not in node_of:
+                node_of[state] = node
+
+    inferred: list[tuple[str, str, str]] = []
+    for action, sightings in sorted(by_action.items()):
+        persistent = all(keys & present.get(destination, set())
+                         for _source, destination, keys in sightings)
+        distinct = {node_of.get(destination, destination) for _s, destination, _k in sightings}
+        if len(distinct) > 1 and not persistent:
+            continue                      # history-dependent: where it goes depends on where you were
+        # The landing: what this control was most often seen to reach.
+        counts: dict[str, int] = {}
+        for _s, destination, _k in sightings:
+            counts[destination] = counts.get(destination, 0) + 1
+        landing = max(sorted(counts), key=counts.__getitem__)
+        keys = set().union(*(k for _s, _d, k in sightings))
+        for target, target_keys in present.items():
+            if target not in captured or action in have.get(target, set()):
+                continue
+            if target == landing:
+                continue              # the tab you are already on: a no-op, not a transition
+            if keys & target_keys:
+                inferred.append((target, action, landing))
+                have.setdefault(target, set()).add(action)
+    return sorted(inferred)
+
+
+def all_transitions(
+    events: list[dict[str, Any]], captured: set[str], screens_dir: Path | str | None,
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+    """(observed, inferred). Inference needs the measurements; without them it is empty."""
+    observed = observed_transitions(events, captured)
+    if not screens_dir:
+        return observed, []
+    return observed, inferred_transitions(events, captured, screens_dir)
+
+
 _SWIFT_TYPE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 
 
@@ -282,7 +409,8 @@ def swift_string(value: str) -> str:
     return "".join(escaped)
 
 
-def generate_swift(events: list[dict[str, Any]], manifest: dict[str, Any]) -> str:
+def generate_swift(events: list[dict[str, Any]], manifest: dict[str, Any],
+                   screens_dir: Path | str | None = None) -> str:
     states = captured_states(events)
     if not states:
         raise FlowCodegenError("flow contains no captured screen states")
@@ -300,10 +428,11 @@ def generate_swift(events: list[dict[str, Any]], manifest: dict[str, Any]) -> st
     initial_state = str(manifest.get("initial_state") or next(iter(states)))
     if initial_state not in states:
         raise FlowCodegenError(f"initial state {initial_state!r} was not captured")
-    transitions = observed_transitions(events, set(states))
+    observed, inferred = all_transitions(events, set(states), screens_dir)
     grouped: dict[str, list[tuple[str, str]]] = {}
-    for source, action, destination in transitions:
+    for source, action, destination in observed + inferred:
         grouped.setdefault(source, []).append((action, destination))
+    inferred_keys = {(source, action) for source, action, _d in inferred}
 
     lines = [
         "// Generated by clone_flow_codegen.py. Do not hand-edit.",
@@ -327,8 +456,10 @@ def generate_swift(events: list[dict[str, Any]], manifest: dict[str, Any]) -> st
     for source in sorted(grouped):
         lines.append(f"        {swift_string(source)}: [")
         for action, destination in sorted(grouped[source]):
+            note = "  // inferred: persistent control, observed elsewhere" \
+                if (source, action) in inferred_keys else ""
             lines.append(
-                f"            {swift_string(action)}: {swift_string(destination)},"
+                f"            {swift_string(action)}: {swift_string(destination)},{note}"
             )
         lines.append("        ],")
     lines.extend([
@@ -393,16 +524,20 @@ def main(argv: list[str]) -> int:
             _write(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                    argv[3] if len(argv) == 4 else None)
             return 0
-        if mode in {"generate", "swift"} and len(argv) in {4, 5}:
-            source = generate_swift(load_flow(argv[2]), load_manifest(argv[3]))
-            _write(source, argv[4] if len(argv) == 5 else None)
+        if mode in {"generate", "swift"} and len(argv) in {4, 5, 6}:
+            # Optional 6th argument: the measurements directory. With it the
+            # router also carries inferred chrome transitions (see
+            # inferred_transitions); without it, observed only.
+            screens = argv[5] if len(argv) == 6 else None
+            source = generate_swift(load_flow(argv[2]), load_manifest(argv[3]), screens)
+            _write(source, argv[4] if len(argv) == 5 or len(argv) == 6 else None)
             return 0
     except (FlowCodegenError, OSError, UnicodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     print(
         "ERROR: usage: clone_flow_codegen.py manifest <flow.jsonl> [manifest.json] | "
-        "generate <flow.jsonl> <manifest.json> [output.swift]",
+        "generate <flow.jsonl> <manifest.json> [output.swift [screens-dir]]",
         file=sys.stderr,
     )
     return 1

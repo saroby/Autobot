@@ -195,9 +195,29 @@ cmd_observe() {
     echo "ERROR: this run tapped state-changing targets — see above and tell the user" >&2
     status=1
   fi
-  if [[ ! -f "$CLONE_ROOT/views.json" ]]; then
-    python3 "$_HERE/clone_flow_codegen.py" manifest "$FLOW" "$CLONE_ROOT/views.json" || status=1
-  fi
+  # Every run can add screens, so the manifest, the router and the views are
+  # refreshed together EVERY time — an interrupted run included. Names already
+  # in views.json are kept (hand edits and compare/ evidence are keyed by them);
+  # only new states get new names.
+  python3 - "$FLOW" "$CLONE_ROOT/views.json" "$_HERE/clone_flow_codegen.py" <<'PY' || status=1
+import importlib.util, json, sys
+from pathlib import Path
+flow, views_path, codegen_path = sys.argv[1], Path(sys.argv[2]), sys.argv[3]
+spec = importlib.util.spec_from_file_location("cfc", codegen_path)
+cfc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cfc)
+fresh = cfc.manifest_template(cfc.load_flow(flow))
+old = json.loads(views_path.read_text(encoding="utf-8")) if views_path.is_file() else {}
+merged = dict(fresh.get("views", {}))
+merged.update(old.get("views", {}))
+out = {"version": old.get("version", fresh.get("version", 1)),
+       "initial_state": old.get("initial_state") or fresh.get("initial_state"),
+       "views": dict(sorted(merged.items()))}
+views_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+added = len(out["views"]) - len(old.get("views", {}))
+print(f"INFO: views.json {len(old.get('views', {}))} -> {len(out['views'])} states ({added} new)")
+PY
+  python3 "$_HERE/clone_flow_codegen.py" generate "$FLOW" "$CLONE_ROOT/views.json" \
+    "$CLONE_ROOT/Sources/ObservedFlow.swift" "$CLONE_ROOT/screens" || status=1
   # A measured first pass of every screen. Starting Step 5 from a blank
   # placeholder meant `verify` said the same thing about all of them (every
   # element missing) and the author had no idea which screens were close. This

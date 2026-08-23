@@ -296,16 +296,27 @@ def element_literals(measurement: dict, actions: set[str],
     # reproduction then has nothing to tap at all (measured 2026-08-23: 4 of 42
     # transitions). The tap coordinate was recorded with the transition, so put
     # a target back where the original one was.
+    synthetic: list[dict] = []
     for offset, label in enumerate(sorted(actions - set(last_for))):
         point = (points or {}).get(label)
         if point is None:
             continue
-        literals.append({
+        synthetic.append({
             "id": len(elements) + offset,
             "x": round(point[0] - 22, 1), "y": round(point[1] - 22, 1),
             "w": 44.0, "h": 44.0,
             "label": label, "action": label, "synthetic": True,
         })
+    # Two synthesised targets on top of each other — recorded tap points from
+    # different captures of a feed whose rows moved — cannot both be tapped:
+    # whichever is drawn last wins and the other is dead, and neither matches
+    # the capture anyway. Drop the pair rather than guess (Codex review
+    # 2026-08-23; measured: item_archive_ and melody_ykaaa at the same 44pt box).
+    def overlapping(a: dict, b: dict) -> bool:
+        return (abs(a["x"] - b["x"]) < 22 and abs(a["y"] - b["y"]) < 22)
+    clashing = {i for i, a in enumerate(synthetic) for j, b in enumerate(synthetic)
+                if i != j and overlapping(a, b)}
+    literals.extend(t for i, t in enumerate(synthetic) if i not in clashing)
     return literals
 
 
@@ -321,12 +332,17 @@ def render_view(name: str, measurement: dict, actions: set[str], source: str,
     scroll = scroll_container(measurement)
     body = _records(element_literals(measurement, actions, points, crops, uncovered, scroll))
     box = scroll[0]
+    scroll_drag = "" if not box else (
+        f"        .modifier(CloneScrollDrag(offset: $scrollOffset, "
+        f"maxOffset: {max(0.0, round(box['ch'] - box['h'], 1))}))\n")
     # The scrolling content is drawn first and the chrome over it, which is the
     # order the tree already reports — Threads' top bar and tab bar come after
     # its feed and float above it.
     # Written with single braces on purpose: this string is INSERTED into the
     # template below, not re-processed by it, so doubling them would ship `{{`.
-    scroll_body = "" if not box else f"""            ScrollView(.vertical, showsIndicators: false) {{
+    scroll_body = "" if not box else f"""            CloneScrollArea(viewport: CGSize(width: {box['w']}, height: {box['h']}),
+                            content: CGSize(width: {box['cw']}, height: {box['ch']}),
+                            offset: $scrollOffset) {{
                 ZStack(alignment: .topLeading) {{
                     ForEach(Self.elements.filter {{ $0.scroll == 1 }}) {{ element in
                         CloneElementView(element: element)
@@ -336,7 +352,6 @@ def render_view(name: str, measurement: dict, actions: set[str], source: str,
                 }}
                 .frame(width: {box['cw']}, height: {box['ch']}, alignment: .topLeading)
             }}
-            .frame(width: {box['w']}, height: {box['h']})
             .offset(x: {box['x']}, y: {box['y']})
 """
     return f"""{MARKER} from {source}. Hand edits are overwritten — delete
@@ -345,6 +360,7 @@ import SwiftUI
 
 struct {name}: View {{
     var onAction: (String) -> Void = {{ _ in }}
+    @State private var scrollOffset: CGFloat = 0
 
     private static let elements: [CloneElement] = cloneElements({body})
 
@@ -364,7 +380,7 @@ struct {name}: View {{
                              onAction: onAction)
         }}
         .frame(width: {width}, height: {height}, alignment: .topLeading)
-        // The measurements are points on the device that was observed. On any
+{scroll_drag}        // The measurements are points on the device that was observed. On any
         // other screen size the replay is scaled to fit, not re-laid-out: it is
         // a measured replica, and stretching it would be a different screen.
         .cloneFitted(width: {width}, height: {height})
@@ -517,6 +533,64 @@ struct CloneActionLayer: View {{
                         y: element.y + (element.h - height) / 2)
                 .onTapGesture {{ onAction(element.action ?? "") }}
         }}
+    }}
+}}
+
+/// A scrolling region that keeps hit-testing inside SwiftUI.
+///
+/// Not a `ScrollView`: on the iOS 26 simulator a `ScrollView` placed under
+/// fixed chrome in a `ZStack` swallowed taps on that chrome near the top and
+/// bottom of the screen — tab bar and top bar, exactly the controls a clone
+/// needs most. Measured 2026-08-23 with a four-target probe; `.zIndex`,
+/// `.overlay`, `Button`, `highPriorityGesture`, `.ignoresSafeArea` and
+/// `.scrollEdgeEffectHidden` all left it that way.
+///
+/// And no gesture of its own: a drag gesture attached HERE — a full-screen
+/// sibling drawn under the chrome — stole the chrome's taps just the same
+/// (measured: remove the gesture and the tab bar works again). The gesture
+/// lives on the screen root, an ANCESTOR of every target, where a
+/// `simultaneousGesture` composes with the children's taps instead of
+/// competing with them. This view only shows the content at the offset it is
+/// handed. Deliberately plain: clamped, no momentum.
+struct CloneScrollArea<Content: View>: View {{
+    let viewport: CGSize
+    let content: CGSize
+    @Binding var offset: CGFloat
+    @ViewBuilder let body_: () -> Content
+
+    init(viewport: CGSize, content: CGSize, offset: Binding<CGFloat>,
+         @ViewBuilder content body: @escaping () -> Content) {{
+        self.viewport = viewport
+        self.content = content
+        self._offset = offset
+        self.body_ = body
+    }}
+
+    var body: some View {{
+        body_()
+            .offset(y: -offset)
+            .frame(width: viewport.width, height: viewport.height, alignment: .topLeading)
+            .clipped()
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("clone-scroll")
+    }}
+}}
+
+/// The drag that scrolls a screen. Attached to the screen root so it composes
+/// with every target's tap instead of competing with it (see CloneScrollArea).
+struct CloneScrollDrag: ViewModifier {{
+    @Binding var offset: CGFloat
+    let maxOffset: CGFloat
+    @State private var dragStart: CGFloat = 0
+
+    func body(content: Content) -> some View {{
+        content.simultaneousGesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged {{ value in
+                    offset = min(maxOffset, max(0, dragStart - value.translation.height))
+                }}
+                .onEnded {{ _ in dragStart = offset }}
+        )
     }}
 }}
 
@@ -700,8 +774,11 @@ def transitions_by_state(flow: Path) -> dict[str, set[str]]:
     """
     events = flow_codegen.load_flow(flow)
     captured = set(flow_codegen.captured_states(events))
+    screens = flow.parent / "screens"
+    observed, inferred = flow_codegen.all_transitions(
+        events, captured, screens if screens.is_dir() else None)
     actions: dict[str, set[str]] = {}
-    for source, action, _destination in flow_codegen.observed_transitions(events, captured):
+    for source, action, _destination in observed + inferred:
         actions.setdefault(source, set()).add(action)
     return actions
 
