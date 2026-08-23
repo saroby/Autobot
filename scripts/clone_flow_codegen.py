@@ -47,12 +47,24 @@ def load_flow(path: str | Path) -> list[dict[str, Any]]:
     return events
 
 
-def _identifier(event: dict[str, Any], primary: str, fallback: str) -> str | None:
-    value = event.get(primary) or event.get(fallback)
-    if value is None:
-        return None
-    value = str(value).strip()
-    return value if value and value != "?" else None
+def _identifier(event: dict[str, Any], *keys: str) -> str | None:
+    """First usable identifier among ``keys``, in priority order.
+
+    The flow v2 producer writes ``statekey``/``from_statekey``/``to_statekey``;
+    logs released before that used the underscored aliases, and the oldest ones
+    only had the coarse ``node``/``from``/``to``. Reading all three keeps the
+    router on the interaction state (a focused search field is not the same
+    screen as an unfocused one) instead of silently collapsing to the coarse
+    node whenever the canonical name is not the one being looked for.
+    """
+    for key in keys:
+        value = event.get(key)
+        if value is None:
+            continue
+        value = str(value).strip()
+        if value and value != "?":
+            return value
+    return None
 
 
 def captured_states(events: Iterable[dict[str, Any]]) -> "OrderedDict[str, dict[str, Any]]":
@@ -60,7 +72,7 @@ def captured_states(events: Iterable[dict[str, Any]]) -> "OrderedDict[str, dict[
     for event in events:
         if event.get("type") != "screen":
             continue
-        state = _identifier(event, "state", "node")
+        state = _identifier(event, "statekey", "state", "node")
         if state and state not in states:
             states[state] = event
     return states
@@ -140,7 +152,8 @@ def _swipe_action_id(event: dict[str, Any]) -> str:
         key: event[key]
         for key in sorted(event)
         if key not in {
-            "changed", "from", "from_state", "to", "to_state", "state", "node",
+            "changed", "from", "from_state", "from_statekey", "to", "to_state",
+            "to_statekey", "state", "statekey", "node", "nodekey",
             "timestamp", "time", "ts", "png", "tree", "sig",
         }
     }
@@ -160,6 +173,11 @@ def _action_id(event: dict[str, Any]) -> str | None:
     return None
 
 
+# The destination of an action that goes back. The router pops its history
+# instead of jumping to a fixed screen.
+POP = "\u0000pop"
+
+
 def observed_transitions(
     events: list[dict[str, Any]], captured: set[str]
 ) -> list[tuple[str, str, str]]:
@@ -167,8 +185,8 @@ def observed_transitions(
     for event in events:
         if event.get("type") not in {"tap", "swipe"} or not _is_changed(event):
             continue
-        source = _identifier(event, "from_state", "from")
-        destination = _identifier(event, "to_state", "to")
+        source = _identifier(event, "from_statekey", "from_state", "from")
+        destination = _identifier(event, "to_statekey", "to_state", "to")
         action = _action_id(event)
         if not source or not destination or not action:
             continue
@@ -176,10 +194,27 @@ def observed_transitions(
             continue
         destinations.setdefault((source, action), set()).add(destination)
 
+    # An action with several destinations is not automatically a contradiction.
+    # A back button legitimately lands wherever you came from — measured
+    # 2026-08-23: '돌아가기' from one screen went to three different places, and
+    # refusing to model that blocked the whole pipeline. When every destination
+    # is a screen the source was actually reached FROM, the action is a pop, and
+    # a history stack reproduces it exactly. Anything else is still a genuine
+    # contradiction and still refuses.
+    predecessors: dict[str, set[str]] = {}
+    for (source, _action), targets in destinations.items():
+        for target in targets:
+            predecessors.setdefault(target, set()).add(source)
+
+    pops = {
+        (source, action)
+        for (source, action), targets in destinations.items()
+        if len(targets) > 1 and targets <= predecessors.get(source, set())
+    }
     ambiguous = [
         (source, action, sorted(targets))
         for (source, action), targets in destinations.items()
-        if len(targets) > 1
+        if len(targets) > 1 and (source, action) not in pops
     ]
     if ambiguous:
         source, action, targets = sorted(ambiguous)[0]
@@ -189,7 +224,7 @@ def observed_transitions(
         )
 
     return sorted(
-        (source, action, next(iter(targets)))
+        (source, action, POP if (source, action) in pops else next(iter(targets)))
         for (source, action), targets in destinations.items()
     )
 
@@ -279,6 +314,14 @@ def generate_swift(events: list[dict[str, Any]], manifest: dict[str, Any]) -> st
         "final class ObservedFlowRouter: ObservableObject {",
         "    @Published private(set) var state: String",
         "",
+        "    /// Where a forward move came from. A back action lands wherever you",
+        "    /// arrived from, which a fixed state->action->state table cannot say:",
+        "    /// one screen\u2019s back button was observed going to three different",
+        "    /// places. The app keeps a stack, so the reproduction keeps one.",
+        "    private var history: [String] = []",
+        "",
+        f"    static let popDestination = {swift_string(POP)}",
+        "",
         "    static let observedTransitions: [String: [String: String]] = [",
     ]
     for source in sorted(grouped):
@@ -297,6 +340,12 @@ def generate_swift(events: list[dict[str, Any]], manifest: dict[str, Any]) -> st
         "",
         "    func send(action: String) {",
         "        guard let nextState = Self.observedTransitions[state]?[action] else { return }",
+        "        if nextState == Self.popDestination {",
+        "            guard let previous = history.popLast() else { return }",
+        "            state = previous",
+        "            return",
+        "        }",
+        "        history.append(state)",
         "        state = nextState",
         "    }",
         "}",

@@ -214,6 +214,42 @@ class TestStateChangingGuard(unittest.TestCase):
                 self.assertIn(f"effect={effect}", r.stdout)
                 self.assertIn("withheld=true", r.stdout)
 
+    def test_the_real_labels_a_device_reports_are_withheld(self):
+        """Observed on a connected iPhone running Threads, 2026-08-22.
+
+        A real accessibility label names the action and then describes it —
+        `좋아요. 226명이 이 게시물을 좋아합니다.`, not `좋아요`. Every pattern here
+        is anchored at the end (so that `팔로우 추천` stays navigation), so
+        matching the whole label let all of these through: exploration tapped
+        like and share on another person's post from the user's own account.
+        The bare-label cases above never caught it because no device emits them.
+        """
+        cases = {
+            "좋아요. 226명이 이 게시물을 좋아합니다.": "social-like",
+            "좋아요. 2,732명이 이 게시물을 좋아합니다.": "social-like",
+            "리포스트. 4명이 이 게시물을 리포스트했습니다.": "social-repost",
+            "공유하기. 183명이 이 게시물을 공유했습니다.": "sharing",
+            "Like. 226 people liked this post.": "social-like",
+        }
+        for label, effect in cases.items():
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertIn("WARN: withheld", r.stdout)
+                self.assertIn(f"effect={effect}", r.stdout)
+                self.assertIn("withheld=true", r.stdout)
+
+    def test_describing_a_screen_is_still_navigation(self):
+        """The leading-clause check must not swallow ordinary navigation.
+
+        `답글 달기` opens the reply composer (a screen); the publish button is
+        `게시`. `좋아요한 글` is the profile's liked-posts tab, not the like button.
+        """
+        labels = ["답글 달기. 35명이 이 게시물에 답글을 달았습니다.",
+                  "좋아요한 글", "게시 옵션", "게시물 만들기", "내가 팔로우하는 사람"]
+        r = idb([ROOT] + [el(label, 0, 200 + 40 * i) for i, label in enumerate(labels)])
+        self.assertIn(f"OK: {len(labels)} tappable, 0 withheld", r.stdout)
+        self.assertNotIn("category=state-changing", r.stdout)
+
     def test_follow_suggestions_navigation_is_not_misclassified(self):
         r = idb([ROOT, el("팔로우 추천", 0, 200), el("Follow suggestions", 0, 260)])
         self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)

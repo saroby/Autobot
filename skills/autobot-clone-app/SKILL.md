@@ -28,6 +28,26 @@ clone 산출물은 별도 확인 질문 없이 기본적으로 `research-only`�
 
 ## Workflow
 
+**기본 경로는 세 명령이다.** 사이에 있는 것은 스크립트가 소유할 수 없는 저작뿐이다 — 화면 스펙 `.md` 와, 기계 생성본을 다듬는 손질.
+
+```bash
+python3 scripts/clone_skill_sync.py check                 # Step 0
+scripts/clone_run.sh observe '<앱 이름 또는 bundle id>'    # Step 0a–3, + Step 5 기계 초안
+scripts/clone_run.sh functional                           # Step 6a — 앱이 동작하는가
+scripts/clone_run.sh polish                               # Step 6b — 화면이 같아 보이는가
+#   scripts/clone_run.sh verify 는 위 둘을 이 순서로 돈다.
+```
+
+`observe` 는 workspace 준비 → 기기 게이트 → bundle ID 확인 → doctor → session → **앱 전체 탐험**(화면 사이 이동 포함) → 측정·자산 crop → flow 맵 → router manifest → **화면마다 측정 기반 SwiftUI 초안**을 **질문 없이** 수행한다.
+
+**순서가 규칙이다: 기능 먼저, 픽셀은 그 다음.** 도달할 수 없는 화면을 픽셀까지 깎는 것은 그 값이 셈에 들어가는지 모르는 채로 쓰는 시간이다. `functional` 은 한 번 빌드해 재현본을 실제로 띄우고, 관측된 전이를 **앱 안에서 탭해** 목적 화면에 도착하는지 본다 — 전이가 끊겼거나 도달 불가 화면이 있으면 non-zero. `polish` 는 그 다음에야 화면마다 렌더 → 구조 diff → 대조를 돌린다. `verify` 는 `functional` 이 실패하면 `polish` 로 넘어가지 않는다.
+
+**둘 다 재개가 기본이다.** 실기기 실행은 완주보다 중단이 흔하다(세션 만료·잠금·로그인 벽). 중단되면 거기까지의 증거를 남기고 non-zero 로 끝나며, **같은 명령을 다시 실행하면 flow 로그에서 이어서** 한다. 처음부터 다시 하지 않는다.
+
+**진행 중에 사용자에게 묻지 않는다.** 아래의 모든 선택에는 자율 기본값이 있다(재현 대상=증거가 있는 전 화면, 화면 매핑=자동 생성, 데이터 필요 화면=표시하고 계속). 사람이 보는 지점은 `flow-map.html` 과 `compare/` 이며, 둘 다 실행을 막지 않는다.
+
+아래 Step 들은 그 두 명령이 각각 무엇을 보장하는지와, 개별 진단에 쓰는 하위 명령을 정의한다.
+
 ### Step 0 — 저장소/설치 스킬 계약 확인
 
 저장소에서 플러그인을 개발 중이면 실행 전에 canonical 스킬과 설치된 플러그인의 버전·내용을 확인한다.
@@ -48,6 +68,19 @@ export CLONE_XCODE_PROJECT=".autobot/clone/project/CloneWorkspace.xcodeproj"
 ```
 
 `device_wda.sh device`는 연결된 물리 기기가 없을 때 이 프로젝트를 `open -a Xcode`로 열고 최대 30초 동안 `devicectl` 상태를 재조회한다. 이는 CoreDevice 터널을 깨우는 best-effort 복구다. 계속 `paired`/`unavailable`이면 연결된 것으로 간주하지 않고 중지한다 — 그때는 Xcode의 **Window > Devices and Simulators**를 한 번 열거나 USB·잠금 해제·Developer Mode·Trust를 확인한다. 프로젝트를 먼저 빌드하거나 실행하지 않는다. 관찰 전에 foreground 앱을 바꾸면 대상 앱 바인딩 증거가 흐려진다.
+
+### Step 0b — 터널 인증은 시작 시점에 묻는다
+
+iOS 18+ 실기기는 RemoteXPC 터널이 필요하고 그 TUN 인터페이스 생성에는 root 가 든다. `clone_run.sh observe` 는 기기를 확정한 **직후** 터널을 세운다 — 터미널이면 `sudo -v`, 아니면 macOS 관리자 대화상자로 그 자리에서 묻는다.
+
+그 전에는 같은 대화상자가 몇 분 뒤 `doctor` 안에서 떴다. 사용자가 보고 있지 않을 때 조용히 떴다가 시간 초과로 죽는 자리였다 — **묻는 시점이 게이트의 일부다.**
+
+```bash
+scripts/device_wda.sh tunnel-status <udid>   # 0 준비됨/불필요, 1 세워야 함, 2 판단 불가
+scripts/device_wda.sh tunnel-start  <udid>   # 세운다 (필요하면 인증을 요청)
+```
+
+`tunnel-status` 는 프로필이 **다른 기기**를 가리키면 통과가 아니라 exit 2 로 거부한다. "판단 불가"를 "불필요"로 흘리면 iOS 26 기기가 조용히 통과한다(실측 2026-08-23). `CLONE_REQUIRE_SUDO=0` 으로 이 단계를 건너뛴다.
 
 ### Step 1 — 기기 게이트 + 대상 앱 바인딩 (HARD)
 
@@ -85,14 +118,17 @@ macOS TUN 인터페이스 생성에는 관리자 권한이 필요하다. 캐시�
 
 **화면 하나를 골라 재현하지 않는다.** 앱 전체를 훑어 화면과 그 사이 전이를 먼저 모으고, 그 지도를 본 뒤에 재현할 화면을 고른다. 맥락 없이 복제한 화면은 껍데기다.
 
+`clone_run.sh observe` 가 이 단계를 끝까지 돌린다. 아래는 그 안에서 도는 명령과, 개별 진단에 쓰는 하위 명령이다.
+
 ```bash
-# 기본 경로: 현재 화면부터 안전 frontier를 기계적으로 소진한다 — 탭마다 사람이
-# 개입하지 않는다. 변경 탭은 도착 화면에서 이어가고(뒤로가기도 후보이므로 스스로
-# 돌아온다), 모든 탭은 step과 같은 가드(후보 출처·fresh sig·foreground)를 거치며
-# withheld 는 절대 탭하지 않는다. 화면 소진·max steps·가드 발동에서 멈춘다.
-scripts/device_wda.sh explore "$sid" .autobot/clone/raw 20
-scripts/device_flow.py next .autobot/clone/flow.jsonl    # 다음 frontier가 있는 화면
-# 거기로 이동(탭/뒤로가기)한 뒤 explore 를 다시 실행한다. 수동 경로는 진단·이동용:
+# 기본 경로: 현재 화면의 안전 frontier를 소진하고, 소진되면 **이미 관찰한 전이를 되짚어
+# 아직 소진되지 않은 화면으로 스스로 이동해** 계속한다 — 탭마다도, 화면마다도 사람이
+# 개입하지 않는다. 모든 탭은 step과 같은 가드(후보 출처·fresh sig·foreground)를 거치며
+# withheld 는 절대 탭하지 않는다. 전역 소진·max steps·경로 한도·가드 발동에서 멈춘다.
+scripts/device_wda.sh explore "$sid" .autobot/clone/raw 200
+scripts/device_flow.py next .autobot/clone/flow.jsonl     # 남은 미탐험(사람이 읽는 요약)
+scripts/device_flow.py next-tap .autobot/clone/flow.jsonl <현재.xml>   # 지금 할 탭 하나
+# 수동 경로는 진단·이동용:
 scripts/device_wda.sh screen "$sid" .autobot/clone/raw <NN>-<screen>
 scripts/device_wda.sh candidates .autobot/clone/raw/<NN>-<screen>.xml
 scripts/device_wda.sh step "$sid" <x> <y> \
@@ -102,6 +138,14 @@ scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow
 
 탐험 규율·STOP 조건은 `autobot-copy-analyze` Step 3 과 **동일하며 같은 코드가 강제한다** — 접근성 트리를 먼저 읽고 semantic text input을 사용하며, 좌표 탭은 후보·현재 화면 서명이 일치할 때만 허용한다. 파괴적 라벨은 후보에서 제외하고, 모달이면 후보 0개로 중지한다. clone 에서 달라지는 건 셋:
 
+**⓪ 화면 사이 이동도 자동이다.** `next-tap` 이 한 번에 탭 하나를 답한다 — 이 화면에 미탐험 후보가 있으면 그것, 없으면 **미탐험 화면까지의 최단 관찰 경로의 첫 홉**이다. 이 캡처가 소진됐다는 것과 탐험이 끝났다는 것은 다른 주장이므로(같은 화면의 다른 스크롤 위치에만 있는 후보), 전자는 "이 캡처에 남은 탭 없음"으로, 후자만 "frontier empty"로 말한다. 경로 홉은 정의상 이미 탭해 본 전이이므로 `todo` 가 제외하는 대상이고, 그래서 별도 질의가 필요하다. 좌표는 항상 **지금 화면의 fresh 트리**에서 다시 읽으므로 낡은 좌표 가드가 그대로 적용된다. 도착이 예상과 다르면 다음 반복이 현재 상태에서 다시 계획한다. 경로 홉만 연속 `CLONE_EXPLORE_MAX_ROUTE`(기본 12)회면 ping-pong 으로 보고 멈춘다. **경로 홉도 `max_steps` 를 소비한다** — 앱 전체를 도는 값(기본 경로는 200)을 준다.
+
+**⓪-3 실행은 자신이 무엇을 눌렀는지 감사한다.** `observe` 는 끝에 `device_flow.py audit` 로 **실제로 탭한 것**을 지금의 가드로 다시 판정하고, 상태 변경 대상이 하나라도 있으면 non-zero 로 끝난다. 가드의 구멍은 열려 있는 동안 보이지 않는다 — 탭이 그냥 성공하기 때문이다. 실측 2026-08-22: 두 번의 실행이 사용자의 실제 Threads 계정으로 남의 게시물에 좋아요·공유를 눌렀고, 로그를 손으로 감사하고 나서야 드러났다. 원인은 `STATE_CHANGING` 패턴이 라벨 **끝**에 앵커돼 있는데 실제 라벨은 `좋아요. 226명이 이 게시물을 좋아합니다.` 처럼 **액션 이름 + 설명문**이었던 것. 감사가 실패하면 탐험을 재개하기 전에 가드를 고치고, **사용자에게 계정에서 무엇이 바뀌었는지 알린다.**
+
+**⓪-2 목록은 스크롤해서 끝까지 본다.** 이 캡처에 탭할 것이 없다는 것은 앱을 다 봤다는 뜻이 아니다 — 목록은 다른 스크롤 위치에만 있는 타깃을 갖는다. 탭할 후보가 하나도 없을 때만(=원래 멈췄을 자리에서만) 스크롤 후 재캡처하고 다시 고른다. `frontier` 는 한 state 의 모든 캡처의 후보를 합치므로 새 캡처의 후보가 곧바로 탐험 대상이 된다. 화면당 `CLONE_EXPLORE_MAX_SCROLL`(기본 6)회, 그리고 **화면이 실제로 움직이지 않으면 그 자리가 끝**이다(무한 피드가 실행을 독점하지 못한다). 스크롤 시도는 움직이지 않았어도 `swipe`+`screen` 으로 기록한다 — "봤는데 더 없었다"도 결과다. 이것 없이는 피드 앱 탐험이 첫 화면분에서 끝난다: Threads 실측(2026-08-22)에서 타깃 235개 중 34개, 나머지는 **애초에 어떤 캡처에도 없었다**.
+
+**⓪-1 화면이 움직이는 것은 정상이다.** 캡처와 탭 사이에 화면이 바뀌면 그 탭만 버리고 재캡처해서 다시 고른다(연속 `CLONE_EXPLORE_MAX_STALE`, 기본 5회까지). 탭은 아직 일어나지 않았으므로 재시도가 실기기를 두 번 누르지 않는다 — 탭 **이후** 실패는 여전히 치명적이다. 화면 정체성은 `statekey` 로 판정한다. 라벨 집합(`sig`)으로 판정하면 라이브 앱에서 탐험이 통째로 죽는다: Threads 실측(2026-08-22)에서 좋아요 수가 226 → 227 로 오르는 것만으로 후보 43개가 전부 거절돼 0 step 으로 끝났다.
+
 **① 전이가 자동으로 기록된다.** `explore`·`screen`·`step`·`tap`·`swipe`가 `.autobot/clone/flow.jsonl` 에 한 줄씩 남긴다 — 손으로 적는 게 아니다. 기본 경로는 `explore`(내부적으로 `step` 반복)이고, 개별 탭은 `step`이다. 탭, settle에 사용한 최종 XML 재사용, 도착 스크린샷, 원자적 파일 교체, 전이·화면 이벤트 기록을 한 명령으로 닫아 추가 `/source` 왕복과 캡처 누락을 없앤다. 저수준 `tap`은 디버깅용으로만 두며, `changed=true`인데 별도 `screen`이 없으면 여전히 `incomplete`다. 끝내 바뀌지 않은 동작도 `changed=false`로 기록한다.
 
 **② 화면 정체성은 세 층이다.** `sig`(라벨 집합 해시)는 stale-coordinate 탭 가드, `node`/`nodekey`는 데이터 변화·스크롤을 흡수하는 coarse 구조, `state`/`statekey`는 키보드·포커스·선택·모달을 포함하는 상호작용 상태다. flow와 생성 라우터는 `state`를 우선하고 옛 로그의 `node`로 fallback한다. 같은 coarse node라도 검색 포커스 전후는 다른 상태이므로 기능 복제에서 사라지지 않는다.
@@ -110,9 +154,13 @@ scripts/device_wda.sh type "$sid" <accessibility-id> <text>  # 입력값은 flow
 
 **④ 중단은 실패가 아니라 정상 종료다.** 실기기에서는 세션 만료·잠금·로그인 벽 중 하나에 반드시 걸린다. 완주가 예외고 중단이 기본이다. 그래서 **재개가 1급 경로**다 — `device_flow.py next` 가 로그를 읽어 미방문 후보를 복원하므로, 새 세션을 열고 이어서 탐험한다. 처음부터 다시 하지 않는다.
 
-**데이터가 필요한 화면**: 읽기 전용으로는 빈 상태밖에 못 보는 지점이 나온다(항목 0개인 목록의 채워진 레이아웃). 여기서 **한 번 멈춰 사용자에게 "항목 1개만 직접 만들어 주세요"라고 요청**하고 재개한다. 에이전트가 대신 만들지 않는다 — 사용자의 실제 기기이고, 삭제는 파괴적 라벨이라 되돌릴 수도 없다. 사용자가 거절하면 그 화면은 flow 맵에 `데이터 필요` 로 남기고 넘어간다.
+**데이터가 필요한 화면**: 읽기 전용으로는 빈 상태밖에 못 보는 지점이 나온다(항목 0개인 목록의 채워진 레이아웃). **기본값은 멈추지 않는다** — 그 화면을 flow 맵과 스펙에 `데이터 필요` 로 남기고 계속한다. 에이전트가 데이터를 대신 만들지 않는다: 사용자의 실제 기기이고, 삭제는 파괴적 라벨이라 되돌릴 수도 없다. 채워진 레이아웃까지 재현해야 할 때만 `CLONE_ASK_FOR_DATA=1` 로 한 번 멈춰 "항목 1개만 직접 만들어 주세요"를 요청하고 재개한다.
 
 **커버리지를 숨기지 않는다.** `device_flow.py stats`가 raw target과 behavior class를 따로 낸다. raw 6/30 또는 class 4/12를 탐험하고 "전수 완료"라고 말하지 않는다. withheld는 안전한 미탐험 작업으로 세지 않는다. 후보가 모두 탭됐더라도 변경된 탭/스와이프의 도착 화면 캡처가 없거나 접근성 트리가 빠졌으면 `incomplete`이며, 재현 완료로 보고하지 않는다.
+
+**탐험이 끝나는 조건은 "이 화면에 할 게 없다"가 아니다.** `explore` 는 한 화면이 마르면 ① 텍스트 필드에 probe 를 한 번 입력해 보고(검색 결과 화면은 키보드 너머에만 있다) ② 스크롤해 보고 ③ 관측된 경로로 미탐험 화면에 가고 ④ 그 길도 없으면 **앱을 재시작**해 초기 화면에서 이어간다. 종료는 전역 frontier 소진·max steps·재시작 한도(`CLONE_EXPLORE_MAX_RESTART`, 기본 8)뿐이다. 관측되지 않은 버튼은 재현본에서 아무 일도 하지 않으므로, 커버리지가 곧 재현본의 기능이다.
+
+**관측하지 않는 것도 있다 — 의도적으로.** 좋아요·팔로우·게시·공유 같은 상태 변경(`withheld`)은 절대 탭하지 않는다. 그 버튼들은 재현본에서도 죽어 있고, 그게 맞다. `device_flow.py stats` 가 몇 개인지 센다.
 
 ### Step 2a — flow 맵 (사람이 보는 지점)
 
@@ -121,7 +169,7 @@ scripts/device_flow.py map .autobot/clone/flow.jsonl .autobot/clone/flow-map.htm
 open .autobot/clone/flow-map.html
 ```
 
-화면 썸네일을 진입 화면으로부터의 깊이별로 놓고, 어떤 탭이 어디로 가는지와 **미탐험 후보**를 함께 보여준다. 사용자에게 열어 보여주고, 더 탐험할지 여기서 정한다.
+화면 썸네일을 진입 화면으로부터의 깊이별로 놓고, 어떤 탭이 어디로 가는지와 **미탐험 후보**를 함께 보여준다. `observe` 가 매번 다시 생성하며, **이 지점에서 멈추지 않는다** — 사람이 보는 창이지 게이트가 아니다. 더 탐험할 곳이 남았으면 `observe` 를 다시 실행하는 것이 답이고, 지도를 보고 결정할 필요가 없다.
 
 ### Step 2b — 역기획 (관찰과 해석을 섞지 않는다)
 
@@ -132,9 +180,13 @@ open .autobot/clone/flow-map.html
 
 읽는 범위는 **flow 그래프와 측정된 화면까지**다. App Store 리뷰·평점은 `copy` 의 입력이다 — 끌어오면 두 스킬 경계가 무너진다.
 
-### Step 2c — 재현 대상 선택
+### Step 2c — 재현 대상
 
-화면 30개를 전부 SwiftUI 로 재현하지 않는다. flow 맵을 사용자와 함께 보고 **재현할 화면을 고른다**(보통 진입 화면 + 핵심 흐름 3~5개). 고르지 않은 화면은 스펙(Step 4)만 남기고 코드를 만들지 않는다 — flow 맵에 이미 있으므로 나중에 언제든 이어서 만들 수 있다.
+**기본값: 내구 증거(트리 + 스크린샷 + 측정 JSON)가 있는 모든 화면을 재현한다.** 고르는 데 사람을 부르지 않는다 — 증거가 있으면 재현하고, 없으면 스펙만 남긴다. `views.json` 이 그 목록이고, `clone_run.sh verify` 가 정확히 그 목록을 검증한다.
+
+`views.json` 은 **관찰된 모든 state 를 덮어야 한다** — `clone_flow_codegen.py generate` 는 매핑이 빠진 state 에서 추측하지 않고 실패한다. 그리고 `device_render.sh` 는 `Sources/` 를 한 덩어리로 컴파일하므로, **아직 쓰지 않은 뷰가 하나만 있어도 모든 화면의 렌더가 실패한다**. 그래서 `verify` 는 렌더 전에 정의가 없는 타입을 먼저 이름으로 알린다 — 같은 컴파일 오류 24개를 읽게 두지 않는다.
+
+범위를 좁혀야 하면 항목을 **지우지 말고**(지우면 라우터 생성이 실패한다) 그 화면의 뷰를 원본 크기 자리표시자로 두고, 스펙의 "재현 불가 항목"에 이유를 적는다.
 
 ### Step 3 — 측정 (이 스킬의 핵심)
 
@@ -175,7 +227,15 @@ python3 scripts/clone_postprocess.py .autobot/clone --workers 4 \
 
 ### Step 5 — SwiftUI 재현
 
-`.autobot/clone/Sources/` 에 화면당 한 파일씩 SwiftUI 뷰를 생성한다.
+**초안은 기계가 쓴다.** `observe` 가 끝나면 `scripts/clone_view_codegen.py` 가 측정 JSON 하나당 뷰 하나를 이미 생성해 뒀다 — 측정된 프레임 그대로, 측정된 색·글자 크기 그대로, 접근성 라벨 그대로. 빈 자리표시자에서 시작하면 `verify` 가 모든 화면에 대해 같은 말("전부 누락")만 하고 어느 화면이 가까운지 알 수 없다. 지배적 실패인 **요소 누락**(DCGen 85.3%)은 측정으로 기계적으로 닫을 수 있는 유일한 실패다.
+
+```bash
+python3 scripts/clone_view_codegen.py .autobot/clone   # observe 가 이미 실행함
+```
+
+생성물은 **측정 재생**이다 — 요소를 측정 프레임에 그대로, 스크롤 컨테이너의 자손은 `ScrollView` 안에, 크롬은 밖에 고정, 루트 캔버스는 기기 크기에 aspect-fit. 사람이 할 일은 처음부터 쓰는 것이 아니라 여기서부터 의미 있는 구조로 옮기는 것이다. 파일 첫 줄의 `// Generated by clone_view_codegen.py` 를 지우면 그 화면은 손질본으로 간주되어 **다시 생성되지 않는다** — 이것이 소유권 경계다.
+
+손질할 때 지키는 것:
 
 - 측정된 수치를 **그대로** 쓴다 — `.padding(16)` 이 아니라 측정값이 20이면 `.padding(20)`.
 - 색은 측정 팔레트를 `Color` 상수로 뽑아 쓴다.
@@ -186,20 +246,56 @@ python3 scripts/clone_postprocess.py .autobot/clone --workers 4 \
 
 관찰된 전이를 실제 clone 화면에 연결한다:
 
+`observe` 가 `views.json`(state → Swift 뷰 타입)을 이미 생성해 뒀다 — **검토를 기다리지 않고 그대로 쓴다.** 타입 이름이 마음에 들지 않을 때만 고치고, 항목은 지우지 않는다(Step 2c). 추측이 필요한 경우(같은 state/action 이 여러 목적지로 관찰됨, 매핑 누락)는 `generate` 가 실패로 알리므로, 사람 검토를 선행 조건으로 둘 이유가 없다.
+
 ```bash
+# observe 가 이미 실행한 것 (파일이 없을 때만):
 python3 scripts/clone_flow_codegen.py manifest \
   .autobot/clone/flow.jsonl .autobot/clone/views.json
-# views.json의 state -> Swift View 타입 매핑을 검토·수정한다.
 python3 scripts/clone_flow_codegen.py generate \
   .autobot/clone/flow.jsonl .autobot/clone/views.json \
   .autobot/clone/Sources/ObservedFlow.swift
 ```
 
-생성물은 `ObservableObject` router, 관찰된 전이 표, `send(action:)`, 현재 state에 맞는 root switch를 제공한다. 같은 state/action이 여러 목적지로 관찰됐거나 화면 매핑이 빠지면 추측하지 않고 실패한다. 생성 뷰와 root는 Step 6에서 인자 없이 렌더할 수 있도록 기본값 계약을 유지한다.
+생성물은 `ObservableObject` router, 관찰된 전이 표, `send(action:)`, 현재 state에 맞는 root switch, 그리고 **히스토리 스택**을 제공한다.
 
-### Step 6 — 대조 검증 (재현을 주장하기 전에)
+**뒤로가기는 고정 목적지가 없다.** 한 액션의 목적지가 여럿 관찰됐을 때, 그 전부가 **이 화면에 도달했던 출발지**라면 모순이 아니라 pop 이다 — 앱이 스택을 갖고 있으므로 라우터도 갖는다. 목적지 중 하나라도 와 본 적 없는 곳이면 **여전히 추측하지 않고 실패한다.** 화면 매핑이 빠져도 실패한다. 생성 뷰와 root는 Step 6에서 인자 없이 렌더할 수 있도록 기본값 계약을 유지한다.
+
+### Step 6a — 기능 게이트 (픽셀보다 먼저)
+
+```bash
+scripts/clone_run.sh functional
+```
+
+한 번 빌드하고, 재현본을 시뮬레이터에 띄우고, `ObservedFlow` 의 전이를 **앱 안에서 실제로 탭한다**
+(`scripts/clone_functional.py <clone-root> <simulator-udid>` — 한 화면만 진단할 때 직접 쓴다). 도착한 화면은 각 뷰가 내보내는 `clone-state:<statekey>` 라벨로 읽는다. 결과는 두 숫자다 — 배선된 전이 수, 도달 가능한 화면 수. 전이에 구멍이 있으면 non-zero 이고, 그 화면의 픽셀 작업은 **아직 할 때가 아니다**.
+
+**이 게이트가 증명하는 것과 아닌 것.** 라우터 표·뷰의 탭 타깃·워크가 검사하는 엣지 목록은 모두 `clone_flow_codegen.observed_transitions` 한 곳에서 나온다. 그래서 이것은 **재현본의 내비게이션 배선이 관측 로그와 일치하는지**를 앱 안에서 실측하는 것이지, 대상 앱과 동작이 같은지를 재는 것이 아니다. 그래도 값이 있다 — 기계적으로 깨지는 것들(중복 라벨로 드라이버가 탭 거부, 터치가 닿지 않는 3pt·18pt 타깃, 히트 테스트를 가로채는 레이어)은 정확히 여기서만 드러난다.
+
+관측된 전이의 라벨이 그 화면의 캡처에 없으면 기록된 탭 좌표에 타깃을 **합성**한다. 이건 캡처가 담고 있던 요소보다 약한 증거이므로, 생성기와 워크가 **몇 개인지 세어 말한다**(`N of them on a target synthesised at a recorded tap point`). 그 수가 크면 재현 대상 캡처가 실행이 탐험한 화면과 어긋나 있다는 신호다.
+
+### Step 6b — 대조 검증 (재현을 주장하기 전에)
 
 재현했다고 말하려면 **원본과 재현본을 나란히 보여준다.**
+
+```bash
+scripts/clone_run.sh polish              # 뷰가 있는 화면 전부
+scripts/clone_run.sh polish auto-0001    # 한 화면만 (측정 stem 또는 뷰 이름)
+```
+
+**점수를 두 겹으로 읽는다.** 캡처 crop 은 대조 대상인 바로 그 원본에서 잘렸으므로 그 영역의 mismatch 는 구조적으로 0 이다. `polish` 는 crop 을 제외하고 재며(`--mask-assets`), 로그가 제외 면적을 먼저 말한다 — 그 비율이 크면 점수는 "재현이 좋다"가 아니라 "crop 을 제자리에 놓았다"에 가깝다.
+
+**반복 비용을 아는 것도 절차의 일부다.** 한 번 고치고 다시 재는 데 드는 것은 빌드 한 번 + 화면당 렌더·대조다.
+- `polish <화면>` — 한 화면만. 고치는 중에는 이걸 쓴다.
+- `CLONE_COMPARE_WORKERS`(기본 4) — 대조는 시뮬레이터가 필요 없어 병렬로 돈다.
+- `CLONE_RENDER_CACHE_KEEP`(기본 12) — 캐시 항목마다 캡처 crop 이 실리므로 상한이 있다. 디스크가 차면 이 레포는 그것을 SwiftUI 컴파일 오류로 읽은 전례가 있다.
+- 생성 뷰는 요소를 **JSON 문자열**로 싣는다. Swift 배열 리터럴로 두면 타입 체크만 몇 분이다.
+
+**지표가 정체되면 대조 이미지를 연다.** 이 스킬의 기준은 "나란히 놓으면 같은 화면"이고 그 판정은 사람 눈이 한다. 실제로 이 회차에서 아이콘이 통째로 빠진 것은 숫자가 아니라 이미지로 드러났다 — 아이콘은 접근성 트리에 그림이 아니라 설명으로만 있어 측정으로 재현할 수 없고, 캡처 crop 이 유일한 경로다.
+
+`polish` 는 렌더 루프에 들어가기 **전에** 시뮬레이터를 한 번 확정한다 — 시뮬레이터는 실행의 속성이지 화면의 속성이 아니므로, 없으면 화면 수만큼 반복되는 렌더 실패가 아니라 한 번의 환경 실패로 끝난다. `auto` 는 시뮬레이터 **이름이 아니라 기기 종류**(`deviceTypeIdentifier`)로 고르므로 `simctl create clone-probe ...` 처럼 임의로 이름 붙인 것도 선택된다. 여러 개 중 하나를 고정하려면 `CLONE_RENDER_SIMULATOR=<udid|name>` 를 쓴다(`scripts/device_render.sh resolve-simulator` 가 `auto` 의 선택 결과만 출력한다).
+
+`views.json` 의 화면마다 렌더 → 구조 diff → 대조를 한 번에 돌리고, 요소 누락이나 렌더 실패가 하나라도 있으면 **non-zero** 로 끝난다. `<NN>` 을 손으로 갈아 끼우며 화면마다 세 명령을 반복하지 않는다 — 그렇게 하면 어느 화면을 빠뜨렸는지 아무도 모른다. 아래 1–3은 `verify` 가 화면마다 실행하는 내용이며, **한 화면만 진단할 때** 직접 쓴다.
 
 1. 생성한 SwiftUI 를 **원본과 같은 논리 해상도의 시뮬레이터**에서 렌더 → 스크린샷.
    ```bash
@@ -271,6 +367,8 @@ python3 scripts/clone_flow_codegen.py generate \
 | 측정·렌더 캐시 | `.autobot/clone/.postprocess-cache.json`, `render-cache/` | 반복 실행 가속 |
 | clone Xcode 작업공간 | `.autobot/clone/project/CloneWorkspace.xcodeproj` | Xcode/CoreDevice 준비 및 이후 구현 빌드 |
 
+두 진입 명령은 `scripts/clone_run.sh` 다 — `observe` 가 위 표의 `flow.jsonl`·`raw/`·`screens/`·`flow-map.html`·`views.json`·`assets/` 를 만들고, `verify` 가 `compare/` 를 만든다.
+
 ## CRITICAL RULES
 
 1. **측정하지 않은 값을 쓰지 않는다** — 스크린샷을 보고 눈대중으로 색·간격을 정하지 않는다. 목표가 픽셀 동일이 아니라고 해서 이 규율이 느슨해지는 게 아니다: 측정이 룩앤필에 도달하는 가장 싼 길이다. 측정 JSON 에 없는데 재현에 필요하면 **근사하고 근사라고 적는다**(스펙의 "재현 불가 항목").
@@ -281,6 +379,7 @@ python3 scripts/clone_flow_codegen.py generate \
 6. **커버리지와 근거를 숨기지 않는다** — 부분 탐험은 부분이라고 말하고(`stats`), 역기획의 해석은 관찰과 분리하고, 동작 계약의 미확인 행은 `미탐험` 으로 표시한다. 변경된 탭/스와이프의 도착 캡처가 없거나 원본 트리가 빠진 경우도 `incomplete`로 남긴다. 셋 다 추측이 명세로 승격되는 걸 막는 같은 규칙이다.
 7. **관찰 전에 clone 앱을 실행하지 않는다** — clone workspace는 Xcode/CoreDevice 준비용으로만 열고, 대상 앱의 화면·전이를 수집하기 전에는 빌드·설치·실행하지 않는다.
 8. **연구용 자산은 provenance를 남긴다** — `assets/manifest.json` 없이 원본 자산을 생성본에 넣지 않는다. 연구용 기본값과 기술적으로 접근 가능한 출처를 혼동하지 않는다.
+9. **진행을 사람에게 묻지 않는다** — 재현 대상·화면 매핑·추가 탐험 여부는 모두 자율 기본값이 있다(Step 2a·2c·5). 사람을 부르는 경우는 둘뿐이다: 기술 게이트 실패(중지), 그리고 `CLONE_ASK_FOR_DATA=1` 로 명시적으로 켠 데이터 요청. 중간에 묻는 것은 자율성만 깨는 게 아니라 실기기 세션이 만료될 시간을 벌어 준다.
 
 ## Preconditions
 

@@ -305,6 +305,23 @@ class TestUncoveredRegions(unittest.TestCase):
                     png_bytes(375, 812, self.BG))
         self.assertEqual(d["uncoveredRegions"], [])
 
+    def test_a_container_around_the_patch_does_not_clear_the_flag(self):
+        """Only leaves account for pixels.
+
+        A container covers its children's area without drawing anything there.
+        Counting containers marked the whole Threads feed "covered" and the scan
+        reported nothing — while five post avatars, which Threads exposes to no
+        accessibility element at all, were plainly missing from the
+        reproduction. Measured 2026-08-23.
+        """
+        image = png_with_patch(375, 812, self.BG, self.INK, (100, 400, 64, 64))
+        row = ('<XCUIElementTypeOther type="XCUIElementTypeOther" label="행" name="행"'
+               ' enabled="true" visible="true" x="0" y="380" width="375" height="100">'
+               + node("StaticText", "제목", 200, 400, 100, 20)
+               + '</XCUIElementTypeOther>')
+        d = measure(row, image)
+        self.assertEqual(len(d["uncoveredRegions"]), 1, msg=str(d["uncoveredRegions"]))
+
     def test_system_chrome_bands_are_ignored(self):
         # Status bar content (top 7%) has no tree elements on most screens and
         # must not flag every capture.

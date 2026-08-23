@@ -100,7 +100,27 @@ STATE_CHANGING = (
         r"추천\s*(?:숨기기|제거|무시|안\s*함)|관심\s*없음"
         r"|(?:hide|dismiss)\s+(?:this\s+)?(?:suggestion|recommendation)"
         r"|not interested", re.I)),
+    # Opening the system share sheet can send the post out of the app entirely,
+    # and it replaces the target app in the foreground.
+    ("sharing", re.compile(
+        r"^(?:공유|공유하기)$|^share(?:\s+(?:post|thread|via.*))?$", re.I)),
 )
+
+
+def _label_clauses(label: str) -> tuple[str, ...]:
+    """The label, plus its leading clause.
+
+    Real accessibility labels name the action and then describe it:
+    Threads writes `좋아요. 226명이 이 게시물을 좋아합니다.` for its like button,
+    not `좋아요`. The patterns above are anchored at the end on purpose — that is
+    what keeps `팔로우 추천` (a screen) from reading as `팔로우` (an action) — so
+    matching the whole label alone let every one of those buttons through.
+    Measured on a real device 2026-08-22: exploration tapped like and share on
+    another person's post. Checking the leading clause too keeps the precision
+    and closes the hole.
+    """
+    head = re.split(r"[.。!?\n]", label, maxsplit=1)[0].strip()
+    return (label,) if head == label or not head else (label, head)
 
 
 def _clean(value: object) -> str:
@@ -180,6 +200,10 @@ def _parse_wda(raw: str) -> list[dict]:
                 "traits": _traits(node.get("traits") or node.get("accessibilityTraits")),
                 "focused": _optional_bool(node.get("focused")),
                 "selected": _optional_bool(node.get("selected")),
+                # The accessibility id, kept apart from the label: it is what
+                # Appium's `accessibility id` locator matches, and it is how a
+                # text field can be typed into without guessing coordinates.
+                "name": _clean(node.get("name")),
             })
         for child in reversed(list(node)):
             stack.append((child, depth + 1, index if index >= 0 else parent))
@@ -214,6 +238,7 @@ def _parse_idb(raw: str) -> list[dict]:
             "traits": _traits(_first(e, "AXTraits", "traits", "accessibilityTraits")),
             "focused": _optional_bool(_first(e, "AXFocused", "focused")),
             "selected": _optional_bool(_first(e, "AXSelected", "selected")),
+            "name": _clean(_first(e, "AXUniqueId", "identifier", "name")),
         })
     return out
 
@@ -272,10 +297,13 @@ def _node_identity(els: list[dict]) -> tuple[str, list[str]]:
 def nodekey(els: list[dict]) -> None:
     """Structural screen identity — the coarse node key for the flow graph.
 
-    `sig` hashes the label set, which is right for the tap guard (any change
-    means the screen moved) but wrong for a graph: the same list with different
-    data, or scrolled by one row, would be a new node and the exploration queue
-    would never drain. This hashes structure instead — role counts plus the
+    `sig` hashes the label set, which is wrong for a graph: the same list with
+    different data, or scrolled by one row, would be a new node and the
+    exploration queue would never drain. It is wrong for the tap guard too, for
+    the same reason — measured on Threads, a like count ticking 226 -> 227
+    changed `sig` while the screen stood still, so the guard rejected every
+    candidate and exploration made 0 steps. The guard uses `statekey`.
+    This hashes structure instead — role counts plus the
     navigation bar or custom Header trait label, which names the screen rather
     than its row data. Apps such as Threads draw their own top bar without an
     AXNavigationBar container, so omitting Header landmarks merges unrelated
@@ -403,10 +431,11 @@ def statekey(els: list[dict]) -> None:
 
 def _classification(e: dict) -> dict:
     label = e["label"]
+    clauses = _label_clauses(label)
     if DESTRUCTIVE.search(label):
         return {"category": "state-changing", "effect": "destructive", "state_changing": True}
     for effect, pattern in STATE_CHANGING:
-        if pattern.search(label):
+        if any(pattern.search(clause) for clause in clauses):
             return {"category": "state-changing", "effect": effect, "state_changing": True}
     if e["role"] == "AXSwitch":
         return {"category": "state-changing", "effect": "toggle", "state_changing": True}
@@ -564,14 +593,36 @@ def verify(els: list[dict], x: int, y: int) -> int:
     return 1
 
 
+def inputs(els: list[dict]) -> None:
+    """Text fields that could be typed into, with the id to type by.
+
+    Exploration never typed, so every search screen was a dead end: the
+    results screen behind it can only be reached through the keyboard. The
+    choice of what to type belongs to the caller — this only says where.
+    """
+    found = 0
+    for e in els:
+        if e["role"] not in TEXT_INPUT_ROLES or e["visible"] is False or not e["enabled"]:
+            continue
+        if e["frame"]["width"] <= 0 or e["frame"]["height"] <= 0:
+            continue
+        name = e.get("name") or ""
+        if not name:
+            continue
+        found += 1
+        print(f"INFO: input {name}\t{e['role']}\t{int(e['frame']['x'] + e['frame']['width'] / 2)}"
+              f"\t{int(e['frame']['y'] + e['frame']['height'] / 2)}")
+    print(f"INFO: inputs {found}")
+
+
 def main(argv: list[str]) -> int:
     mode = argv[1] if len(argv) > 1 else ""
-    if mode in ("candidates", "sig", "nodekey", "statekey") and len(argv) == 3:
+    if mode in ("candidates", "sig", "nodekey", "statekey", "identity", "inputs") and len(argv) == 3:
         pass
     elif mode == "verify" and len(argv) == 5:
         pass
     else:
-        print("ERROR: usage: device_a11y.py candidates|sig|nodekey|statekey <tree> "
+        print("ERROR: usage: device_a11y.py candidates|sig|nodekey|statekey|identity|inputs <tree> "
               "| verify <tree> <x> <y>", file=sys.stderr)
         return 1
     try:
@@ -585,7 +636,15 @@ def main(argv: list[str]) -> int:
         except ValueError:
             print("ERROR: verify needs integer <x> <y>", file=sys.stderr)
             return 1
-    {"sig": sig, "nodekey": nodekey, "statekey": statekey}.get(mode, candidates)(els)
+    if mode == "identity":
+        # All three in one parse. The settle loop asked for sig and statekey in
+        # two separate processes per poll — two interpreter starts and two XML
+        # parses for one dump — and it polls up to ten times per tap.
+        sig(els)
+        nodekey(els)
+        statekey(els)
+        return 0
+    {"sig": sig, "nodekey": nodekey, "statekey": statekey, "inputs": inputs}.get(mode, candidates)(els)
     return 0
 
 

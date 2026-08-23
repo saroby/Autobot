@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -196,3 +197,129 @@ class TestDeviceCompare(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNumpyFastPathMatchesTheDefinition(unittest.TestCase):
+    """The pure-Python loops ARE the metric; numpy is only allowed to be faster.
+
+    This file is stdlib-only by design, so the accelerated path is optional and
+    must be indistinguishable. A drift here would silently change every score in
+    `clone_run.sh verify` on any machine that happens to have numpy installed.
+    """
+
+    def setUp(self):
+        import random
+
+        from scripts import device_compare
+
+        self.module = device_compare
+        if device_compare._np is None:
+            self.skipTest("numpy is not installed — only the definition path exists here")
+        random.seed(20260823)
+        self.height, self.width = 37, 29
+        self.left = [[tuple(random.randrange(256) for _ in range(3))
+                      for _ in range(self.width)] for _ in range(self.height)]
+        self.right = [[tuple(random.randrange(256) for _ in range(3))
+                       for _ in range(self.width)] for _ in range(self.height)]
+        self.mask = [[(x * y) % 11 == 0 for x in range(self.width)]
+                     for y in range(self.height)]
+
+    def without_numpy(self, call):
+        saved = self.module._np
+        self.module._np = None
+        self.module._ARRAY_CACHE.clear()
+        try:
+            return call()
+        finally:
+            self.module._np = saved
+            self.module._ARRAY_CACHE.clear()
+
+    def test_metrics_agree_with_and_without_a_mask_and_bounds(self):
+        for bounds in (None, (3, 5, 20, 30)):
+            for mask in (None, self.mask):
+                with self.subTest(bounds=bounds, masked=mask is not None):
+                    self.module._ARRAY_CACHE.clear()
+                    fast = self.module._detailed_metrics(self.left, self.right, mask, bounds)
+                    slow = self.without_numpy(
+                        lambda: self.module._detailed_metrics(
+                            self.left, self.right, mask, bounds))
+                    self.assertEqual(fast, slow)
+
+    def test_heatmap_and_side_by_side_are_byte_identical(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def render(suffix: str) -> tuple[bytes, bytes]:
+                heat = self.module._heatmap(self.left, self.right, self.mask)
+                left = self.module.scale_to(self.left, 17, 23)
+                right = self.module.scale_to(self.right, 17, 23)
+                joined = self.module.join_side_by_side(
+                    left, right, 4, self.module.DIVIDER_RGB)
+                write_png(str(root / f"heat{suffix}.png"), heat)
+                write_png(str(root / f"join{suffix}.png"), joined)
+                return ((root / f"heat{suffix}.png").read_bytes(),
+                        (root / f"join{suffix}.png").read_bytes())
+
+            self.module._ARRAY_CACHE.clear()
+            fast = render("-fast")
+            slow = self.without_numpy(lambda: render("-slow"))
+            self.assertEqual(fast, slow)
+
+
+class TestAssetMasking(unittest.TestCase):
+    """A crop is cut from the image the comparison measures against.
+
+    Its region is ~0% mismatch by construction, so including it scores crop
+    placement rather than reproduction — measured 2026-08-23, crops covered
+    18-39% of several screens and accounted for the whole apparent improvement
+    of that round.
+    """
+
+    def build(self, root: Path, drawn_crop: bool):
+        original = [[(255, 0, 0)] * 20 for _ in range(20)]
+        # Left half reproduced badly; right half either copied or not.
+        rendered = [[(0, 0, 255)] * 20 for _ in range(20)]
+        if drawn_crop:
+            for y in range(20):
+                for x in range(10, 20):
+                    rendered[y][x] = (255, 0, 0)
+        write_png(str(root / "original.png"), original)
+        write_png(str(root / "rendered.png"), rendered)
+        (root / "screen.json").write_text(json.dumps({
+            "screen": {"points": {"width": 20, "height": 20},
+                       "pixels": {"width": 20, "height": 20}, "scale": 1},
+            "elements": [],
+        }), encoding="utf-8")
+        (root / "manifest.json").write_text(json.dumps({"assets": [{
+            "sourceMeasurement": str(root / "screen.json"),
+            "pixelBounds": {"x": 10, "y": 0, "width": 10, "height": 20},
+        }]}), encoding="utf-8")
+
+    def mismatch(self, root: Path, *extra: str) -> float:
+        result = subprocess.run(
+            ["python3", str(SCRIPT), str(root / "original.png"), str(root / "rendered.png"),
+             str(root / "out.png"), "--measure", str(root / "screen.json"), *extra],
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        found = re.search(r"visual diff advisory — mismatch ([\d.]+)%", result.stderr)
+        self.assertIsNotNone(found, result.stderr)
+        return float(found.group(1))
+
+    def test_a_copied_region_flatters_the_total_until_it_is_masked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.build(root, drawn_crop=True)
+            self.assertAlmostEqual(self.mismatch(root), 50.0, places=1)
+            masked = self.mismatch(root, "--mask-assets", str(root / "manifest.json"))
+            # Everything the reproduction actually drew is wrong.
+            self.assertAlmostEqual(masked, 100.0, places=1)
+
+    def test_masking_only_removes_this_screens_crops(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.build(root, drawn_crop=True)
+            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+            manifest["assets"][0]["sourceMeasurement"] = "/elsewhere/other-screen.json"
+            (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertAlmostEqual(
+                self.mismatch(root, "--mask-assets", str(root / "manifest.json")), 50.0, places=1)

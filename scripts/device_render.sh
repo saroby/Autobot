@@ -67,11 +67,26 @@ except (OSError, json.JSONDecodeError) as exc:
     print(f"ERROR: invalid simulator list from simctl: {exc}", file=sys.stderr)
     raise SystemExit(1)
 
+# Match on the simulator's DEVICE TYPE, not its name. The logical size — the
+# only thing that makes a render comparable to the measurements — comes from the
+# type; the name is whatever the person who created it typed. This header's own
+# instructions say `simctl create clone-probe ...iPhone-12-mini`, which produces
+# a simulator named "clone-probe" that a name match can never select.
+device_type_suffix = "." + marketing_name.replace(" ", "-")
+
+
+def matches(device: dict) -> bool:
+    if device.get("name") == marketing_name:
+        return True
+    identifier = device.get("deviceTypeIdentifier")
+    return isinstance(identifier, str) and identifier.endswith(device_type_suffix)
+
+
 candidates = []
 for runtime, devices in (payload.get("devices") or {}).items():
     version = tuple(int(part) for part in re.findall(r"\d+", runtime))
     for device in devices or []:
-        if device.get("name") != marketing_name or device.get("isAvailable", True) is False:
+        if not matches(device) or device.get("isAvailable", True) is False:
             continue
         udid = device.get("udid")
         if not isinstance(udid, str) or not udid:
@@ -81,7 +96,12 @@ for runtime, devices in (payload.get("devices") or {}).items():
         candidates.append((booted, version, last_booted, udid))
 
 if not candidates:
-    print(f"ERROR: no available simulator matching marketingName '{marketing_name}'", file=sys.stderr)
+    print(f"ERROR: no available simulator of device type '{marketing_name}' "
+          f"(looked for a name match or a deviceTypeIdentifier ending in "
+          f"'{device_type_suffix}'). Create one:\n"
+          f"ERROR:   xcrun simctl create clone-probe "
+          f"com.apple.CoreSimulator.SimDeviceType{device_type_suffix} <runtime>",
+          file=sys.stderr)
     raise SystemExit(1)
 
 candidates.sort(reverse=True)
@@ -90,7 +110,7 @@ PY
 }
 
 capture_stable_frame() {
-  local sim="$1" out="$2" work="$3"
+  local sim="$1" out="$2" work="$3" baseline="${4:-}"
   local attempts="${CLONE_RENDER_POLL_ATTEMPTS:-20}"
   local interval="${CLONE_RENDER_POLL_INTERVAL:-0.2}"
   if [[ ! "$attempts" =~ ^[0-9]+$ ]] || (( attempts < 2 )); then
@@ -102,7 +122,7 @@ capture_stable_frame() {
     return 1
   fi
 
-  local attempt previous="" current
+  local attempt previous="" current settled=""
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     current="$work/frame-$attempt.png"
     if ! xcrun simctl io "$sim" screenshot "$current" >/dev/null 2>&1; then
@@ -110,20 +130,45 @@ capture_stable_frame() {
       return 1
     fi
     if [[ -n "$previous" ]] && cmp -s "$previous" "$current"; then
-      cp "$current" "$out"
-      echo "INFO: frame stable after $attempt captures"
-      return 0
+      settled="$current"
+      # A baseline is what was on screen just before this launch. The app is
+      # relaunched in place now (one build hosts every root view), so "two
+      # identical frames" is satisfied by the home screen while the app is
+      # still coming up — and that frame would be filed as the reproduction.
+      if [[ -z "$baseline" ]] || ! cmp -s "$baseline" "$current"; then
+        cp "$current" "$out"
+        echo "INFO: frame stable after $attempt captures"
+        return 0
+      fi
     fi
     previous="$current"
     if (( attempt < attempts )); then
       sleep "$interval"
     fi
   done
+  if [[ -n "$settled" ]]; then
+    # Settled, but on the pre-launch screen. Report it rather than failing: the
+    # reproduction may legitimately look like what was behind it, and the
+    # comparison that follows is the thing that can tell the difference.
+    cp "$settled" "$out"
+    echo "WARN: '$sim' settled on a frame identical to the pre-launch screen after $attempts captures — the app may not have come up" >&2
+    return 0
+  fi
   echo "ERROR: simulator '$sim' did not produce two identical frames after $attempts captures; set CLONE_RENDER_SETTLE to use the legacy fixed wait" >&2
   return 1
 }
 
 main() {
+  # `resolve-simulator` lets a batch caller settle the simulator ONCE. Without
+  # it, a missing simulator is reported per screen, as though each view were at
+  # fault — the same "24 identical failures" the views.json pre-check exists to
+  # avoid, and its advice ("fix the compiler diagnostics") names a cause that
+  # is not there.
+  if [[ "${1:-}" == "resolve-simulator" ]]; then
+    WORK="$(mktemp -d -t device_render)"
+    select_simulator "$DEVICE_PROFILE" "$WORK"
+    return
+  fi
   local src="${1:-}" view="${2:-}" sim="${3:-}" out="${4:-}"
   if [[ -z "$src" || -z "$view" || -z "$sim" || -z "$out" ]]; then
     echo "ERROR: usage: device_render.sh <sources-dir> <RootView> <simulator> <out.png>" >&2
@@ -145,6 +190,22 @@ main() {
     return 1
   fi
 
+  # The roots the one build can host. A batch caller (clone_run.sh) passes the
+  # exact set from views.json; standalone callers get every `struct X: ... View`
+  # in Sources/, which is right until a helper view needs an argument the
+  # dispatcher cannot supply — that is what CLONE_ROOT_VIEWS is for.
+  local roots
+  if [[ -n "${CLONE_ROOT_VIEWS:-}" ]]; then
+    roots="$(tr ' ' '\n' <<<"$CLONE_ROOT_VIEWS" | grep -v '^$' | LC_ALL=C sort -u)"
+  else
+    roots="$(grep -hoE '^[[:space:]]*(public[[:space:]]+)?struct[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[^{]*\bView\b' "${swifts[@]}" \
+      | sed -E 's/.*struct[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\1/' | LC_ALL=C sort -u)"
+  fi
+  if ! grep -qx "$view" <<<"$roots"; then
+    echo "ERROR: '$view' is not a View declared under '$src' — found: $(tr '\n' ' ' <<<"$roots")" >&2
+    return 1
+  fi
+
   local work app build_app
   WORK="$(mktemp -d -t device_render)"
   work="$WORK"
@@ -161,10 +222,18 @@ main() {
   sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
   arch="$(uname -m)"; [[ "$arch" == "arm64" ]] || arch="x86_64"
 
+  # Capture crops the reproduction draws for measured images. Their file names
+  # are content hashes, so listing the names is enough to key the cache.
+  local assets="${CLONE_ASSET_DIR:-$src/../assets/crops}"
+  local asset_names=""
+  if [[ -d "$assets" ]]; then
+    asset_names="$(cd "$assets" && ls *.png 2>/dev/null | LC_ALL=C sort | tr '\n' ',')"
+  fi
+
   local cache_key source_hash index
   cache_key="$({
-    printf 'renderer=2\nroot=%s\nsdk=%s\ndeployment=%s\narch=%s\n' \
-      "$view" "$sdk" "$DEPLOY_TARGET" "$arch"
+    printf 'renderer=4\nsdk=%s\ndeployment=%s\narch=%s\nroots=%s\nassets=%s\n' \
+      "$sdk" "$DEPLOY_TARGET" "$arch" "$(tr '\n' ',' <<<"$roots")" "$asset_names"
     for ((index = 0; index < ${#swifts[@]}; index++)); do
       source_hash="$(shasum -a 256 < "${swifts[$index]}" | awk '{print $1}')"
       printf 'source=%s:%s\n' "${relatives[$index]}" "$source_hash"
@@ -183,14 +252,32 @@ main() {
 
     # Named Entry.swift, not main.swift: a file called main.swift is top-level code
     # and @main is then rejected.
-    cat > "$work/Entry.swift" <<EOF
-import SwiftUI
-
-@main
-struct ClonePreviewApp: App {
-    var body: some Scene { WindowGroup { $view() } }
-}
-EOF
+    #
+    # The root view is picked at LAUNCH from CLONE_ROOT_VIEW, not baked in at
+    # compile time. swiftc already compiles all of Sources/ for every render, so
+    # baking the root in meant N screens cost N full compiles of the same files
+    # (measured 2026-08-23: 31 mapped screens, one compile each, and every source
+    # edit invalidated all 31). Dispatching makes it one compile per source edit.
+    {
+      echo 'import SwiftUI'
+      echo ''
+      echo '@main'
+      echo 'struct ClonePreviewApp: App {'
+      echo '    var body: some Scene { WindowGroup { ClonePreviewRoot() } }'
+      echo '}'
+      echo ''
+      echo 'struct ClonePreviewRoot: View {'
+      echo '    var body: some View {'
+      echo '        switch ProcessInfo.processInfo.environment["CLONE_ROOT_VIEW"] ?? "" {'
+      while IFS= read -r root; do
+        [[ -n "$root" ]] || continue
+        printf '        case "%s": AnyView(%s())\n' "$root" "$root"
+      done <<<"$roots"
+      echo '        case let other: AnyView(Text("no such root view: " + other).foregroundColor(.red))'
+      echo '        }'
+      echo '    }'
+      echo '}'
+    } > "$work/Entry.swift"
     cat > "$build_app/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -217,6 +304,12 @@ EOF
       echo "ERROR: swiftc failed — fix the generated views above before comparing" >&2
       return 1
     fi
+    if [[ -n "$asset_names" ]]; then
+      cp "$assets"/*.png "$build_app/" || {
+        echo "ERROR: could not copy capture crops from '$assets'" >&2
+        return 1
+      }
+    fi
 
     if mkdir "$cache_entry" 2>/dev/null; then
       if ! cp -R "$build_app" "$cache_app"; then
@@ -225,6 +318,14 @@ EOF
         return 1
       fi
       : > "$cache_entry/.complete"
+      # Bounded, because every entry now ships the capture crops with it (~4MB)
+      # and every source edit mints a new one. This repo has a lesson where a
+      # full disk surfaced as "Unable to resolve module dependency" and read as
+      # a SwiftUI error; a polish loop is exactly the workload that gets there.
+      local keep="${CLONE_RENDER_CACHE_KEEP:-12}" stale
+      while IFS= read -r stale; do
+        [[ -n "$stale" && "$stale" != "$cache_key" ]] && rm -rf "${RENDER_CACHE:?}/$stale"
+      done < <(cd "$RENDER_CACHE" && ls -1td */ 2>/dev/null | tail -n "+$((keep + 1))" | tr -d /)
     else
       # Another renderer may have compiled the same key concurrently. Wait only
       # for its atomic completion marker; never install a partially copied app.
@@ -246,12 +347,30 @@ EOF
     echo "ERROR: simulator '$sim' did not boot — check 'xcrun simctl list devices'" >&2
     return 1
   fi
-  xcrun simctl uninstall "$sim" "$BUNDLE_ID" >/dev/null 2>&1 || true
-  if ! xcrun simctl install "$sim" "$app" >/dev/null; then
-    echo "ERROR: install failed on '$sim'" >&2
-    return 1
+  # Reinstall only when the build changed. The install is the same bundle for
+  # every screen now, so doing it per screen was pure latency.
+  local marker installed=""
+  marker="$RENDER_CACHE/.installed-$(printf '%s' "$sim" | tr -c 'A-Za-z0-9._-' '_')"
+  [[ -f "$marker" ]] && installed="$(cat "$marker")"
+  if [[ "$installed" != "$cache_key" ]] \
+     || ! xcrun simctl get_app_container "$sim" "$BUNDLE_ID" >/dev/null 2>&1; then
+    xcrun simctl uninstall "$sim" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    if ! xcrun simctl install "$sim" "$app" >/dev/null; then
+      echo "ERROR: install failed on '$sim'" >&2
+      return 1
+    fi
+    printf '%s' "$cache_key" > "$marker"
   fi
-  xcrun simctl launch "$sim" "$BUNDLE_ID" >/dev/null
+  xcrun simctl terminate "$sim" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  # Only the polling path needs to know what was on screen before the launch;
+  # the legacy fixed wait takes exactly one screenshot by contract.
+  local baseline=""
+  if [[ "${CLONE_RENDER_SETTLE+x}" != "x" ]]; then
+    baseline="$work/baseline.png"
+    xcrun simctl io "$sim" screenshot "$baseline" >/dev/null 2>&1 || baseline=""
+  fi
+  SIMCTL_CHILD_CLONE_ROOT_VIEW="$view" \
+    xcrun simctl launch --terminate-running-process "$sim" "$BUNDLE_ID" >/dev/null
   mkdir -p "$(dirname "$out")"
   if [[ "${CLONE_RENDER_SETTLE+x}" == "x" ]]; then
     sleep "$CLONE_RENDER_SETTLE"
@@ -260,18 +379,60 @@ EOF
       return 1
     fi
   else
-    capture_stable_frame "$sim" "$out" "$work"
+    capture_stable_frame "$sim" "$out" "$work" "$baseline"
   fi
   # Best-effort: dump the RENDERED accessibility tree so clone_structural_diff
   # can count missing elements mechanically (Step 6-4). Never fails the render.
-  local tree_out="${out%.png}.tree.json"
-  if command -v axe >/dev/null 2>&1; then
-    if axe describe-ui --udid "$sim" > "$tree_out" 2>/dev/null && [[ -s "$tree_out" ]]; then
-      echo "INFO: rendered accessibility tree -> $tree_out"
-    else
-      rm -f "$tree_out"
-      echo "WARN: axe describe-ui failed — structural diff unavailable for this render"
+  #
+  # The tree also settles a question the pixels cannot: pixels going quiet is
+  # not the app being up — the home screen is quiet too. Five screens in one
+  # polish run were filed with a tree holding none of their elements, and the
+  # structural diff read each as a whole screen of missing elements. If the tree
+  # does not name this app, the capture was early: take both again.
+  local tree_out="${out%.png}.tree.json" capture
+  # 0 disables the re-capture — for callers with no real simulator behind the udid.
+  local recaptures="${CLONE_RENDER_CAPTURE_ATTEMPTS:-3}"
+  if command -v axe >/dev/null 2>&1 && [[ "$recaptures" -gt 0 ]]; then
+    local ready=0
+    for ((capture = 1; capture <= recaptures; capture++)); do
+      if axe describe-ui --udid "$sim" 2>/dev/null | grep -q 'ClonePreview'; then
+        ready=1
+        break
+      fi
+      echo "INFO: ClonePreview is not on screen yet — waiting ($capture)" >&2
+      sleep 0.5
+    done
+    # Wait first, capture once. Re-capturing on every failed check paid for a
+    # full stable-frame poll per attempt and roughly halved the throughput of a
+    # polish run; the app is simply not up yet, and waiting is what that costs.
+    if [[ "$ready" -eq 1 && "$capture" -gt 1 ]]; then
+      if [[ "${CLONE_RENDER_SETTLE+x}" == "x" ]]; then
+        xcrun simctl io "$sim" screenshot "$out" >/dev/null 2>&1 || true
+      else
+        capture_stable_frame "$sim" "$out" "$work" "$baseline" || true
+      fi
     fi
+  fi
+  if command -v axe >/dev/null 2>&1; then
+    # Retry once: the first render of a run races the simulator finishing its
+    # boot, and axe returns nothing. Losing the tree loses the structural diff,
+    # which is the primary failure detector (SKILL Step 6-4) — so a screen whose
+    # tree is missing is unchecked, not passing.
+    local axe_err attempt
+    axe_err="$(mktemp -t device_render_axe)"
+    for attempt in 1 2; do
+      if axe describe-ui --udid "$sim" > "$tree_out" 2>"$axe_err" && [[ -s "$tree_out" ]]; then
+        echo "INFO: rendered accessibility tree -> $tree_out"
+        rm -f "$axe_err"
+        echo "OK: rendered $view -> $out"
+        return 0
+      fi
+      [[ "$attempt" -eq 1 ]] && sleep 1
+    done
+    rm -f "$tree_out"
+    echo "WARN: axe describe-ui failed after 2 attempts — structural diff unavailable" >&2
+    sed 's/^/WARN:   /' "$axe_err" >&2 || true
+    rm -f "$axe_err"
   else
     echo "INFO: AXe not installed — skipping rendered tree dump (structural diff unavailable)"
   fi

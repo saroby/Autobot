@@ -7,6 +7,7 @@ is what makes the three things below possible:
 
     device_flow.py next <flow.jsonl>              What is still unexplored.
     device_flow.py todo <flow.jsonl> <tree.xml>    Unexplored safe candidates of THIS capture.
+    device_flow.py next-tap <flow.jsonl> <tree.xml>  The ONE tap to make next.
     device_flow.py map  <flow.jsonl> <out.html>    The flow map, for a human.
     device_flow.py stats <flow.jsonl>              Coverage, one line.
 
@@ -14,6 +15,14 @@ is what makes the three things below possible:
 to one live capture so the coordinates it prints are valid for the tap guard
 (which only accepts candidates of the tree currently on the device). It is what
 lets `device_wda.sh explore` drain a screen without a human in the loop.
+
+`next-tap` is what lets that loop cross screens. When the current capture still
+has an unexplored candidate it returns that one; when the screen is drained it
+walks the transitions already in the log to the nearest screen that is not, and
+returns the FIRST HOP of that route — read out of the fresh tree it was handed,
+never out of the log, so the stale-coordinate tap guard passes. Routing hops are
+by definition edges already tapped, which is exactly why `todo` (which excludes
+them) cannot answer this and a second query is needed.
 
 `next` is also how a run RESUMES. On a real phone the session dies, the screen
 locks, a login wall appears — exploration ending early is the normal case, not
@@ -34,7 +43,7 @@ import json
 import os
 import subprocess
 import sys
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -331,6 +340,134 @@ def frontier(events: list[dict]) -> list[dict]:
     return out
 
 
+def unexplored(records: list[dict], events: list[dict], state: str) -> list[dict]:
+    """Safe candidates of one capture whose behavior class was never tapped here.
+
+    ``records`` come from the live tree, so every coordinate returned is one the
+    tap guard accepts. Coordinates are matched with the same 12pt tolerance the
+    candidate list uses, because the same control is reported at (38,72) and
+    (38,71) across two captures of one screen.
+    """
+    done = [(t.get("label", "?"), int(t["x"]), int(t["y"]), t.get("behavior"))
+            for t in taps(events) if action_source(t) == state]
+    done_behaviors = {str(behavior) for _lab, _x, _y, behavior in done if behavior}
+    emitted: set[str] = set()
+    out = []
+    for record in records:
+        if record["withheld"]:
+            continue
+        behavior = record["behavior"]
+        if behavior in done_behaviors or behavior in emitted:
+            continue
+        if any((lab == record["label"] or "?" in (lab, record["label"]))
+               and abs(x - record["x"]) <= 12 and abs(y - record["y"]) <= 12
+               for lab, x, y, _behavior in done):
+            continue
+        emitted.add(behavior)
+        out.append(record)
+    return out
+
+
+def observed_edges(events: list[dict]) -> "OrderedDict[str, list[tuple[str, str]]]":
+    """from state key → [(behavior, to state key)] for transitions that changed."""
+    edges: "OrderedDict[str, list[tuple[str, str]]]" = OrderedDict()
+    for tap in taps(events):
+        if not changed(tap):
+            continue
+        source, destination = action_source(tap), action_destination(tap)
+        behavior = str(tap.get("behavior") or "")
+        if not source or not behavior or destination in ("", "?") or source == destination:
+            continue
+        bucket = edges.setdefault(source, [])
+        if (behavior, destination) not in bucket:
+            bucket.append((behavior, destination))
+    return edges
+
+
+def routes(edges, start: str, targets: set[str]) -> list[tuple[str, str, int]]:
+    """Shortest observed routes from ``start`` to each target: (target, first behavior, hops)."""
+    found: list[tuple[str, str, int]] = []
+    seen = {start}
+    queue = deque()
+    for behavior, destination in edges.get(start, []):
+        if destination not in seen:
+            seen.add(destination)
+            queue.append((destination, behavior, 1))
+    while queue:
+        node, first_behavior, hops = queue.popleft()
+        if node in targets:
+            found.append((node, first_behavior, hops))
+        for behavior, destination in edges.get(node, []):
+            if destination not in seen:
+                seen.add(destination)
+                queue.append((destination, first_behavior, hops + 1))
+    return found
+
+
+def cmd_next_tap(path: str, tree: str) -> int:
+    """The one tap to make next from the screen currently on the device.
+
+    Prints at most one `INFO: next-tap x y | label` plus an `INFO: kind ...`
+    line saying whether it drains this screen (`frontier`) or walks toward
+    another one (`route`). No tap line means there is nothing to do from here —
+    the reason is on the OK/WARN line, and the exit code stays 0 so the caller
+    distinguishes "done" from "broken".
+    """
+    if not Path(tree).is_file():
+        print(f"ERROR: no such tree '{tree}'", file=sys.stderr)
+        return 1
+    state = _statekey_of(tree)
+    if not state:
+        print(f"ERROR: could not derive a state key from '{tree}'", file=sys.stderr)
+        return 1
+    events = load(path)
+    records = candidate_records_of(tree)
+    todo = unexplored(records, events, state)
+    if todo:
+        record = todo[0]
+        print(f"INFO: next-tap {record['x']} {record['y']} | {record['label']}")
+        print("INFO: kind frontier")
+        print(f"OK: {len(todo)} unexplored safe candidate(s) on this screen")
+        return 0
+    # frontier() re-reads every capture through device_a11y, so a routing hop
+    # costs one full coverage pass. Bounded (CLONE_EXPLORE_MAX_ROUTE hops per
+    # navigation) and small next to a tap plus settle on a real phone. If it
+    # ever dominates, pass the target back in as a hint so hops after the first
+    # only re-plan over the log's edges.
+    rows = frontier(events)
+    pending = {row["key"] for row in rows if row["todo"] and row["key"] != state}
+    if not pending:
+        # frontier() unions candidates across every capture of one state, so a
+        # feed can hold targets that only a different scroll position shows.
+        # This capture being drained is NOT the same claim as the run being
+        # done, and saying "explored everything" here would be the exact
+        # false completeness SKILL rule 6 forbids.
+        here = next((row for row in rows if row["key"] == state and row["todo"]), None)
+        if here:
+            print(f"WARN: {len(here['todo'])} candidate(s) of this screen were seen in another "
+                  "capture of it (a different scroll position) and are not on this one — "
+                  "scroll and re-capture to reach them")
+            print("OK: nothing left to tap on this capture")
+            return 0
+        print("OK: frontier empty — every safe behavior class was explored")
+        return 0
+    # Route hops are edges already tapped from here, so they are live candidates
+    # of this tree; look them up by behavior to get today's coordinates.
+    by_behavior = {record["behavior"]: record for record in records if not record["withheld"]}
+    for target, first_behavior, hops in routes(observed_edges(events), state, pending):
+        record = by_behavior.get(first_behavior)
+        if record is None:
+            continue
+        print(f"INFO: next-tap {record['x']} {record['y']} | {record['label']}")
+        print(f"INFO: kind route hops={hops} target={target}")
+        print(f"OK: routing toward {target} ({len(pending)} screen(s) still unexplored)")
+        return 0
+    print(f"WARN: {len(pending)} screen(s) still have unexplored candidates, but no observed "
+          "transition leads there from this screen — navigate manually (device_flow.py next)")
+    print("OK: no reachable next tap from this screen")
+    return 0
+
+
 def cmd_next(path: str) -> int:
     events = load(path)
     rows = frontier(events)
@@ -392,25 +529,10 @@ def cmd_todo(path: str, tree: str) -> int:
         print(f"ERROR: could not derive a state key from '{tree}'", file=sys.stderr)
         return 1
     events = load(path)
-    done = [(t.get("label", "?"), int(t["x"]), int(t["y"]), t.get("behavior"))
-            for t in taps(events) if action_source(t) == state]
-    done_behaviors = {str(behavior) for _lab, _x, _y, behavior in done if behavior}
-    emitted: set[str] = set()
-    count = 0
-    for record in candidate_records_of(tree):
-        if record["withheld"]:
-            continue
-        behavior = record["behavior"]
-        if behavior in done_behaviors or behavior in emitted:
-            continue
-        if any((lab == record["label"] or "?" in (lab, record["label"]))
-               and abs(x - record["x"]) <= 12 and abs(y - record["y"]) <= 12
-               for lab, x, y, _behavior in done):
-            continue
-        emitted.add(behavior)
+    todo = unexplored(candidate_records_of(tree), events, state)
+    for record in todo:
         print(f"INFO: todo {record['x']} {record['y']} | {record['label']}")
-        count += 1
-    print(f"OK: {count} unexplored safe candidate(s) on this capture")
+    print(f"OK: {len(todo)} unexplored safe candidate(s) on this capture")
     return 0
 
 
@@ -689,15 +811,64 @@ def cmd_map(path: str, out: str) -> int:
     return 0
 
 
+def cmd_audit(path: str) -> int:
+    """Did this run tap anything the guard should have withheld?
+
+    The guard lives in `device_a11y`, and a hole in it is invisible at the time —
+    the tap just succeeds. Measured 2026-08-22: exploration liked and shared
+    another person's posts on the user's real Threads account for two runs
+    before a hand-written log audit caught it, because every pattern was anchored
+    at the end of the label and real labels are `좋아요. 226명이 …`.
+
+    So re-judge what was actually tapped, with today's classifier. This turns a
+    one-off investigation into a check every run makes about itself, and it flags
+    logs recorded before a guard fix as well as a future regression.
+    """
+    import device_a11y
+
+    def effect_of(label: str) -> str | None:
+        if device_a11y.DESTRUCTIVE.search(label):
+            return "destructive"
+        clauses = device_a11y._label_clauses(label)
+        for effect, pattern in device_a11y.STATE_CHANGING:
+            if any(pattern.search(clause) for clause in clauses):
+                return effect
+        return None
+
+    events = load(path)
+    offenders = []
+    for action in events:
+        if action.get("type") not in ("tap", "swipe"):
+            continue
+        label = str(action.get("label") or "").strip()
+        if not label or label == "?":
+            continue
+        effect = effect_of(label)
+        if effect:
+            offenders.append((effect, label, action.get("at", "?")))
+    total = sum(1 for a in events if a.get("type") in ("tap", "swipe"))
+    if not offenders:
+        print(f"OK: none of the {total} recorded action(s) would be withheld today")
+        return 0
+    for effect, label, at in offenders:
+        print(f"ERROR: tapped a {effect} target at {at} | {label}", file=sys.stderr)
+    print(f"ERROR: {len(offenders)} of {total} recorded action(s) mutate state — the guard "
+          "let them through. Fix device_a11y before exploring again, and tell the user what "
+          "was changed on their account.", file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str]) -> int:
     mode = argv[1] if len(argv) > 1 else ""
     try:
-        if mode in ("next", "stats") and len(argv) == 3:
-            return (cmd_next if mode == "next" else cmd_stats)(argv[2])
+        if mode in ("next", "stats", "audit") and len(argv) == 3:
+            return {"next": cmd_next, "stats": cmd_stats, "audit": cmd_audit}[mode](argv[2])
         if mode == "map" and len(argv) == 4:
             return cmd_map(argv[2], argv[3])
         if mode == "todo" and len(argv) == 4:
             return cmd_todo(argv[2], argv[3])
+        if mode == "next-tap" and len(argv) == 4:
+            return cmd_next_tap(argv[2], argv[3])
     except FileNotFoundError:
         print(f"ERROR: no exploration log at {argv[2]} — capture a screen first "
               "(`device_wda.sh screen` writes it)", file=sys.stderr)
@@ -708,8 +879,8 @@ def main(argv: list[str]) -> int:
     except FlowContractError as exc:
         print(f"ERROR: invalid exploration log {argv[2]}: {exc}", file=sys.stderr)
         return 1
-    print("ERROR: usage: device_flow.py next|stats <flow.jsonl> | map <flow.jsonl> <out.html> "
-          "| todo <flow.jsonl> <tree.xml>",
+    print("ERROR: usage: device_flow.py next|stats|audit <flow.jsonl> "
+          "| map <flow.jsonl> <out.html> | todo|next-tap <flow.jsonl> <tree.xml>",
           file=sys.stderr)
     return 1
 

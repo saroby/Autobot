@@ -59,12 +59,34 @@ def rows_rgb(png: PNG) -> Rows:
 def scale_to(rows: Rows, width: int, height: int) -> Rows:
     """Nearest-neighbour resample — exactness is the eye's job here, not the filter's."""
     src_h, src_w = len(rows), len(rows[0])
+    if _np is not None:
+        ys = _np.minimum(src_h - 1, _np.arange(height) * src_h // height)
+        xs = _np.minimum(src_w - 1, _np.arange(width) * src_w // width)
+        return _as_array(rows, _np.uint8)[ys][:, xs]
     return [[rows[min(src_h - 1, y * src_h // height)][min(src_w - 1, x * src_w // width)]
              for x in range(width)] for y in range(height)]
 
 
+def join_side_by_side(left: Rows, right: Rows, gap: int, colour: RGB) -> Rows:
+    """The two images with a divider between them, as one image."""
+    if _np is not None and hasattr(left, "shape"):
+        divider = _np.empty((len(left), gap, 3), dtype=_np.uint8)
+        divider[:, :, :] = colour
+        return _np.concatenate((left, divider, right), axis=1)
+    filler = [colour] * gap
+    return [left[y] + filler + right[y] for y in range(len(left))]
+
+
 def write_png(path: str, rows: Rows) -> None:
-    raw = b"".join(b"\x00" + b"".join(bytes(p) for p in row) for row in rows)
+    if _np is not None and hasattr(rows, "shape"):
+        pixels = _np.ascontiguousarray(rows, dtype=_np.uint8)
+        height, width = pixels.shape[0], pixels.shape[1]
+        # One leading zero (filter type "none") per scanline, same as below.
+        scanlines = _np.zeros((height, width * 3 + 1), dtype=_np.uint8)
+        scanlines[:, 1:] = pixels.reshape(height, width * 3)
+        raw = scanlines.tobytes()
+    else:
+        raw = b"".join(b"\x00" + b"".join(bytes(p) for p in row) for row in rows)
 
     def chunk(kind: bytes, body: bytes) -> bytes:
         return (struct.pack(">I", len(body)) + kind + body
@@ -79,8 +101,36 @@ def write_png(path: str, rows: Rows) -> None:
 
 
 def _same_dimensions(left: Rows, right: Rows) -> bool:
-    return bool(left and right and left[0] and right[0]
+    # len(), never truthiness: after a resample these are numpy arrays when
+    # numpy is installed, and `if array` raises instead of asking about size.
+    return bool(len(left) and len(right) and len(left[0]) and len(right[0])
                 and len(left) == len(right) and len(left[0]) == len(right[0]))
+
+
+# Optional, never required: this file is stdlib-only by design (see the module
+# docstring) and the pure-Python loop below stays the definition of the metric.
+# A verify run compares one full 1124x2436 pair plus a per-element region for
+# every measured element — 31 screens of that is minutes of interpreter time,
+# and the whole point of the run is a fix/re-verify loop.
+try:
+    import numpy as _np
+except ImportError:  # pragma: no cover - exercised by the pure-Python path test
+    _np = None
+
+# Holds the source alongside the array so the id() key cannot be recycled while
+# the entry is live. Two images and a mask per run, so four is plenty.
+_ARRAY_CACHE: list[tuple[int, object, object]] = []
+
+
+def _as_array(rows, dtype):
+    key = id(rows)
+    for cached_key, source, array in _ARRAY_CACHE:
+        if cached_key == key and source is rows:
+            return array
+    array = _np.asarray(rows, dtype=dtype)
+    _ARRAY_CACHE.append((key, rows, array))
+    del _ARRAY_CACHE[:-4]
+    return array
 
 
 def _detailed_metrics(left: Rows, right: Rows, mask: Mask | None = None,
@@ -94,6 +144,20 @@ def _detailed_metrics(left: Rows, right: Rows, mask: Mask | None = None,
     y0, y1 = max(0, y0), min(height, y1)
     if x0 >= x1 or y0 >= y1:
         return None
+
+    if _np is not None:
+        window = (slice(y0, y1), slice(x0, x1))
+        delta = _np.abs(_as_array(left, _np.int16)[window]
+                        - _as_array(right, _np.int16)[window]).sum(axis=2)
+        if mask is not None:
+            delta = delta[~_as_array(mask, bool)[window]]
+        compared = int(delta.size)
+        if not compared:
+            return None
+        differing = int((delta > PIXEL_DIFF_THRESHOLD).sum())
+        error = int(delta.sum())
+        return DiffMetrics(differing / compared, error / (compared * 3 * 255),
+                           compared, differing)
 
     compared = differing = error = 0
     for y in range(y0, y1):
@@ -153,6 +217,11 @@ def _parser() -> argparse.ArgumentParser:
                         metavar="x,y,w,h", help="exclude a pixel rectangle from advisory metrics")
     parser.add_argument("--mask-system-chrome", action="store_true",
                         help="explicitly exclude standard top and bottom volatile system chrome")
+    parser.add_argument("--mask-assets", metavar="MANIFEST.JSON",
+                        help="exclude every capture crop this screen draws, so the score "
+                             "measures the pixels the reproduction actually draws. A crop is "
+                             "cut from the SAME original this compares against, so its region "
+                             "is ~0%% mismatch by construction and flatters the total.")
     return parser
 
 
@@ -169,6 +238,32 @@ def _rect_bounds(rect: tuple[float, float, float, float], width: int, height: in
     x1 = min(width, math.ceil((x + region_width) * scale_x))
     y1 = min(height, math.ceil((y + region_height) * scale_y))
     return None if x0 >= x1 or y0 >= y1 else (x0, y0, x1, y1)
+
+
+def _asset_bounds(manifest_path: str, measure_path: str | None,
+                  width: int, height: int) -> list[Bounds]:
+    """Pixel rectangles of the capture crops drawn on this screen."""
+    try:
+        entries = json.loads(Path(manifest_path).read_text(encoding="utf-8")).get("assets") or []
+    except (OSError, UnicodeError, json.JSONDecodeError, AttributeError) as exc:
+        print(f"WARN: asset masking skipped — cannot read {manifest_path}: {exc}",
+              file=sys.stderr)
+        return []
+    stem = Path(measure_path).stem if measure_path else None
+    bounds: list[Bounds] = []
+    for entry in entries:
+        if stem and Path(str(entry.get("sourceMeasurement") or "")).stem != stem:
+            continue
+        box = entry.get("pixelBounds") or {}
+        try:
+            rect = (float(box["x"]), float(box["y"]),
+                    float(box["width"]), float(box["height"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        resolved = _rect_bounds(rect, width, height)
+        if resolved is not None:
+            bounds.append(resolved)
+    return bounds
 
 
 def _system_chrome_bounds(width: int, height: int) -> list[Bounds]:
@@ -191,8 +286,25 @@ def _mask_rows(width: int, height: int, bounds: list[Bounds]) -> tuple[Mask | No
 
 
 def _heatmap(left: Rows, right: Rows, mask: Mask | None) -> Rows:
-    rows: Rows = []
     maximum = 3 * 255 - PIXEL_DIFF_THRESHOLD
+    if _np is not None:
+        delta = _np.abs(_as_array(left, _np.int16)
+                        - _as_array(right, _np.int16)).sum(axis=2)
+        intensity = (delta - PIXEL_DIFF_THRESHOLD) / maximum
+        hot = intensity > 0.5
+        red = _np.where(hot, 255,
+                        _np.minimum(255, (intensity * 2 * 255 + 0.5).astype(_np.int32)))
+        green = _np.where(hot,
+                          _np.maximum(0, ((1 - intensity) * 2 * 255 + 0.5).astype(_np.int32)),
+                          red)
+        out = _np.zeros(delta.shape + (3,), dtype=_np.uint8)
+        out[:, :, 0] = red
+        out[:, :, 1] = green
+        out[delta <= PIXEL_DIFF_THRESHOLD] = (0, 0, 0)
+        if mask is not None:
+            out[_as_array(mask, bool)] = MASKED_RGB
+        return out
+    rows: Rows = []
     for y, (left_row, right_row) in enumerate(zip(left, right)):
         output_row: list[RGB] = []
         for x, (a, b) in enumerate(zip(left_row, right_row)):
@@ -327,6 +439,25 @@ def main(argv: list[str]) -> int:
         print(f"ERROR: cannot read images: {exc}", file=sys.stderr)
         return 1
 
+    # A real iPhone 12 mini and its simulator disagree about pixels while agreeing
+    # about points: WebDriverAgent returns the 1124x2436 render buffer, simctl
+    # returns the 1080x2340 native panel. Both are the same 375x812 points, so
+    # refusing to compare them threw away every quantitative metric on that
+    # device — measured 2026-08-22, all 60 metric runs skipped. Resample when the
+    # shapes agree; only a genuine aspect mismatch is a real mismatch.
+    # Kept before any resample: the aspect check below must judge what was
+    # actually rendered, not what we normalized it to.
+    rendered_shape = (len(right[0]), len(right)) if right and right[0] else (0, 0)
+    if not _same_dimensions(left, right) and left and right and left[0] and right[0]:
+        left_aspect = len(left[0]) / len(left)
+        right_aspect = len(right[0]) / len(right)
+        if abs(left_aspect - right_aspect) <= 0.01:
+            print(f"INFO: reproduction resampled {len(right[0])}x{len(right)} -> "
+                  f"{len(left[0])}x{len(left)} for metrics — same aspect, different "
+                  "capture scale (device render buffer vs simulator panel)",
+                  file=sys.stderr)
+            right = scale_to(right, len(left[0]), len(left))
+
     same_size = _same_dimensions(left, right)
     mask: Mask | None = None
     if not same_size:
@@ -360,6 +491,13 @@ def main(argv: list[str]) -> int:
                   f"status_px={top[0]},{top[1]},{top[2] - top[0]},{top[3] - top[1]} "
                   f"home_px={bottom[0]},{bottom[1]},{bottom[2] - bottom[0]},{bottom[3] - bottom[1]}",
                   file=sys.stderr)
+        if args.mask_assets:
+            assets = _asset_bounds(args.mask_assets, args.measure, width, height)
+            mask_bounds.extend(assets)
+            covered = sum((x1 - x0) * (y1 - y0) for x0, y0, x1, y1 in assets)
+            print(f"INFO: capture crops excluded — {len(assets)} region(s), "
+                  f"{covered / (width * height):.1%} of the screen. What remains is the "
+                  "part the reproduction draws itself.", file=sys.stderr)
         mask, masked_pixels = _mask_rows(width, height, mask_bounds)
         if mask_bounds:
             print(f"INFO: mask advisory — {masked_pixels}/{width * height} pixels excluded; "
@@ -394,19 +532,20 @@ def main(argv: list[str]) -> int:
     # Same aspect ratio is not the same layout: reproducing 375x812 numbers on a
     # 402x874 simulator shifts everything, and scaling the screenshot afterwards
     # hides it. Say so — the fix is to render on a matching device.
-    la, ra = len(left[0]) / len(left), len(right[0]) / len(right)
+    la = len(left[0]) / len(left)
+    ra = rendered_shape[0] / rendered_shape[1] if rendered_shape[1] else la
     if abs(la - ra) > 0.005:
         print(f"WARN: aspect mismatch — original {len(left[0])}x{len(left)}, "
-              f"reproduction {len(right[0])}x{len(right)}. Render on a simulator whose "
-              "logical size matches the captured device, or the comparison is misleading.",
-              file=sys.stderr)
+              f"reproduction {rendered_shape[0]}x{rendered_shape[1]}. Render on a simulator "
+              "whose logical size matches the captured device, or the comparison is "
+              "misleading.", file=sys.stderr)
 
     height = min(len(left), len(right))
     scaled_left = scale_to(left, round(len(left[0]) * height / len(left)), height)
     scaled_right = scale_to(right, round(len(right[0]) * height / len(right)), height)
-    gap = [DIVIDER_RGB] * DIVIDER
     try:
-        write_png(args.output, [scaled_left[y] + gap + scaled_right[y] for y in range(height)])
+        write_png(args.output,
+                  join_side_by_side(scaled_left, scaled_right, DIVIDER, DIVIDER_RGB))
     except OSError as exc:
         print(f"ERROR: cannot write comparison: {exc}", file=sys.stderr)
         return 1

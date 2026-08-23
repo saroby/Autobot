@@ -26,6 +26,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_wda.sh"
+
+# Generous on purpose. These bound how long the SCRIPT may take, not how fast
+# the host must be — and under a full-suite run the host is busy. A 5s bound
+# failed one of them there while passing every time on its own, which is the
+# 2026-08-15 lesson: scheduling delay is not a readiness failure.
+SUBPROCESS_TIMEOUT = 20
 FLOW_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "device_flow.py"
 
 
@@ -485,7 +491,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                 env["CLONE_TUNNEL_READY"] = "1"
                 result = subprocess.run(
                     ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
-                    capture_output=True, text=True, env=env, timeout=5,
+                    capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
                 )
                 order_exists = order_log.exists()
                 appium_exists = appium_log.exists()
@@ -515,7 +521,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                 )
                 result = subprocess.run(
                     ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
-                    capture_output=True, text=True, env=env, timeout=5,
+                    capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
                 )
                 order_lines = order_log.read_text(encoding="utf-8").splitlines()
                 appium_args = appium_log.read_text(encoding="utf-8")
@@ -555,7 +561,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                 nohup.chmod(0o755)
                 result = subprocess.run(
                     ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
-                    capture_output=True, text=True, env=env, timeout=5,
+                    capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
                 )
                 appium_args = appium_log.read_text(encoding="utf-8")
             finally:
@@ -581,7 +587,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                 started_at = time.monotonic()
                 result = subprocess.run(
                     ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
-                    capture_output=True, text=True, env=env, timeout=5,
+                    capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
                 )
                 elapsed = time.monotonic() - started_at
                 order_lines = order_log.read_text(encoding="utf-8").splitlines()
@@ -626,7 +632,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                 })
                 result = subprocess.run(
                     ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
-                    capture_output=True, text=True, env=env, timeout=5,
+                    capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
                 )
                 osascript_args = osascript_log.read_text(encoding="utf-8")
             finally:
@@ -652,7 +658,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                 env["CLONE_TUNNEL_START_TRIES"] = "10"
                 result = subprocess.run(
                     ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
-                    capture_output=True, text=True, env=env, timeout=5,
+                    capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
                 )
                 tunnel_launch_count = len(sudo_log.read_text(encoding="utf-8").splitlines())
                 lock_exists = (state / "remotexpc-tunnel-start.lock").exists()
@@ -692,7 +698,19 @@ class TestSigningTeamResolution(unittest.TestCase):
                         if process.poll() is None:
                             process.terminate()
                             process.communicate(timeout=2)
-                appium_start_count = len(appium_log.read_text(encoding="utf-8").splitlines())
+                # The winner starts the fake Appium as a child; on a loaded host
+                # that child can still be waiting to be scheduled when both
+                # sessions have already exited, and reading immediately raised
+                # FileNotFoundError instead of testing anything. Same class as
+                # the 2026-08-15 lesson: give the first instruction wall time,
+                # keep the assertion exact.
+                for _ in range(40):
+                    if appium_log.exists():
+                        break
+                    time.sleep(0.05)
+                appium_start_count = len(
+                    appium_log.read_text(encoding="utf-8").splitlines()
+                ) if appium_log.exists() else 0
                 lock_exists = (state / "remotexpc-tunnel-start.lock").exists()
             finally:
                 server.shutdown()
@@ -1060,6 +1078,15 @@ class TestSigningTeamResolution(unittest.TestCase):
                     ["python3", str(FLOW_SCRIPT), "stats", str(flow)],
                     capture_output=True, text=True,
                 )
+                # Same boundary, second consumer: `explore` now walks the whole
+                # app by asking next-tap what to do from the capture it just
+                # took, so that command must read this producer's log and this
+                # producer's tree — not a hand-authored fixture of either.
+                next_tap_result = subprocess.run(
+                    ["python3", str(FLOW_SCRIPT), "next-tap", str(flow),
+                     str(outdir / "destination.xml")],
+                    capture_output=True, text=True,
+                )
                 final_xml = (outdir / "destination.xml").read_text(encoding="utf-8")
                 final_png = (outdir / "destination.png").read_bytes()
             finally:
@@ -1071,6 +1098,10 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertEqual(flow_result.returncode, 0,
                          msg="device_flow.py must read the log device_wda.sh writes: "
                              + flow_result.stderr + flow_result.stdout)
+        self.assertEqual(next_tap_result.returncode, 0,
+                         msg="device_flow.py next-tap must read the log and tree device_wda.sh "
+                             "writes: " + next_tap_result.stderr + next_tap_result.stdout)
+        self.assertNotIn("ERROR", next_tap_result.stderr)
         self.assertEqual(state["source_gets"], 2,
                          msg="step must use freshness + final settle source, with no screen refetch")
         self.assertEqual(state["session_gets"], 0,
@@ -1178,14 +1209,27 @@ class TestSigningTeamResolution(unittest.TestCase):
         r, events, taps = self._run_explore()
         self.assertEqual(r.returncode, 0, msg=r.stderr + r.stdout)
         self.assertIn("explore made 2 step(s)", r.stdout)
-        self.assertIn("safe frontier is drained", r.stdout)
+        # The stop condition is the GLOBAL frontier, not this one screen: with a
+        # single screen in the log the two are the same, and explore must not
+        # end by telling a human to go navigate somewhere themselves.
+        self.assertIn("frontier empty", r.stdout)
+        self.assertNotIn("navigate elsewhere", r.stdout)
         tap_labels = [e["label"] for e in events if e["type"] == "tap"]
         self.assertEqual(sorted(tap_labels), ["가", "나"])
         self.assertNotIn("팔로우", "".join(tap_labels))
-        self.assertEqual(len(taps), 2, msg="withheld targets must never be tapped")
+        # A 600ms pointerMove is the scroll gesture, not a tap. Explore tries one
+        # scroll before giving up (a drained capture is not a drained app), and
+        # this fake serves a static tree, so the scroll moves nothing and stops.
+        gestures = [body for body in taps if '"duration":600' not in body.replace(" ", "")]
+        self.assertEqual(len(gestures), 2, msg="withheld targets must never be tapped")
+        self.assertIn("did not move — end of content", r.stdout)
         # Every tap left durable evidence the reader accepts.
+        # The trailing swipe+screen is the scroll attempt and its evidence. It is
+        # recorded even though it moved nothing — "we looked and there was no
+        # more" is a finding, and `changed=false` keeps it out of capture_gaps.
         self.assertEqual([e["type"] for e in events],
-                         ["screen", "tap", "screen", "tap", "screen"])
+                         ["screen", "tap", "screen", "tap", "screen", "swipe", "screen"])
+        self.assertEqual([e for e in events if e["type"] == "swipe"][0]["changed"], "false")
 
     def test_explore_respects_max_steps(self):
         r, events, taps = self._run_explore("1")
@@ -1204,7 +1248,10 @@ class TestSigningTeamResolution(unittest.TestCase):
             ' visible="true" x="0" y="200" width="100" height="40"/>'
             '</XCUIElementTypeApplication></AppiumAUT>'
         )
-        after = before.replace('label="나" name="나"', 'label="다" name="다"')
+        # A swipe SCROLLS: the elements that survive it move. Renaming a label in
+        # place is the signature of content churn (a like count ticking), which
+        # must not be reported as a transition — see TestSwipeChurn below.
+        after = (before.replace('y="100"', 'y="40"').replace('y="200"', 'y="140"'))
         state = {"swiped": False}
 
         class Handler(BaseHTTPRequestHandler):
@@ -1249,7 +1296,7 @@ class TestSigningTeamResolution(unittest.TestCase):
                 lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
                                encoding="utf-8")
                 env = {**os.environ, "APPIUM_URL": f"http://127.0.0.1:{server.server_port}",
-                       "CLONE_FLOW_LOG": str(log), "CLONE_SWIPE_SETTLE_TRIES": "1"}
+                       "CLONE_FLOW_LOG": str(log), "CLONE_SWIPE_SETTLE_TRIES": "3"}
                 r = subprocess.run(
                     ["bash", "-c", f"source '{lib}'; cmd_swipe session-1 180 700 180 200"],
                     capture_output=True, text=True, env=env,
@@ -1546,7 +1593,7 @@ class TestManagedAppiumDoctorAndMetrics(unittest.TestCase):
             started_at = time.monotonic()
             r = subprocess.run(
                 ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
-                capture_output=True, text=True, env=env, timeout=5,
+                capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
             )
             elapsed = time.monotonic() - started_at
             start_lines = (starts.read_text(encoding="utf-8").splitlines()
@@ -1820,5 +1867,670 @@ class TestFlowLogging(unittest.TestCase):
             self.assertRegex(event["at"], r"^20\d\d-\d\d-\d\dT")
 
 
+class TestLiveContentDoesNotBlockTaps(unittest.TestCase):
+    """A live feed must not freeze exploration.
+
+    Measured on Threads 2026-08-22: between the capture and the tap a like count
+    ticked 226 -> 227. The old guard compared `sig` (a hash of the label set), so
+    it rejected every candidate and `explore` made 0 steps on a real device — the
+    skill could not observe the app at all. The guard must accept content churn
+    and still refuse a screen that actually moved.
+    """
+
+    APP = ('<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+           '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+           ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+           '<XCUIElementTypeButton type="XCUIElementTypeButton" label="\uac00" name="\uac00" enabled="true"'
+           ' visible="true" x="0" y="100" width="100" height="40"/>'
+           '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" label="LIKES" name="LIKES"'
+           ' enabled="true" visible="true" x="0" y="300" width="200" height="20"/>'
+           '</XCUIElementTypeApplication></AppiumAUT>')
+
+    def _step(self, live: str) -> tuple[subprocess.CompletedProcess, list[dict]]:
+        captured = self.APP.replace("LIKES", "\uc88b\uc544\uc694 226\uba85")
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    self._reply({"value": live})
+                elif self.path.endswith("/screenshot"):
+                    self._reply({"value": base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()})
+                else:
+                    self._reply({"value": {"capabilities": {"appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                if self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                lib = root / "wda_lib.sh"
+                log = root / "flow.jsonl"
+                (root / "device_a11y.py").write_text(
+                    (SCRIPT.parent / "device_a11y.py").read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+                lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                               encoding="utf-8")
+                tree = root / "auto-0001.xml"
+                tree.write_text(captured, encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": f"http://127.0.0.1:{server.server_port}",
+                       "CLONE_FLOW_LOG": str(log), "CLONE_TAP_SETTLE_TRIES": "1"}
+                r = subprocess.run(
+                    ["bash", "-c",
+                     f"source '{lib}'; cmd_step session-1 50 120 '{tree}' '{root}' auto-0002"],
+                    capture_output=True, text=True, env=env,
+                )
+                raw = log.read_text(encoding="utf-8") if log.exists() else ""
+                events = [json.loads(line) for line in raw.splitlines() if line.strip()]
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+        return r, events
+
+    def test_a_ticking_counter_does_not_reject_the_tap(self):
+        live = self.APP.replace("LIKES", "\uc88b\uc544\uc694 227\uba85")
+        r, events = self._step(live)
+        self.assertEqual(r.returncode, 0, msg=r.stderr + r.stdout)
+        self.assertTrue([e for e in events if e["type"] == "tap"],
+                        msg="the tap must happen despite the label churn")
+
+    def test_a_screen_that_really_moved_is_still_refused_and_is_retryable(self):
+        live = self.APP.replace(
+            '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" label="LIKES" name="LIKES"'
+            ' enabled="true" visible="true" x="0" y="300" width="200" height="20"/>', "")
+        r, events = self._step(live)
+        self.assertEqual(r.returncode, 2,
+                         msg=f"guard rejections must be retryable (2), got {r.returncode}: {r.stderr}")
+        self.assertIn("screen changed since", r.stderr)
+        self.assertEqual([e for e in events if e["type"] == "tap"], [],
+                         msg="a refused tap must never be logged as having happened")
+
+
+class TestSwipeChurnIsNotAScroll(unittest.TestCase):
+    """`changed` on a swipe must mean the screen moved, not that text changed.
+
+    device_flow.py demands a durable destination capture for every changed
+    action, so a swipe that reports `changed=true` because a like count ticked
+    leaves a coverage gap that can never be closed. Measured on Threads
+    2026-08-22: counters move on their own every few seconds.
+    """
+
+    BEFORE = ('<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+              '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+              ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+              '<XCUIElementTypeButton type="XCUIElementTypeButton" label="\uac00" name="\uac00"'
+              ' enabled="true" visible="true" x="0" y="100" width="100" height="40"/>'
+              '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" label="LIKES" name="LIKES"'
+              ' enabled="true" visible="true" x="0" y="300" width="200" height="20"/>'
+              '</XCUIElementTypeApplication></AppiumAUT>')
+
+    def _swipe(self, after: str) -> dict:
+        before = self.BEFORE.replace("LIKES", "\uc88b\uc544\uc694 226\uba85")
+        state = {"swiped": False}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    self._reply({"value": after if state["swiped"] else before})
+                else:
+                    self._reply({"value": {"capabilities": {"appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                if self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                elif self.path.endswith("/actions"):
+                    state["swiped"] = True
+                    self._reply({"value": {}})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                lib = root / "wda_lib.sh"
+                log = root / "flow.jsonl"
+                (root / "device_a11y.py").write_text(
+                    (SCRIPT.parent / "device_a11y.py").read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+                lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                               encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": f"http://127.0.0.1:{server.server_port}",
+                       "CLONE_FLOW_LOG": str(log), "CLONE_SWIPE_SETTLE_TRIES": "3"}
+                subprocess.run(
+                    ["bash", "-c", f"source '{lib}'; cmd_swipe session-1 180 700 180 200"],
+                    capture_output=True, text=True, env=env,
+                )
+                return json.loads(log.read_text(encoding="utf-8").strip())
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+    def test_a_ticking_counter_is_not_a_changed_swipe(self):
+        after = self.BEFORE.replace("LIKES", "\uc88b\uc544\uc694 227\uba85")
+        self.assertEqual(self._swipe(after)["changed"], "false",
+                         msg="text changing in place is churn, not a scroll")
+
+    def test_a_scroll_under_unchanged_labels_is_still_a_changed_swipe(self):
+        # `sig` cannot see this one: the label set is identical, only y moved.
+        after = (self.BEFORE.replace("LIKES", "\uc88b\uc544\uc694 226\uba85")
+                 .replace('y="100"', 'y="40"').replace('y="300"', 'y="240"'))
+        self.assertEqual(self._swipe(after)["changed"], "true")
+
+
+class TestExploreScrollsForMoreCandidates(unittest.TestCase):
+    """A drained capture is not a drained app.
+
+    Measured on Threads 2026-08-22: exploration ended after the first screenful
+    and reported 34 of 235 targets, because everything below the fold was never
+    on a capture. `next-tap` already distinguished "nothing on this capture" from
+    "frontier empty"; explore treated both as done.
+    """
+
+    def _app(self, *buttons: tuple[str, int]) -> str:
+        rows = "".join(
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="%s" name="%s"'
+            ' enabled="true" visible="true" x="0" y="%d" width="100" height="40"/>'
+            % (label, label, y) for label, y in buttons)
+        return ('<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+                '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App"'
+                ' label="App" enabled="true" visible="true" x="0" y="0" width="375"'
+                ' height="812">' + rows + '</XCUIElementTypeApplication></AppiumAUT>')
+
+    def test_a_candidate_below_the_fold_is_reached_by_scrolling(self):
+        top = self._app(("\uac00", 100))
+        # After the scroll the same row moved up and a second one came into view.
+        bottom = self._app(("\uac00", 40), ("\ub098", 300))
+        state = {"scrolled": False}
+        bodies: list[str] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    self._reply({"value": bottom if state["scrolled"] else top})
+                elif self.path.endswith("/screenshot"):
+                    self._reply({"value": base64.b64encode(b"png").decode()})
+                else:
+                    self._reply({"value": {"capabilities": {
+                        "appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                if self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                elif self.path.endswith("/actions"):
+                    body = self.rfile.read(int(self.headers["Content-Length"])).decode()
+                    bodies.append(body)
+                    if '"duration":600' in body.replace(" ", ""):
+                        state["scrolled"] = True
+                    self._reply({"value": {}})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                state_dir = root / "state"
+                state_dir.mkdir()
+                flow = root / "flow.jsonl"
+                appium_url = f"http://127.0.0.1:{server.server_port}"
+                (state_dir / "wda-session.json").write_text(json.dumps({
+                    "sid": "session-1", "udid": "00008101-AAA",
+                    "bundleId": "com.example.target", "appiumUrl": appium_url,
+                }), encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": appium_url,
+                       "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_SWIPE_SETTLE_TRIES": "2",
+                       "CLONE_EXPLORE_MAX_SCROLL": "2"}
+                r = subprocess.run(
+                    ["bash", str(SCRIPT), "explore", "session-1", str(root / "raw"), "6"],
+                    capture_output=True, text=True, env=env,
+                )
+                events = [json.loads(line) for line in
+                          flow.read_text(encoding="utf-8").splitlines() if line.strip()]
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        tapped = [e.get("label") for e in events if e["type"] == "tap"]
+        self.assertIn("\ub098", tapped,
+                      msg=f"the row revealed by scrolling was never tapped: {r.stdout}\n{r.stderr}")
+        self.assertIn("scrolled for more candidates", r.stdout)
+        swipes = [e for e in events if e["type"] == "swipe"]
+        self.assertTrue(swipes and swipes[0]["changed"] == "true",
+                        msg="a scroll that moved the screen must record changed=true")
+
+
+class TestLeavingTheAppIsRecoverable(unittest.TestCase):
+    """A tap that opens another app must not poison the flow graph.
+
+    Measured on Threads 2026-08-22: tapping "Instagram으로 전환" switched apps,
+    Appium's /source then described Instagram, and that screen was written as a
+    state of com.burbn.barcelona — it would have been measured, spec'd and
+    mapped to a SwiftUI view as a Threads screen. Exploration then ended.
+    """
+
+    TARGET = "com.example.target"
+    OTHER = "com.example.other"
+
+    def _tree(self, label: str) -> str:
+        return ('<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+                '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App"'
+                ' label="App" enabled="true" visible="true" x="0" y="0" width="375"'
+                ' height="812">'
+                '<XCUIElementTypeButton type="XCUIElementTypeButton" label="%s" name="%s"'
+                ' enabled="true" visible="true" x="0" y="100" width="100" height="40"/>'
+                '</XCUIElementTypeApplication></AppiumAUT>' % (label, label))
+
+    def test_the_foreign_screen_is_not_a_state_and_the_walk_continues(self):
+        target, other = self.TARGET, self.OTHER
+        home, away = self._tree("\uc804\ud658"), self._tree("\ub2e4\ub978\uc571")
+        state = {"app": target, "tapped": 0}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    self._reply({"value": away if state["app"] == other else home})
+                elif self.path.endswith("/screenshot"):
+                    self._reply({"value": base64.b64encode(b"png").decode()})
+                else:
+                    self._reply({"value": {"capabilities": {"appium:bundleId": target}}})
+
+            def do_POST(self):
+                if self.path.endswith("/execute/sync"):
+                    body = self.rfile.read(int(self.headers["Content-Length"])).decode()
+                    if "activateApp" in body:
+                        state["app"] = target
+                        self._reply({"value": {}})
+                    else:
+                        self._reply({"value": {"bundleId": state["app"]}})
+                elif self.path.endswith("/actions"):
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                    state["tapped"] += 1
+                    if state["tapped"] == 1:
+                        state["app"] = other      # the first tap leaves the app
+                    self._reply({"value": {}})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                state_dir = root / "state"
+                state_dir.mkdir()
+                flow = root / "flow.jsonl"
+                appium_url = f"http://127.0.0.1:{server.server_port}"
+                (state_dir / "wda-session.json").write_text(json.dumps({
+                    "sid": "session-1", "udid": "00008101-AAA",
+                    "bundleId": target, "appiumUrl": appium_url,
+                }), encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": appium_url,
+                       "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_SWIPE_SETTLE_TRIES": "1",
+                       "CLONE_REACTIVATE_TRIES": "3", "CLONE_EXPLORE_MAX_SCROLL": "0"}
+                r = subprocess.run(
+                    ["bash", str(SCRIPT), "explore", "session-1", str(root / "raw"), "4"],
+                    capture_output=True, text=True, env=env,
+                )
+                events = [json.loads(line) for line in
+                          flow.read_text(encoding="utf-8").splitlines() if line.strip()]
+                captures = sorted(q.name for q in (root / "raw").glob("*.xml"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(r.returncode, 0, msg=r.stderr + r.stdout)
+        exits = [e for e in events if e.get("left_app")]
+        self.assertTrue(exits, msg="leaving the app must be recorded as a transition")
+        self.assertEqual(exits[0]["left_app"], other)
+        self.assertEqual(exits[0]["evidence"], "foreign-app")
+        # The destination is another app, not a state of this one. Recording the
+        # foreign statekey here would make observed_edges route toward a state
+        # that has no screen event, and capture_gaps demand an arrival capture
+        # that is deliberately never written — a gap nothing can close.
+        self.assertEqual(exits[0]["changed"], "false")
+        self.assertEqual(exits[0]["to_statekey"], "?")
+        self.assertEqual(exits[0]["to"], "?")
+        # No screen event may point at a capture taken while the other app was up.
+        self.assertNotIn("left the app", "".join(
+            str(e) for e in events if e["type"] == "screen"))
+        self.assertIn("re-activated", r.stderr)
+        self.assertTrue(captures, msg="the walk must resume with a fresh capture")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTunnelStatusGate(unittest.TestCase):
+    """Can this run reach the device without asking anyone for a password?
+
+    The tunnel is created several minutes into a run, at `doctor`, which is a
+    bad place to discover that nobody can authenticate. This answers it up
+    front — and refuses to answer when it cannot, because a gate that passes on
+    a mismatch is worse than no gate.
+    """
+
+    def status(self, profile: dict | None, udid: str, **env) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "device-profile.json"
+            if profile is not None:
+                path.write_text(json.dumps(profile), encoding="utf-8")
+            return subprocess.run(
+                ["bash", str(SCRIPT), "tunnel-status", udid],
+                capture_output=True, text=True,
+                env={**os.environ, "CLONE_DEVICE_PROFILE_FILE": str(path), **env})
+
+    def test_no_profile_refuses_instead_of_passing(self):
+        r = self.status(None, "00008101-AAA")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("no device profile", r.stderr)
+
+    def test_a_profile_for_another_device_refuses_instead_of_passing(self):
+        # Measured 2026-08-23: handed the CoreDevice identifier while the
+        # profile records the hardware one, this answered OK for a device on
+        # iOS 26 that very much needed a tunnel.
+        r = self.status({"udid": "00008101-AAA", "osVersion": "26.6"}, "74859CB7-BBB")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("describes '00008101-AAA'", r.stderr)
+
+    def test_an_older_device_needs_no_tunnel(self):
+        r = self.status({"udid": "00008101-AAA", "osVersion": "17.5"}, "00008101-AAA")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("does not need", r.stdout)
+
+    def test_a_registered_tunnel_is_ready(self):
+        r = self.status({"udid": "00008101-AAA", "osVersion": "26.6"}, "00008101-AAA",
+                        CLONE_TUNNEL_READY="1")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("ready", r.stdout)
+
+    def test_a_missing_tunnel_is_reported_as_work_to_do(self):
+        r = self.status({"udid": "00008101-AAA", "osVersion": "26.6"}, "00008101-AAA",
+                        CLONE_TUNNEL_READY="0")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("needs a RemoteXPC tunnel", r.stderr)
+
+
+class TestExploreTypesIntoTextFields(unittest.TestCase):
+    """A text field on screen is a door the tap walk cannot open.
+
+    Exploration never typed, so every search screen was a dead end — the
+    results behind it exist only past the keyboard. The probe is generic and
+    never logged; the flow records which field and where the screen went.
+    """
+
+    def _run(self):
+        # Screen A: one text field, no safe taps. After typing, the device
+        # shows screen B (a results list) — a different statekey.
+        tree_a = (
+            '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+            '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+            ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+            '<XCUIElementTypeTextField type="XCUIElementTypeTextField" name="search-field"'
+            ' label="" value="검색" enabled="true" visible="true" x="20" y="100" width="300" height="40"/>'
+            '</XCUIElementTypeApplication></AppiumAUT>'
+        )
+        tree_b = (
+            '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+            '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+            ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+            '<XCUIElementTypeNavigationBar type="XCUIElementTypeNavigationBar" name="결과" label="결과"'
+            ' enabled="true" visible="true" x="0" y="44" width="375" height="44"/>'
+            '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" label="결과 1" name="결과 1"'
+            ' enabled="true" visible="true" x="0" y="120" width="375" height="40"/>'
+            '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" label="결과 2" name="결과 2"'
+            ' enabled="true" visible="true" x="0" y="170" width="375" height="40"/>'
+            '</XCUIElementTypeApplication></AppiumAUT>'
+        )
+        state = {"typed": False, "bodies": []}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    self._reply({"value": tree_b if state["typed"] else tree_a})
+                elif self.path.endswith("/screenshot"):
+                    self._reply({"value": base64.b64encode(b"png").decode()})
+                else:
+                    self._reply({"value": {"capabilities": {
+                        "appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length).decode() if length else ""
+                state["bodies"].append((self.path, body))
+                if self.path.endswith("/execute/sync"):
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                elif self.path.endswith("/element"):
+                    self._reply({"value": {"element-6066-11e4-a52e-4f735466cecf": "el-1"}})
+                elif "/element/el-1/value" in self.path:
+                    state["typed"] = True
+                    self._reply({"value": None})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            outdir, flow, state_dir = root / "raw", root / "flow.jsonl", root / "state"
+            state_dir.mkdir()
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                appium_url = f"http://127.0.0.1:{server.server_port}"
+                (state_dir / "wda-session.json").write_text(json.dumps({
+                    "sid": "session-1", "udid": "00008101-AAA",
+                    "bundleId": "com.example.target", "appiumUrl": appium_url,
+                }), encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": appium_url,
+                       "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_EXPLORE_MAX_SCROLL": "0",
+                       "CLONE_EXPLORE_MAX_RESTART": "0", "CLONE_TYPE_SETTLE": "0",
+                       "CLONE_EXPLORE_PROBE_TEXT": "secret-probe"}
+                r = subprocess.run(["bash", str(SCRIPT), "explore", "session-1", str(outdir), "5"],
+                                   capture_output=True, text=True, env=env)
+                events = [json.loads(line) for line in flow.read_text(encoding="utf-8").splitlines()]
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+        return r, events, state
+
+    def test_a_text_field_is_typed_into_and_the_result_screen_is_captured(self):
+        r, events, state = self._run()
+        typed = [e for e in events if e.get("type") == "type"]
+        self.assertEqual(len(typed), 1, msg=r.stdout + r.stderr)
+        self.assertEqual(typed[0]["field"], "search-field")
+        self.assertEqual(typed[0]["changed"], "true")
+        self.assertNotEqual(typed[0]["from_statekey"], typed[0]["to_statekey"])
+        # The results screen is real evidence: a screen event exists for it.
+        self.assertTrue(any(e.get("type") == "screen" and e.get("statekey") == typed[0]["to_statekey"]
+                            for e in events))
+
+    def test_the_probe_text_is_never_written_to_the_log(self):
+        r, events, state = self._run()
+        self.assertNotIn("secret-probe", json.dumps(events, ensure_ascii=False))
+        self.assertNotIn("secret-probe", r.stdout + r.stderr)
+
+    def test_the_same_field_is_not_typed_into_twice(self):
+        r, events, state = self._run()
+        value_posts = [b for p, b in state["bodies"] if "/value" in p]
+        self.assertEqual(len(value_posts), 1)
+
+
+class TestExploreRestartsWhenBoxedIn(unittest.TestCase):
+    """A screen with nothing left AND no observed route onward is not the end.
+
+    Routing only knows transitions it has observed, so from a screen deep in
+    the app there was no known way back to the screens still holding
+    candidates — the walk ended there (2026-08-23: 422 of 522 targets
+    untouched, and a reproduction whose buttons mostly did nothing). A
+    relaunch reopens the map.
+    """
+
+    def _run(self, max_restart: str):
+        # Home has one button leading to Detail. Detail has nothing safe to tap
+        # and no observed way back. Home still has an untouched button "나"
+        # only visible after the first visit (content churn).
+        def tree(*buttons):
+            rows = "".join(
+                f'<XCUIElementTypeButton type="XCUIElementTypeButton" label="{b}" name="{b}"'
+                f' enabled="true" visible="true" x="0" y="{100 + 60 * i}" width="100" height="40"/>'
+                for i, b in enumerate(buttons))
+            return ('<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+                    '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App"'
+                    ' label="App" enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+                    + rows + '</XCUIElementTypeApplication></AppiumAUT>')
+        home, detail = tree("가", "나"), tree("상세")
+        state = {"screen": "home", "terminated": 0}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload: dict):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    self._reply({"value": home if state["screen"] == "home" else detail})
+                elif self.path.endswith("/screenshot"):
+                    self._reply({"value": base64.b64encode(b"png").decode()})
+                else:
+                    self._reply({"value": {"capabilities": {"appium:bundleId": "com.example.target"}}})
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length).decode() if length else ""
+                if self.path.endswith("/execute/sync"):
+                    if "terminateApp" in body:
+                        state["terminated"] += 1
+                        state["screen"] = "home"
+                    self._reply({"value": {"bundleId": "com.example.target"}})
+                elif self.path.endswith("/actions"):
+                    # Any tap on Home goes to Detail; taps on Detail do nothing.
+                    if state["screen"] == "home":
+                        state["screen"] = "detail"
+                    self._reply({"value": {}})
+                else:
+                    self._reply({"value": {}})
+
+            def log_message(self, *_args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            outdir, flow, state_dir = root / "raw", root / "flow.jsonl", root / "state"
+            state_dir.mkdir()
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                appium_url = f"http://127.0.0.1:{server.server_port}"
+                (state_dir / "wda-session.json").write_text(json.dumps({
+                    "sid": "session-1", "udid": "00008101-AAA",
+                    "bundleId": "com.example.target", "appiumUrl": appium_url,
+                }), encoding="utf-8")
+                env = {**os.environ, "APPIUM_URL": appium_url,
+                       "CLONE_STATE_DIR": str(state_dir), "CLONE_FLOW_LOG": str(flow),
+                       "CLONE_TAP_SETTLE_TRIES": "1", "CLONE_EXPLORE_MAX_SCROLL": "0",
+                       "CLONE_EXPLORE_MAX_RESTART": max_restart, "CLONE_RESTART_SETTLE": "0",
+                       "CLONE_REACTIVATE_TRIES": "1"}
+                r = subprocess.run(["bash", str(SCRIPT), "explore", "session-1", str(outdir), "12"],
+                                   capture_output=True, text=True, env=env)
+                events = [json.loads(line) for line in flow.read_text(encoding="utf-8").splitlines()]
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+        return r, events, state
+
+    def test_boxed_in_exploration_relaunches_and_keeps_going(self):
+        r, events, state = self._run(max_restart="3")
+        self.assertGreaterEqual(state["terminated"], 1, msg=r.stdout + r.stderr)
+        self.assertIn("restarting the app", r.stdout)
+        tapped = {e.get("label") for e in events if e.get("type") == "tap"}
+        # Both Home buttons were reached — the second only after a relaunch.
+        self.assertTrue({"가", "나"} <= tapped, msg=str(tapped))
+        self.assertIn("coverage complete", r.stdout)
+
+    def test_restarts_are_bounded(self):
+        r, events, state = self._run(max_restart="0")
+        self.assertEqual(state["terminated"], 0)
+        self.assertNotIn("restarting the app", r.stdout)

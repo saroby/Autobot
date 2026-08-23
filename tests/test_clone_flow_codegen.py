@@ -68,6 +68,50 @@ class TestManifest(CodegenCase):
         self.assertTrue(all(value.endswith("View") for value in first["views"].values()))
 
 
+class TestProducerFieldNames(CodegenCase):
+    """The router must key on the field names `device_wda.sh` actually writes.
+
+    flow v2 emits `statekey`/`from_statekey`/`to_statekey`. Reading only the
+    underscored aliases silently falls back to the coarse `node`/`from`/`to`,
+    which collapses two interaction states of one screen (a focused search field
+    and an unfocused one) into a single view — with no error anywhere. The repo
+    already shipped this exact class of drift once (lessons, 2026-08-16).
+    """
+
+    def test_manifest_keys_on_the_state_key_not_the_coarse_node(self):
+        self.write_flow([
+            {"type": "screen", "node": "n1", "statekey": "home-idle", "name": "00-home"},
+            {"type": "screen", "node": "n1", "statekey": "home-search", "name": "01-search"},
+        ])
+        result = self.run_codegen("manifest", str(self.flow), str(self.manifest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["initial_state"], "home-idle")
+        self.assertEqual(sorted(manifest["views"]), ["home-idle", "home-search"])
+
+    def test_transitions_use_the_state_key_endpoints(self):
+        self.write_flow([
+            {"type": "screen", "node": "n1", "statekey": "home-idle", "name": "00-home"},
+            {"type": "screen", "node": "n1", "statekey": "home-search", "name": "01-search"},
+            {"type": "tap", "from": "n1", "to": "n1",
+             "from_statekey": "home-idle", "to_statekey": "home-search",
+             "label": "검색", "changed": "true"},
+        ])
+        self.manifest.write_text(json.dumps({
+            "version": 1, "initial_state": "home-idle",
+            "views": {"home-idle": "HomeView", "home-search": "SearchView"},
+        }), encoding="utf-8")
+        result = self.run_codegen(
+            "generate", str(self.flow), str(self.manifest), str(self.output)
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        swift = self.output.read_text(encoding="utf-8")
+        self.assertIn('"home-idle": [', swift)
+        self.assertIn('"검색": "home-search",', swift)
+        self.assertNotIn('"n1"', swift)
+        self.assertIn("SearchView(onAction: { router.send(action: $0) })", swift)
+
+
 class TestSwiftGeneration(CodegenCase):
     def complete_manifest(self, views: dict[str, str], initial_state: str = "home") -> None:
         self.manifest.write_text(json.dumps({
@@ -185,3 +229,66 @@ struct DetailView: View {
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBackActions(unittest.TestCase):
+    """A back button lands wherever you came from.
+
+    Measured 2026-08-23: one screen's `돌아가기` was observed going to three
+    different places, and refusing to model that blocked the whole pipeline.
+    A fixed state->action->state table cannot say it; a history stack can.
+    """
+
+    def flow(self, edges: list[tuple[str, str, str]]) -> list[dict]:
+        events: list[dict] = []
+        seen: set[str] = set()
+        for source, action, destination in edges:
+            for state in (source, destination):
+                if state not in seen:
+                    seen.add(state)
+                    events.append({"type": "screen", "statekey": state, "name": state})
+            events.append({"type": "tap", "from_statekey": source,
+                           "to_statekey": destination, "label": action,
+                           "changed": "true"})
+        return events
+
+    def transitions(self, edges):
+        events = self.flow(edges)
+        return codegen.observed_transitions(events, set(codegen.captured_states(events)))
+
+    def test_several_destinations_that_are_all_places_you_came_from_is_a_pop(self):
+        found = self.transitions([
+            ("home", "열기", "detail"),
+            ("search", "열기", "detail"),
+            ("detail", "돌아가기", "home"),
+            ("detail", "돌아가기", "search"),
+        ])
+        self.assertIn(("detail", "돌아가기", codegen.POP), found)
+
+    def test_a_destination_you_never_came_from_is_still_a_contradiction(self):
+        with self.assertRaises(codegen.FlowCodegenError) as caught:
+            self.transitions([
+                ("home", "열기", "detail"),
+                ("detail", "저장", "saved"),
+                ("detail", "저장", "settings"),
+            ])
+        self.assertIn("ambiguous transition", str(caught.exception))
+
+    def test_a_single_destination_is_left_alone(self):
+        found = self.transitions([("home", "열기", "detail")])
+        self.assertEqual(found, [("home", "열기", "detail")])
+
+    def test_the_router_pops_its_history(self):
+        events = self.flow([
+            ("home", "열기", "detail"),
+            ("search", "열기", "detail"),
+            ("detail", "돌아가기", "home"),
+            ("detail", "돌아가기", "search"),
+        ])
+        manifest = {"initial_state": "home",
+                    "views": {state: f"V{index}" for index, state
+                              in enumerate(codegen.captured_states(events))}}
+        swift = codegen.generate_swift(events, manifest)
+        self.assertIn("private var history: [String] = []", swift)
+        self.assertIn("history.popLast()", swift)
+        self.assertIn("history.append(state)", swift)

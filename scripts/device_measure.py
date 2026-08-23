@@ -227,12 +227,19 @@ def uncovered_regions(png: PNG | None, measured: list[dict], root_frame: dict,
     # every pixel and say nothing about content — counting them would mark the
     # whole screen "covered" and blind the scan.
     screen_area = root_frame["width"] * root_frame["height"]
+    # Only LEAVES account for pixels. A container covers its children's area
+    # without drawing anything there, so counting containers marked the whole
+    # feed "covered" and the scan reported nothing — while five post avatars,
+    # which Threads exposes to no accessibility element at all, were plainly
+    # missing from the reproduction. Measured 2026-08-23.
+    parents = {m.get("parent") for m in measured}
     frames_px = [
         (m["frame"]["x"] * scale, m["frame"]["y"] * scale,
          (m["frame"]["x"] + m["frame"]["width"]) * scale,
          (m["frame"]["y"] + m["frame"]["height"]) * scale)
-        for m in measured
-        if m["frame"]["width"] * m["frame"]["height"] < 0.9 * screen_area
+        for index, m in enumerate(measured)
+        if index not in parents
+        and m["frame"]["width"] * m["frame"]["height"] < 0.9 * screen_area
     ]
     block = UNCOVERED_BLOCK_PX
     grid_w = png.width // block

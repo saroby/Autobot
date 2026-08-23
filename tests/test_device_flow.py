@@ -418,6 +418,160 @@ class TestTodo(FlowCase):
         self.assertIn("no such tree", r.stderr)
 
 
+class TestNextTap(FlowCase):
+    """`next-tap` is what lets one explore run cross screens.
+
+    It answers with exactly one tap: an unexplored candidate here, or the first
+    hop of the shortest already-observed route to a screen that still has one.
+    Every coordinate it prints must come from the tree it was handed, because
+    the tap guard only accepts candidates of the capture currently on screen.
+    """
+
+    DETAIL = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
+        '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+        ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+        '<XCUIElementTypeButton type="XCUIElementTypeButton" label="다" name="다" enabled="true"'
+        ' visible="true" x="0" y="300" width="100" height="40"/>'
+        '</XCUIElementTypeApplication></AppiumAUT>'
+    )
+    # Structurally different, not just relabelled: the state key is built from
+    # structure, so a one-word rename would collapse deep into detail.
+    DEEP = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
+        '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+        ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+        '<XCUIElementTypeStaticText type="XCUIElementTypeStaticText" label="깊은 화면"'
+        ' name="깊은 화면" enabled="true" visible="true" x="0" y="40" width="375" height="30"'
+        ' traits="Header"/>'
+        '<XCUIElementTypeButton type="XCUIElementTypeButton" label="라" name="라" enabled="true"'
+        ' visible="true" x="0" y="400" width="100" height="40"/>'
+        '</XCUIElementTypeApplication></AppiumAUT>'
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.detail = self.dir / "02-detail.xml"
+        self.detail.write_text(self.DETAIL, encoding="utf-8")
+        self.deep = self.dir / "03-deep.xml"
+        self.deep.write_text(self.DEEP, encoding="utf-8")
+        self.home_state = DEVICE_FLOW._statekey_of(str(self.tree))
+        self.detail_state = DEVICE_FLOW._statekey_of(str(self.detail))
+        self.deep_state = DEVICE_FLOW._statekey_of(str(self.deep))
+        self.behavior = {record["label"]: record["behavior"]
+                         for tree in (self.tree, self.detail, self.deep)
+                         for record in DEVICE_FLOW.candidate_records_of(str(tree))}
+
+    def tap(self, source, destination, label, x, y, changed="true") -> dict:
+        return {"type": "tap", "from": "n1", "to": "n2",
+                "from_statekey": source, "to_statekey": destination,
+                "behavior": self.behavior[label], "label": label,
+                "x": str(x), "y": str(y), "changed": changed}
+
+    def screen_of(self, state, name, tree) -> dict:
+        return {"type": "screen", "node": name, "sig": "s", "name": name,
+                "statekey": state, "tree": str(tree), "png": ""}
+
+    def test_an_unexplored_candidate_of_this_screen_comes_first(self):
+        self.write([self.screen_of(self.home_state, "01-home", self.tree),
+                    self.tap(self.home_state, self.detail_state, "가", 50, 120),
+                    self.screen_of(self.detail_state, "02-detail", self.detail)])
+        r = self.run_flow("next-tap", str(self.log), str(self.tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("INFO: next-tap 50 220 | 나", r.stdout)
+        self.assertIn("INFO: kind frontier", r.stdout)
+
+    def test_a_drained_screen_routes_to_one_that_is_not(self):
+        self.write([self.screen_of(self.home_state, "01-home", self.tree),
+                    self.tap(self.home_state, self.detail_state, "가", 50, 120),
+                    self.screen_of(self.detail_state, "02-detail", self.detail),
+                    self.tap(self.home_state, self.deep_state, "나", 50, 220),
+                    self.screen_of(self.deep_state, "03-deep", self.deep),
+                    self.tap(self.deep_state, self.home_state, "라", 50, 420)])
+        r = self.run_flow("next-tap", str(self.log), str(self.tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        # Home is drained; 다 on the detail screen is not, so the route's first
+        # hop is 가 — reported at ITS coordinate on the live home capture.
+        self.assertIn("INFO: next-tap 50 120 | 가", r.stdout)
+        self.assertIn(f"INFO: kind route hops=1 target={self.detail_state}", r.stdout)
+
+    def test_a_route_can_be_more_than_one_hop(self):
+        self.write([self.screen_of(self.home_state, "01-home", self.tree),
+                    self.tap(self.home_state, self.detail_state, "가", 50, 120),
+                    self.screen_of(self.detail_state, "02-detail", self.detail),
+                    self.tap(self.home_state, self.home_state, "나", 50, 220, changed="false"),
+                    self.tap(self.detail_state, self.deep_state, "다", 50, 320),
+                    self.screen_of(self.deep_state, "03-deep", self.deep)])
+        r = self.run_flow("next-tap", str(self.log), str(self.tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("INFO: next-tap 50 120 | 가", r.stdout)
+        self.assertIn(f"INFO: kind route hops=2 target={self.deep_state}", r.stdout)
+
+    def test_a_globally_drained_run_says_so_and_offers_no_tap(self):
+        self.write([self.screen_of(self.home_state, "01-home", self.tree),
+                    self.tap(self.home_state, self.detail_state, "가", 50, 120),
+                    self.screen_of(self.detail_state, "02-detail", self.detail),
+                    self.tap(self.home_state, self.home_state, "나", 50, 220, changed="false"),
+                    self.tap(self.detail_state, self.home_state, "다", 50, 320)])
+        r = self.run_flow("next-tap", str(self.log), str(self.tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertNotIn("INFO: next-tap", r.stdout)
+        self.assertIn("frontier empty", r.stdout)
+
+    def test_an_unreachable_frontier_stops_instead_of_guessing_a_tap(self):
+        # The detail screen has unexplored candidates, but nothing observed
+        # leads there from home — inventing a tap would break the tap guard.
+        self.write([self.screen_of(self.home_state, "01-home", self.tree),
+                    self.tap(self.home_state, self.home_state, "가", 50, 120, changed="false"),
+                    self.tap(self.home_state, self.home_state, "나", 50, 220, changed="false"),
+                    self.screen_of(self.detail_state, "02-detail", self.detail)])
+        r = self.run_flow("next-tap", str(self.log), str(self.tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertNotIn("INFO: next-tap", r.stdout)
+        self.assertIn("no observed transition leads there", r.stdout)
+
+    def test_a_drained_capture_of_a_scrolled_screen_is_not_a_finished_run(self):
+        """One capture drained is not the same claim as the app explored.
+
+        A feed keeps its state key across a swipe, so the frontier unions the
+        candidates of every capture of it. Saying "explored everything" while
+        `next` still lists that screen is the false completeness rule 6 forbids.
+        """
+        scrolled = self.dir / "01-home-scrolled.xml"
+        scrolled.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
+            '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+            ' enabled="true" visible="true" x="0" y="0" width="375" height="812">'
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="가" name="가" enabled="true"'
+            ' visible="true" x="0" y="100" width="100" height="40"/>'
+            '<XCUIElementTypeButton type="XCUIElementTypeButton" label="아래쪽" name="아래쪽"'
+            ' enabled="true" visible="true" x="0" y="600" width="100" height="40"/>'
+            '</XCUIElementTypeApplication></AppiumAUT>',
+            encoding="utf-8",
+        )
+        # Same state key, second capture: whatever the tree hash is, both
+        # captures must land on one frontier row for this to be the real case.
+        state = DEVICE_FLOW._statekey_of(str(self.tree))
+        self.assertEqual(state, DEVICE_FLOW._statekey_of(str(scrolled)),
+                         msg="fixture must model one screen captured at two scroll positions")
+        self.write([self.screen_of(state, "01-home", self.tree),
+                    {"type": "screen", "node": "n1", "sig": "s", "name": "01-home-scrolled",
+                     "statekey": state, "tree": str(scrolled), "png": ""},
+                    self.tap(state, state, "가", 50, 120, changed="false"),
+                    self.tap(state, state, "나", 50, 220, changed="false")])
+        r = self.run_flow("next-tap", str(self.log), str(self.tree))
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertNotIn("INFO: next-tap", r.stdout)
+        self.assertNotIn("frontier empty", r.stdout)
+        self.assertIn("different scroll position", r.stdout)
+
+    def test_a_missing_tree_is_refused(self):
+        self.write([self.screen_of(self.home_state, "01-home", self.tree)])
+        r = self.run_flow("next-tap", str(self.log), str(self.dir / "missing.xml"))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no such tree", r.stderr)
+
+
 class TestMap(FlowCase):
     def test_the_map_names_what_was_not_explored(self):
         self.write([self.screen()])
@@ -508,6 +662,49 @@ class TestRefusals(FlowCase):
         r = self.run_flow("stats", str(self.log))
         self.assertEqual(r.returncode, 1)
         self.assertIn("corrupt", r.stderr)
+
+
+class TestAudit(unittest.TestCase):
+    """Every run re-judges what it tapped, with today's guard.
+
+    A hole in the guard is invisible while it is open — the tap just succeeds.
+    Measured 2026-08-22: exploration liked and shared another person's posts on
+    the user's real Threads account across two runs before a hand-written audit
+    of the log found it.
+    """
+
+    def _audit(self, events: list[dict]) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "flow.jsonl"
+            log.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n",
+                           encoding="utf-8")
+            return subprocess.run(["python3", str(SCRIPT), "audit", str(log)],
+                                  capture_output=True, text=True)
+
+    def test_a_real_like_label_is_reported(self):
+        r = self._audit([
+            {"type": "screen", "node": "n1", "statekey": "s1", "name": "01",
+             "tree": "t", "png": "p"},
+            {"type": "tap", "from": "n1", "to": "n1", "from_statekey": "s1",
+             "to_statekey": "s1", "label": "좋아요. 2,732명이 이 게시물을 좋아합니다.",
+             "changed": "false", "at": "2026-08-22T01:30:06.623+00:00"},
+        ])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("social-like", r.stderr)
+        self.assertIn("2026-08-22T01:30:06", r.stderr)
+
+    def test_ordinary_navigation_passes(self):
+        r = self._audit([
+            {"type": "screen", "node": "n1", "statekey": "s1", "name": "01",
+             "tree": "t", "png": "p"},
+            {"type": "tap", "from": "n1", "to": "n2", "from_statekey": "s1",
+             "to_statekey": "s2",
+             "label": "답글 달기. 35명이 이 게시물에 답글을 달았습니다.", "changed": "true"},
+            {"type": "tap", "from": "n2", "to": "n1", "from_statekey": "s2",
+             "to_statekey": "s1", "label": "돌아가기", "changed": "true"},
+        ])
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("none of the 2 recorded action(s)", r.stdout)
 
 
 if __name__ == "__main__":

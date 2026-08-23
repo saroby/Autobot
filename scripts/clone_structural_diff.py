@@ -45,6 +45,23 @@ def _flatten(data) -> list[dict]:
     return flat
 
 
+def _rendered_label(node: dict) -> str:
+    """The label AXe actually emits.
+
+    `axe describe-ui` writes `AXLabel` (plus `title`/`AXValue`); it never writes
+    a lowercase `label`. Reading only `label` made the label match silently
+    unreachable, so every element fell through to the frame match and anything
+    shifted past the tolerance — a safe-area inset is enough — was reported as
+    MISSING. That inverts Step 6-5: real position drift arrived as the
+    top-priority "element is absent". Measured against a real render 2026-08-22.
+    """
+    for key in ("AXLabel", "label", "title", "AXValue"):
+        value = node.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _center(frame: dict) -> tuple[float, float]:
     return (float(frame.get("x", 0)) + float(frame.get("width", 0)) / 2,
             float(frame.get("y", 0)) + float(frame.get("height", 0)) / 2)
@@ -82,7 +99,7 @@ def diff(measurement: dict, rendered_tree, tolerance: float) -> tuple[list[str],
         label = (element.get("label") or "").strip()
         frame = element["frame"]
         by_label = [i for i in unclaimed
-                    if label and (rendered[i].get("label") or "").strip() == label]
+                    if label and _rendered_label(rendered[i]) == label]
         if by_label:
             best = min(by_label, key=lambda i: _distance(frame, rendered[i]["frame"]))
             claim(best)
@@ -105,8 +122,7 @@ def diff(measurement: dict, rendered_tree, tolerance: float) -> tuple[list[str],
         missing += 1
         lines.append(f"ERROR: missing {element.get('role')} '{label}' @ {_fmt(frame)}")
 
-    extras = sorted({(rendered[i].get("label") or "").strip()
-                     for i in unclaimed} - {""})
+    extras = sorted({_rendered_label(rendered[i]) for i in unclaimed} - {""})
     for label in extras:
         lines.append(f"INFO: extra rendered element '{label}' — not in the spec")
 

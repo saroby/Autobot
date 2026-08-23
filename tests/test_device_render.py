@@ -146,6 +146,9 @@ class RenderMockCase(unittest.TestCase):
             "CLONE_RENDER_CACHE": str(self.cache),
             "CLONE_RENDER_POLL_ATTEMPTS": "6",
             "CLONE_RENDER_POLL_INTERVAL": "0",
+            # There is no real simulator behind "mock-simulator", so the
+            # is-the-app-on-screen check has nothing to ask.
+            "CLONE_RENDER_CAPTURE_ATTEMPTS": "0",
         }
         self.addCleanup(self._directory.cleanup)
 
@@ -173,27 +176,61 @@ class TestRenderCache(RenderMockCase):
         self.assertIn("render cache hit", second.stdout)
         self.assertEqual(len(self.calls("swiftc")), 1)
 
-    def test_source_root_sdk_and_deployment_target_invalidate_cache(self):
+    def test_source_sdk_target_and_root_set_invalidate_cache(self):
         self.assertEqual(self.render("base.png").returncode, 0)
 
         self.source.write_text(
-            "import SwiftUI\nstruct HomeView: View { var body: some View { Text(\"B\") } }\n",
+            "import SwiftUI\nstruct HomeView: View { var body: some View { Text(\"B\") } }\n"
+            "struct AlternateView: View { var body: some View { Text(\"C\") } }\n",
             encoding="utf-8",
         )
         self.assertEqual(self.render("source.png").returncode, 0)
-        self.assertEqual(self.render("root.png", view="AlternateView").returncode, 0)
         self.assertEqual(self.render("sdk.png", MOCK_SDK_PATH="/mock/iPhoneSimulatorNext.sdk").returncode, 0)
         self.assertEqual(self.render("target.png", CLONE_IOS_TARGET="18.0").returncode, 0)
+        self.assertEqual(
+            self.render("roots.png", CLONE_ROOT_VIEWS="HomeView").returncode, 0)
         self.assertEqual(len(self.calls("swiftc")), 5)
+
+    def test_a_second_root_view_reuses_the_same_build(self):
+        # The whole point of the launch-time dispatcher: N screens used to cost
+        # N full compiles of the same Sources/ directory, and any source edit
+        # invalidated every one of them.
+        self.source.write_text(
+            "import SwiftUI\nstruct HomeView: View { var body: some View { Text(\"A\") } }\n"
+            "struct AlternateView: View { var body: some View { Text(\"B\") } }\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(self.render("first.png").returncode, 0)
+        second = self.render("second.png", view="AlternateView")
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertIn("render cache hit", second.stdout)
+        self.assertEqual(len(self.calls("swiftc")), 1)
+        # ...and the launch says which root to show.
+        self.assertTrue(any("simctl launch" in call for call in self.calls("launch")))
 
 
 class TestStableFramePolling(RenderMockCase):
     def test_polling_stops_after_two_consecutive_identical_frames(self):
+        # The first capture is the pre-launch baseline, so "A" here is the home
+        # screen and the poll settles on the two "B" frames after it.
         result = self.render("stable.png", MOCK_FRAME_SEQUENCE="A,B,B,C")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.directory / "stable.png").read_text(encoding="utf-8"), "B")
         self.assertEqual(len(self.calls("screenshot")), 3)
-        self.assertIn("frame stable after 3 captures", result.stdout)
+        self.assertIn("frame stable after 2 captures", result.stdout)
+
+    def test_a_frame_stable_on_the_pre_launch_screen_is_reported_not_filed_silently(self):
+        # Two identical frames that both equal what was on screen before the
+        # launch are how a not-yet-drawn app gets filed as the reproduction.
+        result = self.render("home.png", MOCK_FRAME_SEQUENCE="A,A")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("settled on a frame identical to the pre-launch screen",
+                      result.stderr)
+
+    def test_a_frame_that_differs_from_the_baseline_is_not_warned_about(self):
+        result = self.render("moved.png", MOCK_FRAME_SEQUENCE="HOME,B,B")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("pre-launch screen", result.stderr)
 
     def test_explicit_legacy_settle_takes_one_screenshot(self):
         result = self.render(
@@ -204,7 +241,7 @@ class TestStableFramePolling(RenderMockCase):
 
     def test_unstable_frames_fail_at_the_bound(self):
         result = self.render(
-            "unstable.png", MOCK_FRAME_SEQUENCE="A,B,C,D", CLONE_RENDER_POLL_ATTEMPTS="4"
+            "unstable.png", MOCK_FRAME_SEQUENCE="A,B,C,D,E", CLONE_RENDER_POLL_ATTEMPTS="4"
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("did not produce two identical frames", result.stderr)
@@ -255,15 +292,36 @@ class TestAutomaticSimulatorSelection(RenderMockCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("selected simulator NEW", result.stdout)
 
-    def test_auto_fails_clearly_when_no_marketing_name_matches(self):
+    def test_auto_fails_clearly_when_no_device_type_matches(self):
         result = self.auto_render("missing.png", {
             "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{
                 "name": "iPhone 17 Pro", "udid": "OTHER", "state": "Booted",
+                "deviceTypeIdentifier":
+                    "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
             }],
         })
         self.assertEqual(result.returncode, 1)
-        self.assertIn("no available simulator matching marketingName 'iPhone 12 mini'", result.stderr)
+        self.assertIn("no available simulator of device type 'iPhone 12 mini'", result.stderr)
+        self.assertIn("simctl create clone-probe", result.stderr)
         self.assertEqual(len(self.calls("swiftc")), 0)
+
+    def test_a_custom_named_simulator_of_the_right_type_is_selected(self):
+        """The header tells you to `simctl create clone-probe ...iPhone-12-mini`.
+
+        That names the simulator "clone-probe", so matching on the name could
+        never select what the instructions produce — measured 2026-08-22 against
+        three real iPhone 12 mini simulators, all rejected. Logical size comes
+        from the device type; the name is whoever created it.
+        """
+        result = self.auto_render("named.png", {
+            "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{
+                "name": "Clone-Threads-Probe", "udid": "PROBE", "state": "Shutdown",
+                "deviceTypeIdentifier":
+                    "com.apple.CoreSimulator.SimDeviceType.iPhone-12-mini",
+            }],
+        })
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("selected simulator PROBE", result.stdout)
 
     def test_explicit_simulator_does_not_read_profile_or_list_devices(self):
         missing_profile = self.directory / "missing-profile.json"
@@ -274,3 +332,78 @@ class TestAutomaticSimulatorSelection(RenderMockCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRootDispatch(unittest.TestCase):
+    """One build hosts every root view; the root is chosen at launch.
+
+    Baking the root into the binary meant N screens cost N full compiles of the
+    same Sources/ directory, and every source edit invalidated all of them. The
+    refusals below are what keeps that build honest: it can only host roots it
+    was told about.
+    """
+
+    def sources(self, directory: str) -> str:
+        Path(directory, "Views.swift").write_text(
+            "import SwiftUI\n"
+            "struct HomeView: View { var body: some View { Text(\"home\") } }\n"
+            "struct DetailView: View, Equatable { var body: some View { Text(\"d\") } }\n"
+            "struct RowView: View { let title: String\n"
+            "    var body: some View { Text(title) } }\n",
+            encoding="utf-8")
+        return directory
+
+    def test_a_root_that_is_not_a_view_in_sources_is_named_as_such(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = run(self.sources(d), "NoSuchView", "sim", "/tmp/out.png")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not a View declared", r.stderr)
+        # The message has to list what IS available or the caller is guessing.
+        self.assertIn("HomeView", r.stderr)
+
+    def test_a_multi_protocol_conformance_is_still_selectable(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = run(self.sources(d), "DetailView", "sim", "/tmp/out.png")
+        self.assertNotIn("not a View declared", r.stderr)
+
+    def test_an_explicit_root_set_excludes_everything_else(self):
+        # clone_run.sh passes exactly the views.json mapping, so a helper view
+        # that needs an argument never has to be constructed by the dispatcher.
+        with tempfile.TemporaryDirectory() as d:
+            r = run(self.sources(d), "RowView", "sim", "/tmp/out.png",
+                    env={"CLONE_ROOT_VIEWS": "HomeView DetailView"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not a View declared", r.stderr)
+        self.assertNotIn("RowView", r.stderr.split("found:")[-1])
+
+
+class TestRenderCacheIsBounded(RenderMockCase):
+    """Every entry ships the capture crops, so the cache must not grow forever.
+
+    This repo has a lesson where a full disk surfaced as "Unable to resolve
+    module dependency" and was read as a SwiftUI error. A polish loop — edit a
+    view, re-render all of them, repeat — is exactly the workload that gets
+    there.
+    """
+
+    def test_old_entries_are_pruned_to_the_cap(self):
+        for index in range(4):
+            self.source.write_text(
+                "import SwiftUI\n"
+                f"struct HomeView: View {{ var body: some View {{ Text(\"{index}\") }} }}\n",
+                encoding="utf-8")
+            result = self.render(f"round{index}.png", CLONE_RENDER_CACHE_KEEP="2")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        entries = [path for path in self.cache.iterdir() if path.is_dir()]
+        self.assertLessEqual(len(entries), 2, [p.name for p in entries])
+
+    def test_the_entry_just_built_is_never_the_one_pruned(self):
+        for index in range(3):
+            self.source.write_text(
+                "import SwiftUI\n"
+                f"struct HomeView: View {{ var body: some View {{ Text(\"{index}\") }} }}\n",
+                encoding="utf-8")
+            self.render(f"keep{index}.png", CLONE_RENDER_CACHE_KEEP="1")
+        # The last build must still be a hit, or the cap has made the cache useless.
+        again = self.render("again.png", CLONE_RENDER_CACHE_KEEP="1")
+        self.assertIn("render cache hit", again.stdout)

@@ -1,0 +1,275 @@
+"""clone_run.sh — the two unattended halves of /autobot:clone.
+
+Nothing here touches a phone. What is pinned is the part that decides WHAT to
+do: refusing clearly when the previous half never ran, and the join that turns
+`views.json` + `flow.jsonl` + `screens/*.json` into "render THIS view against
+THAT capture". Get the join wrong and verify silently checks nothing, which
+reads exactly like a clean pass.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "clone_run.sh"
+
+
+class CloneRunCase(unittest.TestCase):
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.dir = Path(self._dir.name)
+        self.root = self.dir / "clone"
+        (self.root / "screens").mkdir(parents=True)
+        (self.root / "raw").mkdir()
+        self.addCleanup(self._dir.cleanup)
+
+    def run_clone(self, *args: str) -> subprocess.CompletedProcess:
+        env = {
+            **os.environ,
+            "CLONE_ROOT": str(self.root),
+            "CLONE_FLOW_LOG": str(self.root / "flow.jsonl"),
+            # `auto` resolves the simulator from this profile; pointing it at a
+            # path that does not exist makes rendering fail before swiftc runs.
+            "CLONE_DEVICE_PROFILE": str(self.dir / "no-profile.json"),
+            # Pin the simulator so the join is exercised without a real one.
+            # Resolution is a property of the RUN, not of a screen, so verify
+            # settles it once up front — see test_no_simulator_fails_once.
+            "CLONE_RENDER_SIMULATOR": "SIM-UDID",
+        }
+        return subprocess.run(["bash", str(SCRIPT), *args],
+                              capture_output=True, text=True, env=env)
+
+    def write_flow(self, events: list[dict]) -> None:
+        (self.root / "flow.jsonl").write_text(
+            "\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n",
+            encoding="utf-8")
+
+    def write_views(self, views: dict[str, str]) -> None:
+        (self.root / "views.json").write_text(
+            json.dumps({"version": 1, "initial_state": next(iter(views)), "views": views}),
+            encoding="utf-8")
+
+    def write_measurement(self, stem: str) -> None:
+        (self.root / "screens" / f"{stem}.json").write_text("{}", encoding="utf-8")
+        (self.root / "raw" / f"{stem}.png").write_bytes(b"png")
+
+    def write_sources(self, *views: str) -> None:
+        sources = self.root / "Sources"
+        sources.mkdir(exist_ok=True)
+        for view in views or ("HomeView",):
+            (sources / f"{view}.swift").write_text(
+                f"struct {view}: View {{ var body: some View {{ EmptyView() }} }}\n",
+                encoding="utf-8")
+
+
+class TestRefusals(CloneRunCase):
+    def test_observe_without_a_target_prints_usage(self):
+        r = self.run_clone("observe")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("Usage: clone_run.sh observe", r.stderr)
+
+    def test_an_unknown_subcommand_prints_usage(self):
+        r = self.run_clone("explore")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("Usage: clone_run.sh", r.stderr)
+
+    def test_verify_before_observe_names_the_command_that_produces_the_input(self):
+        r = self.run_clone("verify")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("clone_run.sh observe", r.stderr)
+
+    def test_verify_before_the_views_are_written_says_so(self):
+        self.write_views({"state-a": "HomeView"})
+        r = self.run_clone("verify")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("has not been written", r.stderr)
+
+    def test_a_view_without_a_measured_capture_is_not_silently_skipped(self):
+        self.write_views({"state-a": "HomeView"})
+        self.write_sources()
+        self.write_flow([{"type": "screen", "node": "n1", "statekey": "state-a",
+                          "name": "01-home", "tree": "t", "png": "p"}])
+        r = self.run_clone("polish")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no screen has both", r.stderr)
+
+
+class TestUnwrittenViews(CloneRunCase):
+    def test_a_view_that_was_never_written_is_named_before_anything_renders(self):
+        """device_render.sh compiles Sources as one unit and the generated
+        router names every mapped type, so one unwritten view fails the build
+        for every screen. Reporting 24 identical compiler errors hides which
+        one is actually missing."""
+        self.write_views({"state-a": "HomeView", "state-b": "DetailView"})
+        self.write_sources("HomeView")
+        self.write_measurement("01-home")
+        self.write_flow([{"type": "screen", "node": "n1", "statekey": "state-a",
+                          "name": "01-home", "tree": "t", "png": "p"}])
+        r = self.run_clone("verify")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("DetailView", r.stderr)
+        self.assertNotIn("HomeView", r.stderr)
+        self.assertNotIn("INFO: verify", r.stdout)
+
+
+class TestSimulatorGate(CloneRunCase):
+    def test_no_simulator_fails_once_not_once_per_screen(self):
+        """A missing simulator is an environment fault, not 20 broken views.
+
+        Measured 2026-08-22: `auto` could not match the iPhone 12 mini, and
+        verify reported it 20 times as "did not render — fix the compiler
+        diagnostics above", naming a cause that was not there.
+        """
+        self.write_views({"state-a": "HomeView", "state-b": "DetailView"})
+        self.write_sources("HomeView", "DetailView")
+        self.write_measurement("01-home")
+        self.write_measurement("02-detail")
+        self.write_flow([
+            {"type": "screen", "node": "n1", "statekey": "state-a", "name": "01-home",
+             "tree": "t", "png": "p"},
+            {"type": "screen", "node": "n2", "statekey": "state-b", "name": "02-detail",
+             "tree": "t", "png": "p"},
+        ])
+        env = {"CLONE_RENDER_SIMULATOR": ""}
+        r = subprocess.run(["bash", str(SCRIPT), "verify"], capture_output=True, text=True,
+                           env={**os.environ, "CLONE_ROOT": str(self.root),
+                                "CLONE_FLOW_LOG": str(self.root / "flow.jsonl"),
+                                "CLONE_DEVICE_PROFILE": str(self.dir / "no-profile.json"),
+                                **env})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("cannot pick a simulator", r.stderr)
+        self.assertNotIn("INFO: verify", r.stdout)
+        self.assertNotIn("compiler diagnostics", r.stderr)
+
+
+class TestJoin(CloneRunCase):
+    def test_each_measured_state_is_verified_against_its_own_view(self):
+        self.write_views({"state-a": "HomeView", "state-b": "DetailView"})
+        self.write_sources("HomeView", "DetailView")
+        self.write_measurement("01-home")
+        self.write_measurement("02-detail")
+        self.write_flow([
+            {"type": "screen", "node": "n1", "statekey": "state-a", "name": "01-home",
+             "tree": "t", "png": "p"},
+            {"type": "screen", "node": "n2", "statekey": "state-b", "name": "02-detail",
+             "tree": "t", "png": "p"},
+        ])
+        r = self.run_clone("polish")
+        self.assertIn("INFO: verify 01-home (HomeView)", r.stdout)
+        self.assertIn("INFO: verify 02-detail (DetailView)", r.stdout)
+        # Rendering cannot succeed here, and a verify that cannot render must
+        # never report a pass — that is the whole point of the exit code.
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("failed verification", r.stderr)
+
+    def test_a_state_without_a_measurement_is_reported_not_skipped(self):
+        """Silently skipping is how "28 of 28 failed" hides three unchecked screens.
+
+        A mapped state with no measurement has nothing to compare a render
+        against, so the loop never sees it — and the summary then counts only
+        what it did check, which reads as full coverage. Measured 2026-08-22:
+        views.json mapped 31 states, verify reported on 28.
+        """
+        self.write_views({"state-a": "HomeView", "state-b": "DetailView"})
+        self.write_sources("HomeView", "DetailView")
+        self.write_measurement("01-home")          # state-b has none
+        self.write_flow([
+            {"type": "screen", "node": "n1", "statekey": "state-a", "name": "01-home",
+             "tree": "t", "png": "p"},
+            {"type": "screen", "node": "n2", "statekey": "state-b", "name": "02-detail",
+             "tree": "t", "png": "p"},
+        ])
+        r = self.run_clone("polish")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("have no measurement", r.stderr)
+        self.assertIn("DetailView", r.stderr)
+        self.assertIn("1 unverifiable", r.stderr)
+
+    def test_the_state_key_wins_over_the_coarse_node(self):
+        """Two interaction states of one node must not collapse into one view."""
+        self.write_views({"state-a": "HomeView", "state-b": "SearchFocusedView"})
+        self.write_sources("HomeView", "SearchFocusedView")
+        self.write_measurement("01-home")
+        self.write_measurement("02-focused")
+        self.write_flow([
+            {"type": "screen", "node": "n1", "statekey": "state-a", "name": "01-home",
+             "tree": "t", "png": "p"},
+            {"type": "screen", "node": "n1", "statekey": "state-b", "name": "02-focused",
+             "tree": "t", "png": "p"},
+        ])
+        r = self.run_clone("polish")
+        self.assertIn("INFO: verify 01-home (HomeView)", r.stdout)
+        self.assertIn("INFO: verify 02-focused (SearchFocusedView)", r.stdout)
+
+
+class TestPhaseOrder(CloneRunCase):
+    """Functional before pixels.
+
+    Polishing a screen the app cannot reach is work spent before knowing
+    whether it counts — and the static checks cannot see the difference: the
+    2026-08-23 run had every element present and every pixel metric computed on
+    screens whose taps went nowhere.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_views({"state-a": "HomeView"})
+        self.write_sources("HomeView")
+        self.write_measurement("01-home")
+        self.write_flow([
+            {"type": "screen", "node": "n1", "statekey": "state-a", "name": "01-home",
+             "tree": "t", "png": "p"},
+        ])
+
+    def test_verify_does_not_reach_the_pixel_pass_when_the_build_fails(self):
+        r = self.run_clone("verify")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("stopping before the pixel pass", r.stderr)
+        self.assertNotIn("INFO: verify 01-home", r.stdout)
+
+    def test_polish_can_still_be_asked_for_directly(self):
+        # The gate is the default order, not a lock: a screen can be worked on
+        # before the whole flow is wired.
+        r = self.run_clone("polish")
+        self.assertNotIn("stopping before the pixel pass", r.stderr)
+        self.assertIn("INFO: verify 01-home (HomeView)", r.stdout)
+
+
+class TestSudoGate(CloneRunCase):
+    """`observe` asks for authorization before it does anything expensive.
+
+    An iOS 18+ device needs a RemoteXPC tunnel and creating it needs root. That
+    happened several minutes in, at `doctor`, so a run that nobody could
+    authenticate burned the whole preamble first.
+    """
+
+    def test_authorization_is_asked_for_before_anything_expensive(self):
+        r = self.run_clone("observe", "Threads")
+        self.assertEqual(r.returncode, 1)
+        # The point of the gate: the password is asked for at the start, not
+        # several minutes in at `doctor`, after the run has spent that time.
+        self.assertIn("starting the RemoteXPC tunnel", r.stderr)
+        self.assertIn("administrator dialog", r.stderr)
+        self.assertNotIn("INFO: explore round", r.stdout)
+
+    def test_a_failure_names_both_ways_to_authorize(self):
+        r = self.run_clone("observe", "Threads")
+        self.assertIn("sudo -v", r.stderr)
+        self.assertIn("tunnel-creation", r.stderr)
+
+    def test_the_gate_can_be_turned_off(self):
+        r = subprocess.run(["bash", str(SCRIPT), "observe", "Threads"],
+                           capture_output=True, text=True,
+                           env={**os.environ, "CLONE_ROOT": str(self.root),
+                                "CLONE_FLOW_LOG": str(self.root / "flow.jsonl"),
+                                "CLONE_REQUIRE_SUDO": "0"})
+        self.assertNotIn("no terminal to ask for a password", r.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

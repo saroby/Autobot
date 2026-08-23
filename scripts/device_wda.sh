@@ -929,8 +929,10 @@ caps = {
     'appium:shouldTerminateApp': False,
     'appium:noReset': True,
     # code 65 is opaque on its own; this puts the real xcodebuild error in the
-    # Appium log. Opt-in because it is very verbose.
-    'appium:showXcodeLog': bool(os.environ.get('CLONE_WDA_DEBUG')),
+    # Appium log. Always on: the log is a file, not the console, and a failed
+    # real-device session is expensive to reproduce — asking for a re-run with
+    # CLONE_WDA_DEBUG=1 throws away the one run that had the answer.
+    'appium:showXcodeLog': True,
 }
 if sys.argv[4]:
     caps.update({
@@ -959,12 +961,28 @@ else:
     if 'automation mode' in msg:
         hint = ' — turn ON Settings > Developer > Enable UI Automation on the device'
     elif 'code 65' in msg:
-        hint = (' — WDA failed to build/sign. Check DEVELOPMENT_TEAM and that the device is'
-                ' unlocked; if both look fine, re-run with CLONE_WDA_DEBUG=1 against an Appium'
-                ' server started with --log-level debug and read the xcodebuild error there.'
-                ' Most common cause: Settings > Developer > Enable UI Automation is OFF.')
+        hint = (' — WDA failed to build/sign or its runner failed to start. Check'
+                ' DEVELOPMENT_TEAM and that the device is unlocked. Most common cause:'
+                ' Settings > Developer > Enable UI Automation is OFF.')
     print('ERROR: WDA session failed: %s%s' % (msg, hint), file=sys.stderr)
 " <<<"$err")"
+  if [[ -z "$sid" && -f "$CLONE_APPIUM_LOG" ]]; then
+    # showXcodeLog is on, so the real diagnostic is already in the log — print it
+    # instead of asking for a re-run that costs another real-device session.
+    # The log survives across attempts, so scope to the last xcodebuild invocation —
+    # otherwise a stale failure gets reported as this run's cause.
+    local xcode_err
+    xcode_err="$(awk '/Beginning test with command/ {buf=""} {buf = buf $0 ORS} END {printf "%s", buf}' \
+                   "$CLONE_APPIUM_LOG" \
+                 | grep -aE 'error:|Testing failed|Failing tests|\*\* (TEST|BUILD) FAILED' \
+                 | tail -12 || true)"
+    if [[ -n "$xcode_err" ]]; then
+      echo "ERROR: xcodebuild diagnostics from $CLONE_APPIUM_LOG:" >&2
+      sed 's/^/ERROR:   /' <<<"$xcode_err" >&2
+    else
+      echo "ERROR: no xcodebuild diagnostic matched in $CLONE_APPIUM_LOG — read it directly" >&2
+    fi
+  fi
   if [[ -z "$sid" ]]; then
     return 1
   fi
@@ -1090,6 +1108,55 @@ print(value.get("bundleId", "") if isinstance(value, dict) else "")
 ' 2>/dev/null
 }
 
+# Bring the target app back to the front. Leaving it is a normal consequence of
+# tapping a link (Threads offers "Instagram으로 전환"), so it must not end a run.
+_reactivate_target() {
+  local sid="$1" expected
+  expected="$(_cached_session_bundle "$sid" || _session_target "$sid" || true)"
+  if [[ -z "$expected" ]]; then
+    echo "ERROR: cannot tell which app to re-activate — stop and inspect the WDA session" >&2
+    return 1
+  fi
+  _curl -X POST "$APPIUM_URL/session/$sid/execute/sync" \
+    -H 'Content-Type: application/json' \
+    -d "$(printf '{"script":"mobile: activateApp","args":[{"bundleId":"%s"}]}' "$expected")" \
+    >/dev/null 2>&1 || true
+  local waited=0
+  while [[ "$waited" -lt "${CLONE_REACTIVATE_TRIES:-10}" ]]; do
+    sleep 0.4
+    waited=$((waited + 1))
+    [[ "$(_active_target "$sid" || true)" == "$expected" ]] && {
+      echo "INFO: re-activated $expected after leaving the app" >&2
+      return 0
+    }
+  done
+  echo "ERROR: could not bring $expected back to the foreground" >&2
+  return 1
+}
+
+# Put the app back at its launch screen.
+#
+# Exploration walks forward and has no way back: `next-tap` routes only through
+# transitions it has already OBSERVED, so from a screen deep in Settings there is
+# no known route to the 37 screens that still hold candidates. Measured
+# 2026-08-23 — the run stopped there with 422 of 522 targets untouched, and the
+# reproduction inherited that: most of its buttons did nothing because nothing
+# was ever seen to happen. Relaunching costs one app start and reopens the map.
+_restart_target() {
+  local sid="$1" expected
+  expected="$(_cached_session_bundle "$sid" || _session_target "$sid" || true)"
+  if [[ -z "$expected" ]]; then
+    echo "ERROR: cannot tell which app to restart — stop and inspect the WDA session" >&2
+    return 1
+  fi
+  _curl -X POST "$APPIUM_URL/session/$sid/execute/sync" \
+    -H 'Content-Type: application/json' \
+    -d "$(printf '{"script":"mobile: terminateApp","args":[{"bundleId":"%s"}]}' "$expected")" \
+    >/dev/null 2>&1 || true
+  sleep "${CLONE_RESTART_SETTLE:-1}"
+  _reactivate_target "$sid"
+}
+
 _assert_target() {
   local sid="$1" expected actual
   expected="$(_cached_session_bundle "$sid" || true)"
@@ -1115,21 +1182,38 @@ import json, sys
 open(sys.argv[1], 'w', encoding='utf-8').write(json.load(sys.stdin)['value'])" "$out" 2>/dev/null
 }
 
-# Screen signature of what is on the device RIGHT NOW.
-_live_sig() {
-  local sid="$1" tmp out=""
-  tmp="$(mktemp -t device_wda)"
-  if _live_dump "$sid" "$tmp"; then
-    out="$(python3 "$_HERE/device_a11y.py" sig "$tmp" | sed -n 's/^INFO: sig //p')"
-  fi
-  rm -f "$tmp"
-  [[ -n "$out" ]] || return 1
-  printf '%s' "$out"
-}
-
 _key_of() { python3 "$_HERE/device_a11y.py" nodekey "$1" | sed -n 's/^INFO: nodekey //p'; }
 _state_of() { python3 "$_HERE/device_a11y.py" statekey "$1" | sed -n 's/^INFO: statekey //p'; }
 _sig_of() { python3 "$_HERE/device_a11y.py" sig "$1" | sed -n 's/^INFO: sig //p'; }
+_identity_of() { python3 "$_HERE/device_a11y.py" identity "$1"; }
+
+# Did anything actually MOVE between two captures? A scroll shifts the elements
+# that survive it; a like counter ticking up changes text in place. Only the
+# former is a screen transition worth demanding arrival evidence for.
+# Exit 0 moved, 1 did not move, 2 could not tell — the caller must not fold 2
+# into 1, or an unreadable tree silently becomes "the swipe did nothing".
+_elements_moved() {
+  python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import device_a11y
+    def by_label(path):
+        out = {}
+        for e in device_a11y.load(path):
+            if e['label'] and e['frame']['width'] > 0:
+                out.setdefault(e['label'], []).append(round(e['frame']['y']))
+        return out
+    before, after = by_label(sys.argv[2]), by_label(sys.argv[3])
+except Exception as exc:
+    print(f'cannot compare captures: {exc}', file=sys.stderr)
+    sys.exit(2)
+shared = set(before) & set(after)
+moved = [k for k in shared if sorted(before[k]) != sorted(after[k])]
+# No shared labels at all means the screen was replaced outright, not scrolled.
+sys.exit(0 if moved or not shared else 1)
+" "$_HERE" "$1" "$2"
+}
 
 # One line per event in a FIXED location, so `device_flow.py` can read the run
 # back — for the flow map, for the coverage report, and to resume exploration
@@ -1155,24 +1239,43 @@ with open(path, 'a', encoding='utf-8') as fh:
 " "$@"
 }
 
+# Guard rejections return 2, not 1: nothing has been tapped yet at that point, so
+# the caller may re-capture and retry. Everything after the tap returns 1, which
+# is fatal — retrying a tap that already landed double-taps a real phone.
 _prepare_tap() {
-  local sid="$1" x="$2" y="$3" tree="$4" live candidate_output
+  local sid="$1" x="$2" y="$3" tree="$4" live_tree live_state candidate_output
   _assert_target "$sid" || return 1
-  # (1) Provenance: the point must be a target this tree offered.
-  python3 "$_HERE/device_a11y.py" verify "$tree" "$x" "$y" || return 1
-  # (2) Freshness: the device must still be showing that exact candidate tree.
-  _TAP_PLANNED="$(_sig_of "$tree" || true)"
-  if ! live="$(_live_sig "$sid")"; then
+  # (1) Freshness: read what is on the device RIGHT NOW, once, and reuse it.
+  live_tree="$(mktemp -t device_wda)"
+  if ! _live_dump "$sid" "$live_tree"; then
+    rm -f "$live_tree"
     echo "ERROR: cannot read the current screen — session dead or device gone. Stop the loop." >&2
     return 1
   fi
-  if [[ -z "$_TAP_PLANNED" || "$_TAP_PLANNED" != "$live" ]]; then
-    echo "ERROR: screen changed since $(basename "$tree") (planned ${_TAP_PLANNED:-?}, live $live) — do NOT tap stale coordinates. Re-capture with 'screen' and pick from fresh candidates." >&2
-    return 1
-  fi
-  _TAP_FROM_KEY="$(_key_of "$tree" 2>/dev/null || true)"
+  # Identity is `statekey`, NOT `sig`. `sig` hashes the label set, so on any live
+  # feed it changes within seconds without the screen moving at all — measured on
+  # Threads: a like count ticked 226 -> 227 and every candidate was rejected, so
+  # exploration made 0 steps. statekey held across that same churn. It is also
+  # strictly safer than nodekey here: nodekey ignores modal contents, so a sheet
+  # that opened between capture and tap would not register.
   _TAP_FROM_STATE="$(_state_of "$tree" 2>/dev/null || true)"
-  candidate_output="$(python3 "$_HERE/device_a11y.py" candidates "$tree")"
+  live_state="$(_state_of "$live_tree" 2>/dev/null || true)"
+  if [[ -z "$_TAP_FROM_STATE" || "$_TAP_FROM_STATE" != "$live_state" ]]; then
+    rm -f "$live_tree"
+    echo "ERROR: screen changed since $(basename "$tree") (planned ${_TAP_FROM_STATE:-?}, live ${live_state:-?}) — do NOT tap stale coordinates. Re-capture with 'screen' and pick from fresh candidates." >&2
+    return 2
+  fi
+  # (2) Provenance against the LIVE tree, not the capture: the point must still be
+  # a target the screen offers now. This also runs the withheld check against what
+  # is actually on screen, which validating the stale capture did not.
+  if ! python3 "$_HERE/device_a11y.py" verify "$live_tree" "$x" "$y"; then
+    rm -f "$live_tree"
+    return 2
+  fi
+  _TAP_PLANNED="$(_sig_of "$live_tree" || true)"
+  _TAP_FROM_KEY="$(_key_of "$tree" 2>/dev/null || true)"
+  candidate_output="$(python3 "$_HERE/device_a11y.py" candidates "$live_tree")"
+  rm -f "$live_tree"
   _TAP_LABEL="$(awk -v k="INFO: tap $x $y " \
     'index($0, k) == 1 { sub(/^[^|]*\| [^|]*\| /, ""); print; exit }' <<<"$candidate_output")"
   _TAP_BEHAVIOR="$(awk -v k="INFO: candidate-meta $x $y " '
@@ -1200,20 +1303,39 @@ _perform_tap_and_settle() {
 
   # (3) Poll into the caller-owned file. The last successful dump is the final
   # settle source and is reused directly by `step`; there is no post-settle GET.
+  #
+  # Two exits, not one. "The screen changed" ends the poll early; so must "the
+  # screen is the same and has stopped moving". With only the first, a tap that
+  # did nothing ran every poll to the bound — ten WDA dumps, ~20s — and a run
+  # has dozens of those (measured 2026-08-23: p90 26.8s against a 4.5s median,
+  # all no-op taps). Three identical consecutive dumps is the same rule the
+  # swipe settle already uses.
+  local identity prev_sig="" same=0 quiet="${CLONE_TAP_SETTLE_QUIET:-3}"
   while [[ "$i" -lt "$tries" ]]; do
     sleep 0.3
     i=$((i + 1))
     if ! _live_dump "$sid" "$to_tree"; then break; fi
-    _TAP_TO_SIG="$(_sig_of "$to_tree" || true)"
-    if [[ -n "$_TAP_TO_SIG" && "$_TAP_TO_SIG" != "$_TAP_PLANNED" ]]; then
+    # One parse for sig, nodekey and statekey — this loop used to spawn two
+    # interpreters per poll for the same dump.
+    identity="$(_identity_of "$to_tree" 2>/dev/null || true)"
+    _TAP_TO_SIG="$(sed -n 's/^INFO: sig //p' <<<"$identity" | head -n 1)"
+    _TAP_TO_KEY="$(sed -n 's/^INFO: nodekey //p' <<<"$identity" | head -n 1)"
+    # Settle on statekey, not sig: on a live feed a like counter ticks every few
+    # seconds, and settling on that returns a mid-transition tree as the
+    # destination evidence Step 3 then measures.
+    _TAP_TO_STATE="$(sed -n 's/^INFO: statekey //p' <<<"$identity" | head -n 1)"
+    if [[ -n "$_TAP_TO_STATE" && "$_TAP_TO_STATE" != "$_TAP_FROM_STATE" ]]; then
       _TAP_CHANGED=true
       break
     fi
+    if [[ -n "$_TAP_TO_SIG" && "$_TAP_TO_SIG" == "$prev_sig" ]]; then
+      same=$((same + 1))
+      [[ "$same" -ge "$((quiet - 1))" ]] && break
+    else
+      same=0
+    fi
+    prev_sig="$_TAP_TO_SIG"
   done
-  if [[ -s "$to_tree" ]]; then
-    _TAP_TO_KEY="$(_key_of "$to_tree" 2>/dev/null || true)"
-    _TAP_TO_STATE="$(_state_of "$to_tree" 2>/dev/null || true)"
-  fi
 }
 
 _record_tap_transition() {
@@ -1237,7 +1359,7 @@ cmd_tap() {
     echo "ERROR: no such tree '$tree' — capture the screen first with 'screen'" >&2
     return 1
   fi
-  _prepare_tap "$sid" "$x" "$y" "$tree" || return 1
+  _prepare_tap "$sid" "$x" "$y" "$tree" || return $?
   to_tree="$(mktemp -t device_wda)"
   if ! _perform_tap_and_settle "$sid" "$x" "$y" "$to_tree"; then
     rm -f "$to_tree"
@@ -1273,10 +1395,34 @@ cmd_step() {
   png_tmp="$outdir/.$name.png.$$.part"
   rm -f "$xml_tmp" "$png_tmp"
 
-  _prepare_tap "$sid" "$x" "$y" "$tree" || return 1
+  _prepare_tap "$sid" "$x" "$y" "$tree" || return $?
   if ! _perform_tap_and_settle "$sid" "$x" "$y" "$xml_tmp" 1; then
     rm -f "$xml_tmp" "$png_tmp"
     return 1
+  fi
+  # The tap may have LEFT the app — Threads' "Instagram으로 전환" does exactly
+  # that. Appium's /source then describes the other app, and without this check
+  # that foreign screen is written as a state of the target: measured, spec'd,
+  # and mapped to a SwiftUI view as though it were a screen of the app being
+  # cloned. Record the exit as a transition, keep no screen evidence for it, and
+  # return 3 so the caller can re-activate the target and carry on.
+  local landed
+  landed="$(_active_target "$sid" || true)"
+  local expected
+  expected="$(_cached_session_bundle "$sid" || _session_target "$sid" || true)"
+  if [[ -n "$landed" && -n "$expected" && "$landed" != "$expected" ]]; then
+    # The settle loop already read the OTHER app's tree into these globals. Left
+    # as they are, the exit records a destination state of the target that does
+    # not exist: `observed_edges` would route toward it and `capture_gaps` would
+    # demand an arrival capture that can never be written — an unclosable gap.
+    # The destination is `left_app`, which is not a state of this app at all.
+    _TAP_TO_KEY=""
+    _TAP_TO_STATE=""
+    _TAP_CHANGED=false
+    _record_tap_transition "$x" "$y" "left_app=$landed" "evidence=foreign-app"
+    rm -f "$xml_tmp" "$png_tmp"
+    echo "ERROR: '$_TAP_LABEL' left the app for $landed — not recording its screen as a state of $expected" >&2
+    return 3
   fi
   if [[ ! -s "$xml_tmp" ]]; then
     _record_tap_transition "$x" "$y" "evidence=missing"
@@ -1386,14 +1532,38 @@ cmd_swipe() {
     rm -f "$before_tree" "$after_tree"
     return 1
   fi
+  # A swipe is settled when two consecutive polls read the same screen — NOT when
+  # the screen first differs from before. Breaking on first difference returns a
+  # tree captured 0.3s into a 600ms scroll animation, and Step 3 then measures
+  # that half-scrolled frame as the screen's geometry.
+  local prev_sig="" settled=false
   to_sig="$planned"
   while [[ "$i" -lt "${CLONE_SWIPE_SETTLE_TRIES:-10}" ]]; do
     sleep 0.3
     i=$((i + 1))
     if ! _live_dump "$sid" "$after_tree"; then break; fi
     to_sig="$(_sig_of "$after_tree" || true)"
-    if [[ -n "$to_sig" && "$to_sig" != "$planned" ]]; then changed=true; break; fi
+    if [[ -n "$to_sig" && "$to_sig" == "$prev_sig" ]]; then settled=true; break; fi
+    prev_sig="$to_sig"
   done
+  [[ "$settled" == true ]] || echo "INFO: the screen was still moving after $i poll(s) — destination evidence may be mid-scroll" >&2
+  # `changed` decides whether device_flow.py demands a durable destination
+  # capture, so a false positive becomes a coverage gap that can never be closed
+  # and a false negative loses a screen. The label set (`sig`) answers neither
+  # question: on a live feed it changes with no swipe at all (measured on
+  # Threads, a like count 226 -> 227), and a short list scrolled under an
+  # unchanged set of labels does not change it at all. A swipe is what MOVES
+  # elements, so ask that directly.
+  local moved_rc=0
+  _elements_moved "$before_tree" "$after_tree" || moved_rc=$?
+  case "$moved_rc" in
+    0) changed=true ;;
+    1) echo "INFO: nothing moved between the two captures — content churn, not a scroll" >&2 ;;
+    # Unknown is not "no". A false `changed` leaves a gap `stats` reports; a
+    # false no-op loses the screen and nothing ever says so.
+    *) changed=true
+       echo "WARN: could not tell whether the swipe moved anything — recorded as changed so the missing arrival capture shows up in stats" >&2 ;;
+  esac
   to_key="$(_key_of "$after_tree" 2>/dev/null || true)"
   to_state="$(_state_of "$after_tree" 2>/dev/null || true)"
   _flow_event swipe "from=${from_key:-?}" "to=${to_key:-?}" \
@@ -1407,7 +1577,12 @@ cmd_swipe() {
 cmd_doctor() {
   local want="${1:-}" bundle_id="${2:-}" failures=0 version drivers developer team
   local udids=() names=() target_udid="" target_name="" apps available_kb free_mb
-  local minimum_mb="${CLONE_MIN_DISK_MB:-2048}" needs_tunnel=0
+  # Sized to what a run actually consumes, not to what it needs to start.
+  # Measured 2026-08-23: doctor passed at 3538MB free and the run then died with
+  # ENOSPC — the WDA/Xcode builds, the captures and the render cache spent all
+  # of it. A gate that only samples the starting line lets that happen every
+  # time; this repo has already read a full disk as a SwiftUI compile error once.
+  local minimum_mb="${CLONE_MIN_DISK_MB:-6144}" needs_tunnel=0
   echo "INFO: checking Appium, Xcode/CoreDevice, signing, target device, and disk"
 
   if command -v appium >/dev/null 2>&1; then
@@ -1508,7 +1683,7 @@ raise SystemExit(0 if contains(json.load(sys.stdin).get("result", {})) else 1)
     if [[ "$free_mb" -ge "$minimum_mb" ]]; then
       echo "OK: disk free ${free_mb}MB (minimum ${minimum_mb}MB)"
     else
-      echo "ERROR: disk free ${free_mb}MB is below ${minimum_mb}MB — free space before WDA/Xcode builds or adjust CLONE_MIN_DISK_MB" >&2
+      echo "ERROR: disk free ${free_mb}MB is below ${minimum_mb}MB — a full run spends about 3.5GB on WDA/Xcode builds, captures and the render cache. Free space (Xcode DerivedData is usually the largest reclaimable) or adjust CLONE_MIN_DISK_MB" >&2
       failures=$((failures + 1))
     fi
   else
@@ -1529,6 +1704,87 @@ raise SystemExit(0 if contains(json.load(sys.stdin).get("result", {})) else 1)
     return 1
   fi
   echo "OK: doctor passed"
+}
+
+# Logical size of whatever the tree describes — the application element is the
+# largest frame in it. Used to place a scroll gesture without hardcoding a device.
+_screen_size_of() {
+  python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+import device_a11y
+frames = [e['frame'] for e in device_a11y.load(sys.argv[2]) if e['frame']['width'] > 0]
+if not frames:
+    raise SystemExit(1)
+biggest = max(frames, key=lambda f: f['width'] * f['height'])
+print(int(biggest['width']), int(biggest['height']))
+" "$_HERE" "$1"
+}
+
+# One scroll down plus a durable capture. Returns 0 when the screen actually
+# moved — that capture holds candidates no earlier one showed, and `frontier`
+# unions candidates across every capture of a state, so the next `next-tap` sees
+# them. Returns 1 at the end of the content (or on a screen that does not
+# scroll), which is what stops the walk.
+#
+# Without this, exploration of a feed app ends when the first screenful is
+# drained: measured on Threads, 34 of 235 targets — the rest were never on a
+# capture at all. `next-tap` already says which case it is; this acts on it.
+# Type into a text field the current screen shows, then capture what came up.
+#
+# Exploration never typed, so every search screen was a dead end — the results
+# behind it exist only past the keyboard. The probe text is generic on purpose
+# and is NOT logged (the `type` rule: never log what was typed). The flow event
+# records the field that was typed into and where the screen went.
+_type_for_more() {
+  local sid="$1" outdir="$2" from_tree="$3" name="$4" typed_file="$5"
+  local probe="${CLONE_EXPLORE_PROBE_TEXT:-a}" line field from_state to_state
+  line="$(python3 "$_HERE/device_a11y.py" inputs "$from_tree" 2>/dev/null \
+          | sed -n 's/^INFO: input //p' | head -n 1)"
+  [[ -n "$line" ]] || return 1
+  field="${line%%	*}"
+  from_state="$(_state_of "$from_tree" 2>/dev/null || true)"
+  # Once per field per state: typing the same probe into the same box again
+  # discovers nothing and spends a capture.
+  if [[ -f "$typed_file" ]] && grep -qxF "$from_state $field" "$typed_file"; then
+    return 1
+  fi
+  printf '%s %s\n' "$from_state" "$field" >> "$typed_file"
+  cmd_type "$sid" "$field" "$probe" >/dev/null 2>&1 || return 1
+  # Return commits the search on most apps; harmless where it does not.
+  _curl -X POST "$APPIUM_URL/session/$sid/actions" -H 'Content-Type: application/json' \
+    -d '{"actions":[{"type":"key","id":"kb","actions":[{"type":"keyDown","value":"\uE007"},{"type":"keyUp","value":"\uE007"}]}]}' \
+    >/dev/null 2>&1 || true
+  sleep "${CLONE_TYPE_SETTLE:-1}"
+  cmd_screen "$sid" "$outdir" "$name" >/dev/null || return 1
+  to_state="$(_state_of "$outdir/$name.xml" 2>/dev/null || true)"
+  _flow_event type "from_statekey=${from_state:-?}" "to_statekey=${to_state:-?}" \
+    "field=$field" "changed=$([[ -n "$to_state" && "$to_state" != "$from_state" ]] && echo true || echo false)" \
+    "tree=$outdir/$name.xml" "png=$outdir/$name.png"
+  [[ -n "$to_state" && "$to_state" != "$from_state" ]]
+}
+
+_scroll_for_more() {
+  local sid="$1" outdir="$2" from_tree="$3" name="$4" size width height
+  if ! size="$(_screen_size_of "$from_tree")"; then
+    echo "WARN: cannot size the screen from $(basename "$from_tree") — not scrolling" >&2
+    return 1
+  fi
+  width="${size%% *}"
+  height="${size##* }"
+  if ! cmd_swipe "$sid" "$((width / 2))" "$((height * 3 / 4))" \
+                 "$((width / 2))" "$((height / 4))" >/dev/null; then
+    return 1
+  fi
+  cmd_screen "$sid" "$outdir" "$name" >/dev/null || return 1
+  local moved_rc=0
+  _elements_moved "$from_tree" "$outdir/$name.xml" || moved_rc=$?
+  case "$moved_rc" in
+    0) return 0 ;;
+    1) echo "INFO: the screen did not move — end of content here" ;;
+    *) echo "WARN: could not tell whether the scroll moved anything — treating it as the end" >&2 ;;
+  esac
+  return 1
 }
 
 # Highest auto-capture index in <outdir> + 1, so re-runs never clobber evidence.
@@ -1563,7 +1819,13 @@ cmd_explore() {
     return 1
   fi
   local flow="${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}"
-  local n name tree todo_out line x y steps=0
+  local max_route="${CLONE_EXPLORE_MAX_ROUTE:-12}"
+  local max_stale="${CLONE_EXPLORE_MAX_STALE:-5}"
+  local max_scroll="${CLONE_EXPLORE_MAX_SCROLL:-6}"
+  local max_left="${CLONE_EXPLORE_MAX_LEAVE_APP:-8}"
+  local n name tree next_out line kind x y rc steps=0 route_hops=0 stale=0
+  local max_restart="${CLONE_EXPLORE_MAX_RESTART:-8}"
+  local scrolls=0 scrolled=0 left=0 restarts=0
   n="$(_next_auto_index "$outdir")"
   name="$(printf 'auto-%04d' "$n")"
   cmd_screen "$sid" "$outdir" "$name" || return 1
@@ -1572,26 +1834,130 @@ cmd_explore() {
     echo "ERROR: seed capture has no accessibility tree — cannot explore" >&2
     return 1
   fi
+  # One query answers both halves of the walk: drain this screen, and when it is
+  # drained, take the first hop of the shortest observed route to a screen that
+  # is not. Routing hops are taps we already made, so they are live candidates
+  # here and the stale-coordinate guard still applies to every one of them.
   while [[ "$steps" -lt "$max_steps" ]]; do
-    if ! todo_out="$(python3 "$_HERE/device_flow.py" todo "$flow" "$tree")"; then
-      echo "ERROR: could not compute the frontier of $(basename "$tree") — see above" >&2
+    if ! next_out="$(python3 "$_HERE/device_flow.py" next-tap "$flow" "$tree")"; then
+      echo "ERROR: could not compute the next tap from $(basename "$tree") — see above" >&2
       return 1
     fi
-    line="$(sed -n 's/^INFO: todo //p' <<<"$todo_out")"
-    line="${line%%$'\n'*}"
+    line="$(sed -n 's/^INFO: next-tap //p' <<<"$next_out" | head -n 1)"
     if [[ -z "$line" ]]; then
-      echo "INFO: this screen's safe frontier is drained after $steps step(s) — navigate elsewhere (see device_flow.py next) and re-run explore"
+      sed -n 's/^OK: /INFO: /p;s/^WARN: /WARN: /p' <<<"$next_out"
+      # A text field on screen is a door the tap walk cannot open. Try it once
+      # per field before scrolling or leaving.
+      n=$((n + 1))
+      name="$(printf 'auto-%04d' "$n")"
+      if _type_for_more "$sid" "$outdir" "$tree" "$name" "$outdir/.typed"; then
+        steps=$((steps + 1))
+        route_hops=0
+        scrolls=0
+        echo "INFO: typed into a text field and reached a new screen"
+        tree="$outdir/$name.xml"
+        continue
+      fi
+      # Nothing to tap on THIS capture is not the same as nothing left in the
+      # app: a list holds targets that only another scroll position shows. Scroll
+      # before giving up, bounded per screen so an endless feed cannot own the run.
+      if [[ "$scrolls" -lt "$max_scroll" ]]; then
+        n=$((n + 1))
+        name="$(printf 'auto-%04d' "$n")"
+        if _scroll_for_more "$sid" "$outdir" "$tree" "$name"; then
+          scrolls=$((scrolls + 1))
+          steps=$((steps + 1))   # a scroll is an action; it spends the budget
+          scrolled=$((scrolled + 1))
+          # A scroll that moved the screen produced a capture with candidates no
+          # earlier one had — that is progress, not the ping-pong the routing cap
+          # exists to stop. Leaving it counted would end the round early on a
+          # feed that scrolling is actively opening up.
+          route_hops=0
+          echo "INFO: scrolled for more candidates ($scrolls/$max_scroll on this screen)"
+          tree="$outdir/$name.xml"
+          continue
+        fi
+      fi
+      # Drained HERE is not drained everywhere. Routing only knows observed
+      # transitions, so a screen deep in the app has no known way back to the
+      # ones that still hold candidates — and the walk used to end there.
+      if [[ "$restarts" -lt "$max_restart" ]] && ! grep -q "frontier empty" <<<"$next_out"; then
+        restarts=$((restarts + 1))
+        echo "INFO: no route from here — restarting the app to reach the rest ($restarts/$max_restart)"
+        if _restart_target "$sid"; then
+          n=$((n + 1))
+          name="$(printf 'auto-%04d' "$n")"
+          if cmd_screen "$sid" "$outdir" "$name"; then
+            tree="$outdir/$name.xml"
+            scrolls=0
+            route_hops=0
+            steps=$((steps + 1))
+            continue
+          fi
+        fi
+        echo "WARN: could not restart the app; ending the round here" >&2
+      fi
+      echo "INFO: nothing left to tap from here after $steps step(s)"
       break
+    fi
+    kind="$(sed -n 's/^INFO: kind //p' <<<"$next_out" | head -n 1)"
+    if [[ "$kind" == route* ]]; then
+      route_hops=$((route_hops + 1))
+      if [[ "$route_hops" -gt "$max_route" ]]; then
+        echo "INFO: $max_route consecutive routing hops reached no new work — stopping so the walk cannot ping-pong (see device_flow.py next)"
+        break
+      fi
+    else
+      route_hops=0
     fi
     x="${line%% *}"
     line="${line#* }"
     y="${line%% *}"
     n=$((n + 1))
     name="$(printf 'auto-%04d' "$n")"
-    if ! cmd_step "$sid" "$x" "$y" "$tree" "$outdir" "$name"; then
+    cmd_step "$sid" "$x" "$y" "$tree" "$outdir" "$name" && rc=0 || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+      # The screen moved between capture and tap. On a live app that is the
+      # normal case, not an error: re-capture and pick from fresh candidates.
+      # Nothing was tapped, so this cannot double-tap. Bounded, because a screen
+      # that keeps moving would otherwise spin here forever.
+      stale=$((stale + 1))
+      if [[ "$stale" -gt "$max_stale" ]]; then
+        echo "ERROR: the screen kept changing under $max_stale consecutive re-captures — the device is not settling; stopping after $steps step(s)" >&2
+        return 1
+      fi
+      echo "INFO: re-capturing after a stale-screen rejection ($stale/$max_stale)"
+      n=$((n + 1))
+      name="$(printf 'auto-%04d' "$n")"
+      cmd_screen "$sid" "$outdir" "$name" || return 1
+      tree="$outdir/$name.xml"
+      continue
+    fi
+    if [[ "$rc" -eq 3 ]]; then
+      # The tap left the app. The transition is recorded, no foreign screen was
+      # written, and the target can simply be brought back — ending the run here
+      # would forfeit the rest of the app over one outbound link.
+      left=$((left + 1))
+      if [[ "$left" -gt "$max_left" ]]; then
+        echo "ERROR: left the app $max_left times in a row without getting anywhere — stopping after $steps step(s)" >&2
+        return 1
+      fi
+      _reactivate_target "$sid" || return 1
+      steps=$((steps + 1))   # the tap happened; it spends the budget
+      n=$((n + 1))
+      name="$(printf 'auto-%04d' "$n")"
+      cmd_screen "$sid" "$outdir" "$name" || return 1
+      tree="$outdir/$name.xml"
+      continue
+    fi
+    if [[ "$rc" -ne 0 ]]; then
       echo "ERROR: explore stopped after $steps step(s) — the flow log keeps what was done; fix the condition above and re-run explore" >&2
       return 1
     fi
+    stale=0
+    left=0             # the cap is on being STUCK outside, not on how many
+                       # outbound links a healthy long walk happens to follow
+    scrolls=0          # new screen (or new position) — its own scroll budget
     tree="$outdir/$name.xml"
     steps=$((steps + 1))
   done
@@ -1599,7 +1965,7 @@ cmd_explore() {
     echo "INFO: reached max steps ($max_steps) — re-run explore to continue"
   fi
   python3 "$_HERE/device_flow.py" stats "$flow" || true
-  echo "OK: explore made $steps step(s)"
+  echo "OK: explore made $steps step(s)${scrolled:+ (${scrolled} scroll)}"
 }
 
 cmd_quit() {
@@ -1611,6 +1977,48 @@ cmd_quit() {
   _curl -X DELETE "$APPIUM_URL/session/$sid" >/dev/null 2>&1 || true
   _remove_session_descriptor "$sid"
   echo "OK: session ended"
+}
+
+# Does this device still need a RemoteXPC tunnel started?
+#
+#   exit 0 — ready, or this device does not need one
+#   exit 1 — a tunnel has to be created, which needs root
+#
+# Its own subcommand so a caller can ask BEFORE committing to a run. The tunnel
+# is created several minutes in, at `doctor`, and that is a bad place to
+# discover that nobody can authenticate.
+cmd_tunnel_status() {
+  local udid="${1:-}"
+  if [[ -z "$udid" ]]; then
+    echo "ERROR: usage: device_wda.sh tunnel-status <udid>" >&2
+    return 2
+  fi
+  # "The profile does not describe this device" is not "no tunnel needed".
+  # Conflating them made this gate answer OK for a device on iOS 26 — it was
+  # handed the CoreDevice identifier while the profile records the hardware one,
+  # and a gate that passes on a mismatch is the silent pass this repo keeps
+  # paying for.
+  if [[ ! -r "$CLONE_DEVICE_PROFILE_FILE" ]]; then
+    echo "ERROR: no device profile at $CLONE_DEVICE_PROFILE_FILE — run 'device_wda.sh device' first" >&2
+    return 2
+  fi
+  local profiled
+  profiled="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("udid") or "")' \
+    "$CLONE_DEVICE_PROFILE_FILE" 2>/dev/null || true)"
+  if [[ "$profiled" != "$udid" ]]; then
+    echo "ERROR: the device profile describes '$profiled', not '$udid' — pass the UDID 'device_wda.sh device' prints" >&2
+    return 2
+  fi
+  if ! _device_requires_tunnel "$udid"; then
+    echo "OK: $udid does not need a RemoteXPC tunnel"
+    return 0
+  fi
+  if _tunnel_registry_ready "$udid"; then
+    echo "OK: RemoteXPC tunnel is ready for $udid"
+    return 0
+  fi
+  echo "INFO: $udid needs a RemoteXPC tunnel and none is registered" >&2
+  return 1
 }
 
 main() {
@@ -1630,7 +2038,9 @@ main() {
     quit)       cmd_quit "$@" ;;
     stop-server) cmd_stop_server "$@" ;;
     doctor)     cmd_doctor "$@" ;;
-    *) echo "ERROR: unknown subcommand '${sub:-}'. Use: device | session | screen | step | explore | candidates | sig | tap | type | swipe | quit | stop-server | doctor" >&2; return 1 ;;
+    tunnel-status) cmd_tunnel_status "$@" ;;
+    tunnel-start)  _ensure_tunnel "${1:-}" ;;
+    *) echo "ERROR: unknown subcommand '${sub:-}'. Use: device | session | screen | step | explore | candidates | sig | tap | type | swipe | quit | stop-server | doctor | tunnel-status | tunnel-start" >&2; return 1 ;;
   esac
 }
 

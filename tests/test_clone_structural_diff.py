@@ -23,7 +23,12 @@ def spec_element(role: str, label: str, x: float, y: float, w: float, h: float) 
 
 def rendered_node(label: str, x: float, y: float, w: float, h: float,
                   children: list | None = None) -> dict:
-    node = {"type": "Button", "label": label,
+    # Shaped like `axe describe-ui` actually writes it: the label lives in
+    # `AXLabel`, never in a lowercase `label`. A fixture that invented `label`
+    # let the label match pass here while being unreachable against a real
+    # render for as long as the code read the wrong key.
+    node = {"type": "Button", "AXLabel": label,
+            "AXFrame": "{{%s, %s}, {%s, %s}}" % (x, y, w, h),
             "frame": {"x": x, "y": y, "width": w, "height": h}}
     if children:
         node["children"] = children

@@ -233,6 +233,93 @@ def _merge_manifest(path: Path, entries: list[dict]) -> None:
     _write_json(path, manifest)
 
 
+# An icon exists in the accessibility tree only as a description ("좋아요.
+# 226명이 이 게시물을 좋아합니다."), never as a picture, so nothing in the
+# measurement can reproduce it. Rendering these from the label was tried and
+# measured worse than useless on 2026-08-23. A crop of the capture is the
+# documented research-only path, and `device_compare --mask-assets` keeps the
+# score honest about which pixels came from it.
+# AXLink is text, not an icon — and text is already reproduced from the
+# measured AXStaticText, so pasting it would draw the same words twice.
+CONTROL_ROLES = {"AXButton", "AXKey", "AXSwitch"}
+MAX_CONTROL_SIDE = 128.0
+MAX_CONTROL_AREA = 88.0 * 88.0
+
+
+def _is_flat(png, frame: dict, scale: float, tolerance: int = 12) -> bool:
+    """True when a solid fill could reproduce this region.
+
+    A separator or a card background is flat and the measurement already
+    reproduces it from `colors.fill`. A logo or a glyph is not — and a fill is
+    all the reproduction has for it, which is why the Threads wordmark rendered
+    as empty space. Sampled on a coarse grid; exactness is not the question.
+    """
+    try:
+        x = int(float(frame["x"]) * scale)
+        y = int(float(frame["y"]) * scale)
+        width = int(float(frame["width"]) * scale)
+        height = int(float(frame["height"]) * scale)
+    except (KeyError, TypeError, ValueError):
+        return True
+    if width <= 0 or height <= 0:
+        return True
+    seen = []
+    steps = 5
+    for row in range(steps):
+        for column in range(steps):
+            hexv = png.hex_at(min(png.width - 1, x + width * column // (steps - 1 or 1)),
+                              min(png.height - 1, y + height * row // (steps - 1 or 1)))
+            if hexv:
+                seen.append(tuple(int(hexv[i:i + 2], 16) for i in (1, 3, 5)))
+    if not seen:
+        return True
+    return all(max(abs(a[channel] - b[channel]) for channel in range(3)) <= tolerance
+               for a in seen for b in seen)
+
+
+def _auto_selected(elements: list[dict], png=None, scale: float = 1.0) -> set[int]:
+    """Images, plus leaf controls small enough to be an icon.
+
+    A label-less `AXOther` leaf joins them when its pixels are not flat: it is
+    the wrapper an icon or a wordmark lives in, it has no label to identify it,
+    and a solid fill cannot stand in for it.
+    """
+    parents = {element.get("parent") for element in elements}
+    # Labels this screen already draws from measured type. A control repeating
+    # one of them is a text button, not an icon.
+    reproduced = {(element.get("label") or "").strip()
+                  for element in elements if element.get("text")} - {""}
+    selected: set[int] = set()
+    for index, element in enumerate(elements):
+        if not element.get("visible", True):
+            continue
+        if element.get("role") == "AXImage":
+            selected.add(index)
+            continue
+        role = element.get("role")
+        decorative = (role == "AXOther" and not (element.get("label") or "").strip()
+                      and png is not None)
+        if (role not in CONTROL_ROLES and not decorative) or index in parents:
+            continue
+        if element.get("text") or (element.get("label") or "").strip() in reproduced:
+            # Measured type is reproducible; do not paste it back.
+            continue
+        frame = element.get("frame") or {}
+        try:
+            width, height = float(frame["width"]), float(frame["height"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if width <= 0 or height <= 0:
+            continue
+        if max(width, height) > MAX_CONTROL_SIDE or width * height > MAX_CONTROL_AREA:
+            continue
+        if decorative and _is_flat(png, frame, scale):
+            # A flat wrapper is already reproduced from its measured fill.
+            continue
+        selected.add(index)
+    return selected
+
+
 def extract_assets(
     measurement: str | Path,
     screenshot: str | Path | None = None,
@@ -271,18 +358,30 @@ def extract_assets(
     invalid = sorted(index for index in selected if index < 0 or index >= len(elements))
     if invalid:
         raise ValueError(f"element indices out of range: {invalid}")
-    selected.update(
-        index for index, element in enumerate(elements)
-        if element.get("role") == "AXImage" and element.get("visible", True)
-    )
+    selected.update(_auto_selected(elements, png, scale))
+
+    # Pixels no leaf element accounts for. Threads exposes a post avatar to no
+    # accessibility element at all, so nothing in the tree can reproduce it —
+    # five of them were simply absent from the reproduction until the scan
+    # started counting only leaves as covering. Indexed negatively so they sit
+    # beside the element crops in the same manifest without colliding.
+    uncovered = [region for region in (measured.get("uncoveredRegions") or [])
+                 if isinstance(region, dict)]
 
     assets_root = Path(assets_dir) if assets_dir is not None else _default_assets_dir(measurement_path)
     crops_dir = assets_root / "crops"
     catalog = Path(assets_catalog) if assets_catalog is not None else None
     entries: list[dict] = []
     unique_digests: set[str] = set()
-    for index in sorted(selected):
-        element = elements[index]
+    targets: list[tuple[int, dict]] = [(index, elements[index]) for index in sorted(selected)]
+    targets += [
+        (-(offset + 1),
+         {"role": "uncoveredRegion", "label": "",
+          "frame": {key: region.get(key, 0.0)
+                    for key in ("x", "y", "width", "height")}})
+        for offset, region in enumerate(uncovered)
+    ]
+    for index, element in targets:
         frame = element.get("frame")
         bounds = _crop_bounds(frame, scale, png.width, png.height)
         digest, output = _write_crop(crops_dir, _crop_rows(png, bounds))
