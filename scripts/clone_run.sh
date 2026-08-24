@@ -217,7 +217,17 @@ cmd_observe() {
     before="$(_flow_lines)"
     echo "INFO: explore round $round/$rounds"
     if ! bash "$_HERE/device_wda.sh" explore "$sid" "$CLONE_ROOT/raw" "$steps"; then
-      echo "WARN: explore round $round stopped early — keeping the evidence collected so far" >&2
+      after="$(_flow_lines)"
+      # A failed round that still collected evidence is exactly what the round
+      # budget is for: one unsettled tap on a live feed must not end the whole
+      # observe (measured 2026-08-23 — runs kept dying mid-budget and a human
+      # restarted them). A failed round that could not even step is
+      # environmental (dead session, locked device) — retrying would spin.
+      if [[ $((after - before)) -gt 1 ]]; then
+        echo "WARN: explore round $round stopped early — starting the next round from where the device is" >&2
+        continue
+      fi
+      echo "WARN: explore round $round failed without making a step — keeping the evidence collected so far" >&2
       status=1
       break
     fi
@@ -258,7 +268,13 @@ cmd_observe() {
     status=1
   fi
   cmd_codegen || status=1
-  echo "OK: observed — measurement evidence in $CLONE_ROOT/screens, map at $CLONE_ROOT/flow-map.html"
+  # The OK line used to print unconditionally, so a failed run read as a
+  # success to anyone watching the log and the failure surfaced later, bigger.
+  if [[ "$status" -eq 0 ]]; then
+    echo "OK: observed — measurement evidence in $CLONE_ROOT/screens, map at $CLONE_ROOT/flow-map.html"
+  else
+    echo "WARN: observe finished with failures (see above) — evidence kept in $CLONE_ROOT/screens, map at $CLONE_ROOT/flow-map.html" >&2
+  fi
   return "$status"
 }
 

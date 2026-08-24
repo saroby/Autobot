@@ -105,6 +105,17 @@ STATE_CHANGING = (
     # and it replaces the target app in the foreground.
     ("sharing", re.compile(
         r"^(?:공유|공유하기)$|^share(?:\s+(?:post|thread|via.*))?$", re.I)),
+    # A control whose label DESCRIBES its current on/off state is a toggle even
+    # when its role is a plain button — Threads' post-notification bell reads
+    # `알림이 비활성화되었습니다`. Measured 2026-08-23: exploration flipped it on
+    # three people's posts, and the audit — which reads this same table — saw
+    # nothing, because a hole in the guard is also a hole in the audit.
+    ("state-toggle", re.compile(
+        r"(?:비)?활성화(?:되었|됐|됨)"
+        r"|알림\s*(?:끄기|켜기|받기)"
+        r"|turn\s+(?:on|off)\s+notifications?"
+        r"|notifications?\s+(?:are\s+)?(?:on|off|enabled|disabled)"
+        r"|^(?:mute|unmute)$", re.I)),
 )
 
 

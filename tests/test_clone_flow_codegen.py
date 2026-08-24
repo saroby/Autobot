@@ -155,7 +155,7 @@ class TestSwiftGeneration(CodegenCase):
         self.assertIn("HomeView(onAction: { router.send(action: $0) })", swift)
         self.assertIn("LegacyView(onAction: { router.send(action: $0) })", swift)
 
-    def test_duplicate_observations_dedupe_but_ambiguous_actions_fail(self):
+    def test_duplicate_observations_dedupe_and_ambiguous_actions_are_dropped(self):
         base = [
             {"type": "screen", "state": state, "name": state}
             for state in ("home", "a", "b")
@@ -174,8 +174,13 @@ class TestSwiftGeneration(CodegenCase):
         conflicting = transition | {"to_state": "b"}
         self.write_flow(base + [transition, conflicting])
         result = self.run_codegen("generate", str(self.flow), str(self.manifest))
-        self.assertEqual(result.returncode, 1)
+        # One contradiction blanked all 27 views once (2026-08-23). It now
+        # drops just that edge, says so, and everything else still generates.
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ambiguous transition", result.stderr)
+        self.assertIn("edge dropped", result.stderr)
+        self.assertNotIn('"same"', result.stdout)
+        self.assertIn("HomeView(onAction:", result.stdout)
 
     def test_declared_state_alias_merges_one_screen_captured_twice(self):
         """A screen captured mid-load and settled gets two state keys.
@@ -197,8 +202,9 @@ class TestSwiftGeneration(CodegenCase):
         self.complete_manifest(
             {"home": "HomeView", "loaded": "LoadedView", "loading": "LoadingView"})
         result = self.run_codegen("generate", str(self.flow), str(self.manifest))
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ambiguous transition", result.stderr)
+        self.assertNotIn('"profile"', result.stdout)
 
         (self.directory / "state-aliases.json").write_text(json.dumps(
             {"aliases": {"loading": {"canonical": "loaded", "why": "same screen"}}}
@@ -324,14 +330,13 @@ class TestBackActions(unittest.TestCase):
         ])
         self.assertIn(("detail", "돌아가기", codegen.POP), found)
 
-    def test_a_destination_you_never_came_from_is_still_a_contradiction(self):
-        with self.assertRaises(codegen.FlowCodegenError) as caught:
-            self.transitions([
-                ("home", "열기", "detail"),
-                ("detail", "저장", "saved"),
-                ("detail", "저장", "settings"),
-            ])
-        self.assertIn("ambiguous transition", str(caught.exception))
+    def test_a_destination_you_never_came_from_drops_that_edge_only(self):
+        found = self.transitions([
+            ("home", "열기", "detail"),
+            ("detail", "저장", "saved"),
+            ("detail", "저장", "settings"),
+        ])
+        self.assertEqual(found, [("home", "열기", "detail")])
 
     def test_a_single_destination_is_left_alone(self):
         found = self.transitions([("home", "열기", "detail")])

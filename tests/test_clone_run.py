@@ -319,6 +319,75 @@ printf '%s\n' '{"result":{"apps":[{"bundleIdentifier":"com.example.threads","nam
             })
 
 
+class TestExploreRounds(CloneRunCase):
+    """A failed round that still collected evidence must not end observe.
+
+    Measured 2026-08-23: one unsettled tap on a live feed ended the whole
+    observe mid-budget with rounds left, and a human restarted it. The round
+    budget exists to absorb exactly that; only a round that failed without
+    making a single step is environmental and stops the loop.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.harness = self.dir / "harness"
+        self.harness.mkdir()
+        shutil.copy2(SCRIPT, self.harness / "clone_run.sh")
+        (self.harness / "clone_workspace.sh").write_text(
+            "#!/bin/bash\nmkdir -p \"$CLONE_ROOT/project\"\n", encoding="utf-8")
+        self.bin = self.dir / "bin"
+        self.bin.mkdir()
+        xcrun = self.bin / "xcrun"
+        xcrun.write_text("""#!/bin/bash
+printf '%s\n' '{"result":{"apps":[{"bundleIdentifier":"com.example.threads","name":"Threads"}]}}'
+""", encoding="utf-8")
+        xcrun.chmod(0o755)
+        self.rounds_file = self.dir / "rounds"
+        (self.harness / "device_wda.sh").write_text(f"""#!/bin/bash
+case "$1" in
+  device) echo "{FIXTURE_UDID}" ;;
+  doctor) exit 0 ;;
+  session) echo "fixture-session" ;;
+  explore)
+    n="$(cat "$FAKE_ROUNDS_FILE" 2>/dev/null || echo 0)"
+    n=$((n + 1)); echo "$n" >"$FAKE_ROUNDS_FILE"
+    if [[ "$n" -eq 1 ]]; then
+      # A round that collected evidence and then died mid-budget.
+      for i in 1 2 3; do
+        echo '{{"type":"screen","state":"s'$i'","name":"auto-000'$i'"}}' >>"$CLONE_FLOW_LOG"
+      done
+      exit 1
+    fi
+    exit 1   # the next round could not even step: environmental, stop
+    ;;
+esac
+""", encoding="utf-8")
+
+    def observe(self) -> subprocess.CompletedProcess:
+        env = self.offline_env(
+            CLONE_REQUIRE_SUDO="0",
+            FAKE_ROUNDS_FILE=str(self.rounds_file),
+            PATH=f"{self.bin}:{os.environ['PATH']}",
+        )
+        return subprocess.run(
+            ["bash", str(self.harness / "clone_run.sh"), "observe", "Threads"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env,
+        )
+
+    def test_a_failed_round_with_progress_starts_the_next_round(self):
+        result = self.observe()
+        self.assertEqual(self.rounds_file.read_text(encoding="utf-8").strip(), "2")
+        self.assertIn("starting the next round", result.stderr)
+        self.assertIn("INFO: explore round 2/", result.stdout)
+        self.assertIn("failed without making a step", result.stderr)
+
+    def test_a_failed_run_does_not_print_the_ok_line(self):
+        result = self.observe()
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("OK: observed", result.stdout)
+        self.assertIn("observe finished with failures", result.stderr)
+
+
 class TestUnwrittenViews(CloneRunCase):
     def test_a_view_that_was_never_written_is_named_before_anything_renders(self):
         """device_render.sh compiles Sources as one unit and the generated

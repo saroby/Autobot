@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Fixed — 실패한 탐험 라운드가 남은 라운드 예산을 버렸다
+- `clone_run.sh observe` 의 라운드 루프 주석은 "실패한 스텝도 라운드가 흡수한다"고 말하는데, 코드는 explore 의 non-zero 를 즉시 `break` 했다. settle 실패나 stale 재캡처 초과는 라이브 피드 앱에서 일상적이라, 흔들린 탭 하나가 8라운드 예산을 남긴 채 observe 전체를 끝냈고 사람이 재실행해줘야 했다 — "복제가 끝까지 안 되는" 제1 원인(실측 2026-08-22·23 회차). 이제 실패한 라운드가 flow 로그를 2줄 이상 키웠으면(증거를 모으다 죽은 것) 다음 라운드로 계속하고, 한 스텝도 못 만들고 실패했을 때만(죽은 세션·잠긴 기기 같은 환경 문제) 멈춘다.
+
+### Fixed — observe 가 실패해도 `OK: observed` 를 찍었다
+- 마지막 OK 라인이 `status` 와 무관하게 무조건 출력되어, 로그를 보는 사람/에이전트가 실패한 실행을 성공으로 읽고 다음 단계에서 더 크게 터졌다. exit code 는 늘 맞았지만 로그가 거짓말이었다. 이제 성공에만 OK, 실패에는 `WARN: observe finished with failures` 를 stderr 로 낸다.
+
+### Changed — ambiguous transition 은 그 엣지만 버리고 나머지는 생성한다
+- `clone_flow_codegen.py` 가 모순 엣지 하나에 `FlowCodegenError` 를 던져 라우터와 뷰 전체 생성을 폐기했다(실측 2026-08-23: 유령 state 하나로 뷰 27개가 통째로 증발, 회복은 사람이 `state-aliases.json` 을 쓰는 것뿐). 모순은 여전히 모순이지만 한 건이 전부를 비워서는 안 된다 — 이제 해당 (화면, 액션) 엣지만 WARN 과 함께 빼고 계속 생성하며, 경고는 state-aliases.json 병합 탈출구를 안내한다. pop 판정(모든 목적지가 되돌아온 곳)은 그대로다.
+
+### Fixed — 상태 서술형 토글이 가드와 감사를 모두 통과했다
+- Threads 게시물 알림 벨의 라벨은 액션이 아니라 **현재 상태를 서술**한다(`알림이 비활성화되었습니다`). `STATE_CHANGING` 은 액션 라벨 패턴, 토글 보류는 `AXSwitch` role 뿐이라 벨(Button)은 navigation 으로 분류돼 탭됐다 — 실측 2026-08-23: 세 사람의 게시물에서 알림이 토글됐고, 같은 분류표를 읽는 `audit` 은 "상태 변경 0건"을 보고했다. 가드의 구멍은 감사의 구멍이다. `state-toggle` 패턴((비)활성화 서술·알림 끄기/켜기·notifications on/off·mute)을 추가해 기본 보류한다.
+
 ### Fixed — 설치된 플러그인에서 clone 검증이 돌지 않았다
 - `device_render.sh` 가 render 캐시와 device profile 을 `$SCRIPT_DIR/../.autobot/clone` 에서 찾았다. 스크립트는 플러그인 캐시(`~/.claude/plugins/cache/...`)에서 실행되고 clone 은 사용자 프로젝트에 있으므로, `observe` 가 방금 profile 을 써 놓고도 `functional`/`polish` 가 "needs a device profile" 로 즉시 실패했다(실측 2026-08-23). 기본값을 다른 clone 스크립트와 같은 cwd 상대 `${CLONE_ROOT:-.autobot/clone}` 로 바꿨다 — `CLONE_DEVICE_PROFILE`/`CLONE_RENDER_CACHE` 명시가 더 이상 필요 없다.
 

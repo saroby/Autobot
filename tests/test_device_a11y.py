@@ -277,6 +277,24 @@ class TestStateChangingGuard(unittest.TestCase):
                 self.assertIn(f"effect={effect}", r.stdout)
                 self.assertIn("withheld=true", r.stdout)
 
+    def test_state_describing_toggle_buttons_are_withheld(self):
+        """Observed on Threads 2026-08-23: the post-notification bell.
+
+        Its label describes the CURRENT state — `알림이 비활성화되었습니다` — so
+        it matched no action pattern and read as navigation. Two runs toggled
+        it on three people's posts, and the audit, reading this same table,
+        reported zero state-changing taps: a hole in the guard is also a hole
+        in the audit.
+        """
+        cases = ["알림이 비활성화되었습니다.", "알림이 활성화되었습니다.",
+                 "알림 끄기", "Turn on notifications", "Notifications off",
+                 "Mute"]
+        for label in cases:
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertIn("WARN: withheld", r.stdout)
+                self.assertIn("effect=state-toggle", r.stdout)
+
     def test_describing_a_screen_is_still_navigation(self):
         """The leading-clause check must not swallow ordinary navigation.
 
@@ -284,7 +302,8 @@ class TestStateChangingGuard(unittest.TestCase):
         `게시`. `좋아요한 글` is the profile's liked-posts tab, not the like button.
         """
         labels = ["답글 달기. 35명이 이 게시물에 답글을 달았습니다.",
-                  "좋아요한 글", "게시 옵션", "게시물 만들기", "내가 팔로우하는 사람"]
+                  "좋아요한 글", "게시 옵션", "게시물 만들기", "내가 팔로우하는 사람",
+                  "알림", "알림 설정", "Muted words"]
         r = idb([ROOT] + [el(label, 0, 200 + 40 * i) for i, label in enumerate(labels)])
         self.assertIn(f"OK: {len(labels)} tappable, 0 withheld", r.stdout)
         self.assertNotIn("category=state-changing", r.stdout)

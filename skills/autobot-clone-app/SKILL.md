@@ -42,7 +42,7 @@ scripts/clone_run.sh install [RootView]                   # Step 6c — 실기�
 
 `observe` 는 workspace 준비 → 기기 게이트 → bundle ID 확인 → doctor → session → **앱 전체 탐험**(화면 사이 이동 포함) → 측정·자산 crop → flow 맵 → router manifest → **화면마다 측정 기반 SwiftUI 초안**을 **질문 없이** 수행한다.
 
-**생성은 기기가 필요 없고, 그래서 따로 돌릴 수 있다.** `observe` 의 마지막 단계(`views.json` → `ObservedFlow.swift` → 화면 뷰)가 로그의 모순으로 실패하면 `Sources/` 가 빈 채로 끝난다. 그때 `observe` 를 다시 돌리는 것은 라이브 앱을 몇 분 더 탐험해 **기기가 전혀 관여하지 않는 작업**을 다시 하는 것이다. 로그(또는 `state-aliases.json`·`views.json`)를 고치고 `clone_run.sh codegen` 을 돌린다 — 탐험 증거는 그대로 둔다.
+**생성은 기기가 필요 없고, 그래서 따로 돌릴 수 있다.** `observe` 의 마지막 단계(`views.json` → `ObservedFlow.swift` → 화면 뷰)에서 ambiguous transition 은 이제 생성을 죽이지 않는다 — 그 엣지만 WARN 과 함께 빠지고 나머지는 전부 생성된다. WARN 이 가리키는 두 state 가 실은 한 화면이면 `state-aliases.json` 으로 병합을 선언하고 `clone_run.sh codegen` 을 돌린다 — 라이브 앱을 다시 탐험할 필요 없이 **기기가 전혀 관여하지 않는 작업**만 다시 하는 것이며, 탐험 증거는 그대로 둔다. 그 밖의 로그 모순으로 생성이 실패했을 때도 같은 경로다: 로그(또는 `views.json`)를 고치고 `codegen`.
 
 **순서가 규칙이다: 기능 먼저, 픽셀은 그 다음.** 도달할 수 없는 화면을 픽셀까지 깎는 것은 그 값이 셈에 들어가는지 모르는 채로 쓰는 시간이다. `functional` 은 한 번 빌드해 재현본을 실제로 띄우고, 관측된 전이를 **앱 안에서 탭해** 목적 화면에 도착하는지 본다 — 전이가 끊겼거나 도달 불가 화면이 있으면 non-zero. `polish` 는 그 다음에야 화면마다 렌더 → 구조 diff → 대조를 돌린다. `verify` 는 `functional` 이 실패하면 `polish` 로 넘어가지 않는다.
 

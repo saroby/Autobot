@@ -267,8 +267,12 @@ def observed_transitions(
     # 2026-08-23: '돌아가기' from one screen went to three different places, and
     # refusing to model that blocked the whole pipeline. When every destination
     # is a screen the source was actually reached FROM, the action is a pop, and
-    # a history stack reproduces it exactly. Anything else is still a genuine
-    # contradiction and still refuses.
+    # a history stack reproduces it exactly. Anything else is a genuine
+    # contradiction — but one contradiction must not blank every view (measured
+    # 2026-08-23: a single ambiguous edge killed the router and all 27 screens),
+    # so the contradictory edge is dropped with a warning and everything else
+    # still generates. The escape for a screen split into two states remains
+    # state-aliases.json.
     predecessors: dict[str, set[str]] = {}
     for (source, _action), targets in destinations.items():
         for target in targets:
@@ -284,16 +288,33 @@ def observed_transitions(
         for (source, action), targets in destinations.items()
         if len(targets) > 1 and (source, action) not in pops
     ]
-    if ambiguous:
-        source, action, targets = sorted(ambiguous)[0]
-        raise FlowCodegenError(
-            f"ambiguous transition from {source!r} for action {action!r}: "
-            + ", ".join(repr(target) for target in targets)
-        )
+    dropped = set()
+    for source, action, targets in sorted(ambiguous):
+        dropped.add((source, action))
+        _warn_ambiguous(source, action, targets)
 
     return sorted(
         (source, action, POP if (source, action) in pops else next(iter(targets)))
         for (source, action), targets in destinations.items()
+        if (source, action) not in dropped
+    )
+
+
+# observed_transitions runs more than once per generate (inference calls it
+# again); each contradiction is worth one warning, not one per call.
+_AMBIGUOUS_WARNED: set[tuple[str, str, tuple[str, ...]]] = set()
+
+
+def _warn_ambiguous(source: str, action: str, targets: list[str]) -> None:
+    key = (source, action, tuple(targets))
+    if key in _AMBIGUOUS_WARNED:
+        return
+    _AMBIGUOUS_WARNED.add(key)
+    print(
+        f"WARN: ambiguous transition from {source!r} for action {action!r}: "
+        + ", ".join(repr(target) for target in targets)
+        + " — edge dropped; if these are one screen, declare a merge in state-aliases.json",
+        file=sys.stderr,
     )
 
 
