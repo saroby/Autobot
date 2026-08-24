@@ -26,11 +26,13 @@ def run_devices(devices: list[dict]) -> subprocess.CompletedProcess:
         os.unlink(fixture)
 
 
-def _dev(reality: str, tunnel: str, udid: str, name: str) -> dict:
+def _dev(reality: str, tunnel: str, udid: str, name: str,
+         identifier: str = "") -> dict:
     return {
         "hardwareProperties": {"reality": reality, "udid": udid},
         "connectionProperties": {"tunnelState": tunnel},
         "deviceProperties": {"name": name},
+        "identifier": identifier,
     }
 
 
@@ -48,6 +50,16 @@ class TestCloneCapture(unittest.TestCase):
     def test_reports_tunnel_state(self):
         r = run_devices([_dev("physical", "unavailable", "PHYS1", "iPhone 14 Pro")])
         self.assertIn("unavailable", r.stdout)
+
+    def test_carries_the_coredevice_identifier_as_a_fourth_field(self):
+        # The Identifier column of `devicectl list devices` is the CoreDevice
+        # UUID, not the hardware UDID. Callers who copied it from that table
+        # need it on the wire to match against (measured 2026-08-23: the gate
+        # misdiagnosed a connected phone as absent).
+        r = run_devices([_dev("physical", "connected", "PHYS1", "iPhone 14 Pro",
+                              identifier="COREDEV-1")])
+        row = next(line for line in r.stdout.splitlines() if line.startswith("OK:"))
+        self.assertEqual(row.split("\t"), ["OK: PHYS1", "connected", "iPhone 14 Pro", "COREDEV-1"])
 
     def test_warns_when_no_physical_device(self):
         r = run_devices([_dev("simulated", "connected", "SIM1", "iPhone 17 Pro")])

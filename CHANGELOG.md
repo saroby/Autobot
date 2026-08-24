@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Fixed — 설치된 플러그인에서 clone 검증이 돌지 않았다
+- `device_render.sh` 가 render 캐시와 device profile 을 `$SCRIPT_DIR/../.autobot/clone` 에서 찾았다. 스크립트는 플러그인 캐시(`~/.claude/plugins/cache/...`)에서 실행되고 clone 은 사용자 프로젝트에 있으므로, `observe` 가 방금 profile 을 써 놓고도 `functional`/`polish` 가 "needs a device profile" 로 즉시 실패했다(실측 2026-08-23). 기본값을 다른 clone 스크립트와 같은 cwd 상대 `${CLONE_ROOT:-.autobot/clone}` 로 바꿨다 — `CLONE_DEVICE_PROFILE`/`CLONE_RENDER_CACHE` 명시가 더 이상 필요 없다.
+
+### Fixed — CoreDevice Identifier 를 넘기면 연결된 기기를 "미연결"로 오진했다
+- `devicectl list devices` 의 Identifier 열은 CoreDevice UUID 이지 하드웨어 UDID 가 아니다. 그 값을 `device_wda.sh device` 에 넘기면 아무것도 매칭되지 않았고, 게이트는 그것을 전송 계층 문제로 해석해 Xcode 를 열고 30초를 기다린 뒤 "no connected iPhone" 으로 중지했다 — 기기는 꽂혀 있고 신뢰돼 있었다(실측 2026-08-23). `device_capture.sh devices` 가 CoreDevice Identifier 를 4번째 필드로 싣고 선택자가 그것도 매칭한다. 연결된 기기가 있는데 선택자가 아무것도 못 고르면 이제 "matches none" 으로 실패하며 연결된 기기 목록을 보여주고, 엉뚱한 Xcode 복구를 열지 않는다.
+
+### Fixed — 모달 화면의 미커버 crop 이 배경 글자를 글리프 조각으로 실었다
+- iOS 는 시트가 뜨면 그 뒤를 접근성 트리에서 감추므로 배경 피드 전체가 uncoveredRegion 으로 잡히고, 자산 추출이 running text 를 16×16 조각으로 잘랐다. 재현본에 `87`·`열심`·`점프` 조각이 흩어졌는데 구조 diff(라벨→프레임 매칭)는 all-present 로 통과했다(실측 2026-08-23, Threads 게시물 옵션 시트). `clone_view_codegen.py` 가 어떤 측정 요소도 겹치지 않는 32pt 이하 미커버 crop 을 이제 싣지 않는다 — 빈 영역이 조각보다 낫다. witness 판정은 scroll rebase 전의 측정 좌표로 한다(rebase 후 literal 과 비교하면 좌표계가 섞여 조각 전부가 witnessed 로 오판된다).
+
 ### Added — 실기기 클론은 원본의 이름을 단다
 - `observe` 가 bundle ID 를 확정하는 자리에서 기기가 보고한 앱 이름을 `.autobot/clone/target.json` 에 남기고, `clone_run.sh install` 이 그 이름을 `CFBundleDisplayName` 으로 넣는다(`clone_device_project.py --display-name`, `CLONE_APP_DISPLAY_NAME` 으로 덮어씀). bundle ID·타깃·바이너리는 clone 의 것 그대로 — 원본 옆에 나란히 설치되어야 대조가 된다. SKILL 에 Step 6c 로 적었다(그동안 `install` 은 문서에 없었다).
 

@@ -308,6 +308,52 @@ class TestCropPlacement(unittest.TestCase):
             self.assertEqual(len(records), len(MEASUREMENT["elements"]))
 
 
+class TestOrphanShards(unittest.TestCase):
+    """A modal's uncovered regions must not ship glyph shards.
+
+    iOS hides everything behind a sheet from the accessibility tree, so the
+    background has no measured elements and the uncovered-region pass slices its
+    running text into glyph-sized crops. Painted back they read as a layout bug
+    — and the structural diff (label→frame matching) still passes. Measured
+    2026-08-23 on Threads' post-options sheet: shards of "87", "열심", "점프".
+    """
+
+    def _generate_with_uncovered(self, regions):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace(root, {"s1": "Auto0001View"},
+                      [{"type": "screen", "statekey": "s1", "name": "auto-0001"}])
+            (root / "assets").mkdir(parents=True, exist_ok=True)
+            (root / "assets" / "manifest.json").write_text(json.dumps({"assets": [
+                {"sourceMeasurement": str(root / "screens" / "auto-0001.json"),
+                 "sha256": sha,
+                 "element": {"role": "uncoveredRegion", "frame": frame}}
+                for sha, frame in regions
+            ]}), encoding="utf-8")
+            generate(root)
+            return elements_of(root / "Sources" / "Auto0001View.swift")
+
+    def test_a_glyph_sized_crop_no_element_witnesses_is_dropped(self):
+        # y=700 is far from every measured element in MEASUREMENT.
+        records = self._generate_with_uncovered([
+            ("shard", {"x": 200.0, "y": 700.0, "width": 16.0, "height": 16.0}),
+        ])
+        self.assertEqual([r for r in records if r.get("asset") == "shard"], [])
+
+    def test_a_crop_bigger_than_a_glyph_is_kept(self):
+        records = self._generate_with_uncovered([
+            ("avatar", {"x": 200.0, "y": 700.0, "width": 48.0, "height": 48.0}),
+        ])
+        self.assertEqual(len([r for r in records if r.get("asset") == "avatar"]), 1)
+
+    def test_a_small_crop_inside_a_measured_control_is_kept(self):
+        # Overlaps the 24x24 "검색" button at (335, 59) — a real icon.
+        records = self._generate_with_uncovered([
+            ("icon", {"x": 336.0, "y": 60.0, "width": 20.0, "height": 20.0}),
+        ])
+        self.assertEqual(len([r for r in records if r.get("asset") == "icon"]), 1)
+
+
 class TestScrolling(unittest.TestCase):
     """The content scrolls; the chrome does not.
 
