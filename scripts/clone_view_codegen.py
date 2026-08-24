@@ -144,6 +144,52 @@ def uncovered_crops(root: Path, stem: str) -> list[tuple[str, dict]]:
     return found
 
 
+ORPHAN_SHARD_MAX_PT = 32.0
+_WITNESS_AREA_FRACTION = 0.25
+
+
+def drop_orphan_shards(uncovered: list[tuple[str, dict]],
+                       measurement: dict) -> list[tuple[str, dict]]:
+    """Uncovered crops minus the text shards a modal leaves behind.
+
+    When a sheet is up, iOS hides everything behind it from the accessibility
+    tree, so the background feed has no measured elements at all — and the
+    uncovered-region pass then slices its running text into glyph-sized crops.
+    Painted back, those read as a layout bug, worse than the empty region they
+    replace (measured 2026-08-23: Threads' post-options sheet shipped shards of
+    "87", "열심", "점프" from the post behind it, and the structural diff still
+    said every spec element was present).
+
+    A crop earns its place when it is bigger than a glyph, or when some measured
+    element overlaps it — an icon or avatar sitting inside a real control.
+    Witnesses come from the measurement (screen coordinates, pre-scroll-rebase),
+    because comparing against rebased literals mixes coordinate spaces and
+    quietly marks every shard as witnessed. Full-bleed wrappers overlap
+    everything, so they witness nothing.
+    """
+    elements = measurement.get("elements") or []
+    points = (measurement.get("screen") or {}).get("points") or {}
+    area_limit = (_num(points.get("width"), 375.0)
+                  * _num(points.get("height"), 812.0) * _WITNESS_AREA_FRACTION)
+    witnesses = []
+    for element in elements:
+        if not ((element.get("label") or "").strip() or element.get("text")):
+            continue
+        frame = element.get("frame") or {}
+        w, h = _num(frame.get("width")), _num(frame.get("height"))
+        if w * h < area_limit:
+            witnesses.append((_num(frame.get("x")), _num(frame.get("y")), w, h))
+    kept = []
+    for sha, frame in uncovered:
+        x, y = _num(frame.get("x")), _num(frame.get("y"))
+        w, h = _num(frame.get("width")), _num(frame.get("height"))
+        if w > ORPHAN_SHARD_MAX_PT or h > ORPHAN_SHARD_MAX_PT or any(
+                x < wx + ww and wx < x + w and y < wy + wh and wy < y + h
+                for wx, wy, ww, wh in witnesses):
+            kept.append((sha, frame))
+    return kept
+
+
 SCROLL_ROLES = {"AXScrollView", "AXCollectionView", "AXTable"}
 
 
@@ -283,7 +329,8 @@ def element_literals(measurement: dict, actions: set[str],
                 picture["x"] = round(picture["x"] - box["x"], 1)
                 picture["y"] = round(picture["y"] - box["y"], 1)
             literals.append(picture)
-    for offset, (sha, frame) in enumerate(uncovered or []):
+    for offset, (sha, frame) in enumerate(
+            drop_orphan_shards(uncovered or [], measurement)):
         literals.append({
             "id": len(elements) + 10000 + offset,
             "x": _num(frame.get("x")), "y": _num(frame.get("y")),

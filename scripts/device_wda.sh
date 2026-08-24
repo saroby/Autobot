@@ -468,17 +468,25 @@ _prepare_wda_bootstrap() {
 }
 
 _collect_connected_devices() {
-  local line udid state name
+  local line udid state name coredevice
   udids=()
   names=()
+  all_names=()
   while IFS= read -r line; do
     [[ "$line" == OK:* ]] || continue
     udid="$(cut -f1 <<<"${line#OK: }")"
     state="$(cut -f2 <<<"${line#OK: }")"
     name="$(cut -f3 <<<"${line#OK: }")"
+    coredevice="$(cut -f4 <<<"${line#OK: }")"
     # `paired` is only a trust record — `connected` is the live transport.
     [[ "$state" == "connected" ]] || continue
-    if [[ -n "$want" && "$udid" != "$want" && "$name" != *"$want"* ]]; then
+    all_names+=("$name ($udid)")
+    # A selector may be the hardware UDID, a name fragment, or the CoreDevice
+    # UUID — the Identifier column of `devicectl list devices`, which is the
+    # one a person most likely copied. They look alike; treating the CoreDevice
+    # UUID as unmatched used to misdiagnose a connected phone as absent.
+    if [[ -n "$want" && "$udid" != "$want" && "$name" != *"$want"* \
+          && "$coredevice" != "$want" ]]; then
       continue
     fi
     udids+=("$udid")
@@ -505,8 +513,21 @@ _open_xcode_for_device_recovery() {
 }
 
 cmd_device() {
-  local want="${1:-}" line udid state name udids=() names=()
+  local want="${1:-}" line udid state name udids=() names=() all_names=()
   _collect_connected_devices
+
+  # Devices ARE connected, the selector just matches none of them. That is a
+  # different failure from an empty transport: the CoreDevice tunnel is alive,
+  # so opening Xcode to "recover" it answers a question nobody asked while the
+  # real mistake — a typo, or a UUID from some other tool — goes unmentioned.
+  if [[ "${#udids[@]}" -eq 0 && "${#all_names[@]}" -gt 0 ]]; then
+    echo "ERROR: '${want}' matches none of the ${#all_names[@]} connected iPhone(s):" >&2
+    for name in "${all_names[@]}"; do
+      echo "ERROR:   $name" >&2
+    done
+    echo "ERROR: pass the hardware UDID, the device name, or the Identifier from 'xcrun devicectl list devices'" >&2
+    return 1
+  fi
 
   if [[ "${#udids[@]}" -eq 0 ]] && _open_xcode_for_device_recovery; then
     local timeout="${CLONE_XCODE_RECOVERY_TIMEOUT:-30}" elapsed=0
@@ -1614,7 +1635,7 @@ cmd_swipe() {
 
 cmd_doctor() {
   local want="${1:-}" bundle_id="${2:-}" failures=0 version drivers developer team
-  local udids=() names=() target_udid="" target_name="" apps available_kb free_mb
+  local udids=() names=() all_names=() target_udid="" target_name="" apps available_kb free_mb
   # Sized to what a run actually consumes, not to what it needs to start.
   # Measured 2026-08-23: doctor passed at 3538MB free and the run then died with
   # ENOSPC — the WDA/Xcode builds, the captures and the render cache spent all

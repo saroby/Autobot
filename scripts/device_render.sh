@@ -21,8 +21,14 @@ set -euo pipefail
 BUNDLE_ID="autobot.clone.preview"
 DEPLOY_TARGET="${CLONE_IOS_TARGET:-17.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RENDER_CACHE="${CLONE_RENDER_CACHE:-$SCRIPT_DIR/../.autobot/clone/render-cache}"
-DEVICE_PROFILE="${CLONE_DEVICE_PROFILE:-$SCRIPT_DIR/../.autobot/clone/device-profile.json}"
+# cwd-relative like every other clone script. The scripts run from wherever the
+# plugin is installed (the repo, or ~/.claude/plugins/cache/...), but the clone
+# lives in the USER'S project — a SCRIPT_DIR-relative default pointed into the
+# plugin cache and failed `functional`/`polish` with "needs a device profile"
+# while observe had just written one. Measured 2026-08-23.
+CLONE_ROOT="${CLONE_ROOT:-.autobot/clone}"
+RENDER_CACHE="${CLONE_RENDER_CACHE:-$CLONE_ROOT/render-cache}"
+DEVICE_PROFILE="${CLONE_DEVICE_PROFILE:-$CLONE_ROOT/device-profile.json}"
 # Global, not a local of main(): the EXIT trap fires after main returns, and
 # under `set -u` a local by then is an unbound-variable error on a good run.
 WORK=""

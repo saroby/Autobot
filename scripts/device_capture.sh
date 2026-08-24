@@ -40,8 +40,14 @@ for d in devs:
     udid = hp.get("udid") or d.get("identifier", "")
     tunnel = d.get("connectionProperties", {}).get("tunnelState", "unknown")
     name = d.get("deviceProperties", {}).get("name", "?")
-    # tab-separated: udid, tunnelState, name
-    print(f"OK: {udid}\t{tunnel}\t{name}")
+    # The CoreDevice UUID is what `devicectl list devices` prints as its
+    # Identifier column. It is NOT the hardware UDID, and a caller who copied
+    # it from that table should still find the device (measured 2026-08-23:
+    # passing it selected nothing and the gate misdiagnosed "no connected
+    # iPhone" with the phone plugged in and trusted).
+    coredevice = d.get("identifier", "")
+    # tab-separated: udid, tunnelState, name, coredeviceId
+    print(f"OK: {udid}\t{tunnel}\t{name}\t{coredevice}")
 if not found:
     print("WARN: no connected physical iOS device — plug an iPhone in via USB and trust this Mac")
 ')"

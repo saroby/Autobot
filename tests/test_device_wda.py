@@ -50,6 +50,9 @@ def devicectl_json(devices: list[tuple[str, str, str]]) -> str:
             "hardwareProperties": {"udid": udid, "reality": "physical"},
             "deviceProperties": {"name": name},
             "connectionProperties": {"tunnelState": state},
+            # What `devicectl list devices` prints as the Identifier column —
+            # NOT the hardware UDID, but the value a person most likely copied.
+            "identifier": f"COREDEV-{udid}",
         }
         for udid, name, state in devices
     ]}})
@@ -166,6 +169,26 @@ class TestCloneWdaDeviceGate(unittest.TestCase):
         self.assertEqual(value["osVersion"], "26.5.2")
         self.assertEqual(value["osBuild"], "23F84")
         self.assertEqual(value["connectionState"], "connected")
+
+    def test_the_coredevice_identifier_selects_the_device_too(self):
+        # `devicectl list devices` shows the CoreDevice UUID as its Identifier
+        # column. Passing it used to select nothing, and the gate then opened
+        # Xcode and waited 30s for a phone that was plugged in the whole time.
+        r = run_device(ONE, "COREDEV-00008101-AAA")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertEqual(r.stdout.strip(), "00008101-AAA")
+
+    def test_a_selector_matching_no_connected_device_names_the_real_mistake(self):
+        # Connected phones exist — the transport is fine, so "no connected
+        # iPhone" (and the Xcode recovery it triggers) is a misdiagnosis. The
+        # error must say the selector matched nothing and list what IS there.
+        r = run_device(ONE, "SOME-OTHER-UUID",
+                       extra_env={"CLONE_AUTO_OPEN_XCODE": "1"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("matches none", r.stderr)
+        self.assertIn("heewook의 iPhone (00008101-AAA)", r.stderr)
+        self.assertNotIn("no connected iPhone", r.stderr)
+        self.assertNotIn("opening Xcode", r.stderr)
 
     def test_paired_but_disconnected_is_not_a_device(self):
         r = run_device(NONE_CONNECTED)
