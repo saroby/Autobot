@@ -1,7 +1,7 @@
 {
   "name": "autobot",
-  "version": "0.13.10",
-  "description": "App idea to App Store review in one command. Enterprise-grade iOS 26+ app builder with parallel agent orchestration, self-improving build process, and end-to-end ASO-optimized review submission (metadata + screenshots + binary + AXI-Homepage product registration).",
+  "version": "0.14.0",
+  "description": "Idea-to-ship comprehensive development plugin: product blueprinting (SSOT interviews, per-screen specs), parallel-agent build pipeline with self-improving retrospectives, deployment, and store operations (metadata, screenshots, review submission). The build pipeline's current implementation targets iOS 26+; standalone commands (ssot, screen, make, feedback, ...) work in any project.",
   "author": {
     "name": "saroby"
   }

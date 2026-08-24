@@ -1,9 +1,15 @@
 # Autobot
 
-앱 아이디어 하나로 iOS 26+ 앱을 빌드하고 TestFlight에 배포하는 Claude Code 플러그인.
+아이디어에서 기획·빌드·배포·스토어 운영까지 개발 사이클 전반을 자동화하는 종합 개발 Claude Code 플러그인.
 
-전문 에이전트들이 병렬로 협업하여, 아키텍처 설계부터 TestFlight 업로드까지 자동으로 수행합니다.
+- **기획**: `/autobot:ssot` 제품 청사진 인터뷰, `/autobot:screen` 화면 단위 집중 기획 — 플랫폼과 무관하게 아무 프로젝트에서나 사용
+- **빌드**: 전문 에이전트들이 병렬로 협업하는 파이프라인 — 아키텍처 설계부터 빌드 검증까지 자동 수행. 현재 구현은 iOS 26+ 앱을 대상으로 합니다
+- **배포·운영**: TestFlight 업로드, App Store 메타데이터·스크린샷·심사 제출, 리뷰 피드백 학습 루프
+- **범용 유틸리티**: `/autobot:make` 등 파이프라인과 무관한 독립 명령
+
 성공 기준은 기능 완성뿐 아니라 아이디어에 맞는 룩앤필 계약 구현까지 포함합니다.
+
+> 빌드 파이프라인의 현재 타깃은 iOS 26+ 이지만 플러그인의 용도는 iOS 전용이 아닙니다. 다른 플랫폼 파이프라인은 같은 스펙 구조(`spec/parts/*.json`) 위에 추가될 수 있습니다.
 
 > 파이프라인 규격의 편집 단위는 `spec/parts/*.json`이고, 실행 호환 번들은 `spec/pipeline.json`입니다. `skills/autobot-orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
 > 상태 전이, Gate 실행/기록, Phase lifecycle 로그의 유일한 엔진은 `scripts/pipeline.sh` + `runtime.py`입니다.
