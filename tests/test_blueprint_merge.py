@@ -234,6 +234,23 @@ class TestCheckCommand(unittest.TestCase):
         self.assertIn("ERROR:", result.stderr)
         self.assertIn("F-001", result.stderr)
 
+    def test_a_missing_document_is_an_error_not_a_pass(self):
+        """경로 오타가 OK 로 보고되면 검사기가 검사기가 아니다."""
+        with tempfile.TemporaryDirectory() as temp:
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "check", str(Path(temp) / "nope.md")],
+                capture_output=True, text=True)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no such document", result.stderr)
+
+    def test_an_empty_document_passes(self):
+        """빈 파일은 항목이 없는 것이지 오류가 아니다 — 첫 회차의 정상 상태다."""
+        result = self._run("")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("OK:", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

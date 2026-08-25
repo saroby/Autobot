@@ -118,7 +118,14 @@ def main(argv: list[str]) -> int:
     if len(argv) != 3 or argv[1] != "check":
         print("ERROR: usage: blueprint_merge.py check <doc.md>", file=sys.stderr)
         return 2
-    items = read_doc(argv[2])
+    path = Path(argv[2])
+    # read_doc 은 없는 파일을 빈 문서로 돌려준다 — 첫 회차의 정상 상태다.
+    # 하지만 검사하라고 지목받은 파일이 없는 것은 "검사할 게 없다"가 아니라
+    # 오류다. 구분하지 않으면 경로 오타가 OK 로 보고된다.
+    if not path.is_file():
+        print(f"ERROR: no such document: {path}", file=sys.stderr)
+        return 1
+    items = read_doc(path)
     missing = unlabelled(items)
     if missing:
         print(f"ERROR: {len(missing)} item(s) have no valid 근거 label — "
