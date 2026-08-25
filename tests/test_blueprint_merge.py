@@ -7,7 +7,11 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.blueprint_doc import (
     EVIDENCE_OBSERVED,
@@ -24,6 +28,8 @@ from scripts.blueprint_merge import (
     drift_report,
     merge_items,
 )
+
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "blueprint_merge.py"
 
 
 class TestMergeOwnership(unittest.TestCase):
@@ -204,6 +210,29 @@ class TestDriftReport(unittest.TestCase):
 
         self.assertIn("근거가 바뀜", report)
         self.assertIn("F-001", report)
+
+
+class TestCheckCommand(unittest.TestCase):
+    def _run(self, text: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "features.md"
+            path.write_text(text, encoding="utf-8")
+            return subprocess.run(
+                [sys.executable, str(SCRIPT), "check", str(path)],
+                capture_output=True, text=True)
+
+    def test_a_document_whose_items_are_all_labelled_passes(self):
+        result = self._run("## F-001 피드\n근거: 관찰\n\n카드 3장.\n")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("OK:", result.stdout)
+
+    def test_an_unlabelled_item_fails_and_is_named(self):
+        result = self._run("## F-001 피드\n\n카드 3장.\n")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR:", result.stderr)
+        self.assertIn("F-001", result.stderr)
 
 
 if __name__ == "__main__":

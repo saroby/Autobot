@@ -33,6 +33,8 @@ from blueprint_doc import (  # noqa: E402
     NOTE_KIND_CONFLICT,
     Item,
     Note,
+    read_doc,
+    unlabelled,
 )
 
 NOTE_ABSENT = Note(NOTE_KIND_ABSENT, "관찰: 최근 회차에 없음")
@@ -109,3 +111,24 @@ def drift_report(existing: list[Item], incoming: list[Item]) -> str:
                         + "\n".join(f"- {b.id} {b.title}: 문서 \"{b.body}\" / "
                                     f"관찰 \"{a.body}\"" for b, a in conflicts))
     return "\n\n".join(sections) + "\n"
+
+
+def main(argv: list[str]) -> int:
+    """`blueprint_merge.py check <doc.md>` — 사람이 라벨 계약을 확인하는 유일한 진입점."""
+    if len(argv) != 3 or argv[1] != "check":
+        print("ERROR: usage: blueprint_merge.py check <doc.md>", file=sys.stderr)
+        return 2
+    items = read_doc(argv[2])
+    missing = unlabelled(items)
+    if missing:
+        print(f"ERROR: {len(missing)} item(s) have no valid 근거 label — "
+              "every item must declare who owns it:", file=sys.stderr)
+        for item in missing:
+            print(f"ERROR:   {item.id} {item.title}", file=sys.stderr)
+        return 1
+    print(f"OK: {len(items)} item(s), every one labelled")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
