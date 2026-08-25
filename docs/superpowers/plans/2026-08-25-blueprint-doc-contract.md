@@ -1209,3 +1209,111 @@ git commit -m "feat(blueprint): check 커맨드 — 라벨 계약을 사람이 �
 `ssot/*.md` 를 항목으로 읽고, 쓰고, 사람의 편집을 지키며 병합하고, 무엇이 달라졌는지 보고할 수 있다. **관찰 계층은 아직 없다** — 분할 ②(iOS 관찰 → `observed/` 생성 → `ssot/` 초안 합성)와 ③(웹)이 이 계약 위에 데이터를 붓는다.
 
 `scripts/blueprint_merge.py check` 가 유일한 사용자 표면이고, 스킬 파일(`skills/autobot-blueprint/SKILL.md`)과 커맨드(`commands/blueprint.md`)는 분할 ②에서 쓴다 — 관찰 없이 스킬 문서를 쓰면 아직 못 하는 일을 약속하게 된다.
+
+---
+
+## 개정 — 노트에 종류 필드 (Task 7 수정 라운드 2)
+
+**왜**: Task 7 재리뷰가 남긴 미해결 지적 — 기계가 쓴 충돌 노트를 판별할 수단이 접두사 문자열밖에 없어서, 사람이 그 노트에 주석을 덧붙이면(`⚠ 관찰이 다름: 카드 5장 ← 확인함, 우리는 3장 유지`) 다음 회차에 통째로 갈아끼워진다. 기계를 흉내내는 상황이 아니라 **주석을 다는 자연스러운 행동**에서 손실이 나므로 모델을 고친다.
+
+아래가 `Task 1·2·3·6·7` 의 해당 부분을 대체하는 최종 계약이다. 앞선 태스크 본문은 이 절 이전의 상태를 기록한 이력이다.
+
+### `scripts/blueprint_doc.py`
+
+```python
+@dataclass(frozen=True)
+class Note:
+    """기계가 항목에 덧붙인 메모. `kind` 가 소유권과 교체 대상을 결정한다.
+
+    문자열만으로는 기계 노트와 사람이 손댄 줄을 가를 수 없다 — 접두사가 같으면
+    사람이 덧붙인 주석까지 다음 병합이 갈아끼운다. 종류를 실어 보내면 병합이
+    문자열이 아니라 `kind` 로 판별하므로 사람의 주석이 안전해진다.
+    """
+    kind: str
+    text: str
+
+
+NOTE_KIND_PLAIN = "note"          # 종류 없는 메모 (사람이 손댄 것 포함)
+NOTE_KIND_ABSENT = "absent"       # 관찰에서 사라짐
+NOTE_KIND_CONFLICT = "conflict"   # 사람 항목과 관찰이 불일치
+```
+
+`Item.notes` 의 타입은 `list[Note]` 다.
+
+정규식과 렌더:
+
+```python
+_NOTE = re.compile(r"^>\s*⟦auto(?::([a-z]+))?⟧\s?(.*)$")
+```
+
+```python
+        note = _NOTE.match(line)
+        if note:
+            current.notes.append(Note(note.group(1) or NOTE_KIND_PLAIN,
+                                      note.group(2).strip()))
+            continue
+```
+
+```python
+        lines.extend(f"> ⟦auto:{note.kind}⟧ {note.text}" for note in item.notes)
+```
+
+`NOTE_MARKER` 상수는 `"⟦auto⟧"` 대신 `"⟦auto:"` 접두사로 바뀌므로 제거하고, 종류를 포함한 형태만 쓴다.
+
+### `scripts/blueprint_merge.py`
+
+```python
+NOTE_ABSENT = Note(NOTE_KIND_ABSENT, "관찰: 최근 회차에 없음")
+NOTE_CONFLICT_PREFIX = "⚠ 관찰이 다름: "
+```
+
+사라진 항목 (Task 6 자리):
+
+```python
+        if candidate is None:
+            if (item.evidence == EVIDENCE_OBSERVED
+                    and not any(note.kind == NOTE_KIND_ABSENT for note in item.notes)):
+                item = replace(item, notes=[*item.notes, NOTE_ABSENT])
+            merged.append(item)
+            continue
+```
+
+충돌 (Task 7 자리):
+
+```python
+        if item.evidence == EVIDENCE_OURS:
+            notes = list(item.notes)
+            # 갈아끼우는 것은 새 관찰이 있을 때뿐이고, 갈아끼우는 대상은
+            # **기계가 쓴 conflict 노트뿐**이다. 사람이 그 줄에 덧붙인 주석은
+            # kind 가 다르므로 살아남는다.
+            if candidate.body:
+                notes = [note for note in notes if note.kind != NOTE_KIND_CONFLICT]
+                if candidate.body != item.body:
+                    notes.append(Note(NOTE_KIND_CONFLICT,
+                                      f"{NOTE_CONFLICT_PREFIX}{candidate.body}"))
+            merged.append(replace(item, notes=notes))
+            continue
+```
+
+### 테스트 갱신
+
+기존 테스트에서 `notes` 리터럴을 `Note` 로 바꾼다. 그리고 이 개정이 실제로 무엇을 지키는지 고정하는 테스트를 `TestConflictWithHumanDecision` 에 추가한다:
+
+```python
+    def test_a_note_the_person_edited_is_not_replaced_by_the_next_conflict(self):
+        """사람이 기계 노트에 주석을 달면 그 줄은 사람 것이 된다.
+
+        문자열 접두사로 판별하던 때는 이 주석이 다음 회차에 통째로 갈아끼워졌다.
+        """
+        annotated = Note(NOTE_KIND_PLAIN, "⚠ 관찰이 다름: 카드 5장 ← 확인함, 3장 유지")
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
+                         body="카드 3장 + 필터", notes=[annotated])]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 7장")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertIn(annotated, merged[0].notes)
+        self.assertIn(Note(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 7장"),
+                      merged[0].notes)
+```
