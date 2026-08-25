@@ -151,3 +151,8 @@ def write_doc(path: Path | str, items: list[Item], heading: str = "") -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def unlabelled(items: list[Item]) -> list[Item]:
+    """근거 라벨이 없거나 알 수 없는 항목. 하나라도 있으면 문서가 계약을 어긴 것이다."""
+    return [item for item in items if item.evidence not in EVIDENCE_LABELS]

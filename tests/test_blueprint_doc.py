@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 
 from scripts.blueprint_doc import (
+    EVIDENCE_LABELS,
     EVIDENCE_OBSERVED,
     EVIDENCE_OURS,
     NOTE_KIND_ABSENT,
@@ -21,6 +22,7 @@ from scripts.blueprint_doc import (
     parse_items,
     read_doc,
     render_items,
+    unlabelled,
     write_doc,
 )
 
@@ -122,6 +124,27 @@ class TestDocFiles(unittest.TestCase):
                       [Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED)])
 
             self.assertEqual([p.name for p in directory.iterdir()], ["features.md"])
+
+
+class TestLabelValidation(unittest.TestCase):
+    def test_an_item_without_a_label_is_reported(self):
+        """검사되지 않는 규칙은 규칙이 아니다."""
+        items = parse_items("## F-001 피드\n\n카드 3장.\n")
+
+        self.assertEqual([item.id for item in unlabelled(items)], ["F-001"])
+
+    def test_an_unknown_label_is_reported_too(self):
+        """오타난 라벨이 통과하면 병합이 그 항목을 사람 것으로 오인한다."""
+        items = parse_items("## F-001 피드\n근거: 추측\n\n카드 3장.\n")
+
+        self.assertEqual([item.id for item in unlabelled(items)], ["F-001"])
+
+    def test_every_valid_label_passes(self):
+        text = "".join(
+            f"## F-00{index} 항목\n근거: {label}\n\n본문.\n\n"
+            for index, label in enumerate(sorted(EVIDENCE_LABELS)))
+
+        self.assertEqual(unlabelled(parse_items(text)), [])
 
 
 if __name__ == "__main__":
