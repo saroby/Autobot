@@ -26,7 +26,10 @@ EVIDENCE_LABELS = {
 _HEADING = re.compile(r"^##\s+([A-Z]-\d+)\s+(.*?)\s*$")
 _EVIDENCE = re.compile(r"^근거:\s*(.+?)\s*$")
 _IMAGE = re.compile(r'<img\s+src="([^"]+)"')
-_NOTE = re.compile(r"^>\s?(.*)$")
+# 기계 노트는 전용 마커를 달고 나간다. `>` 만으로 가르면 사람이 본문에 쓴
+# 평범한 인용문이 기계 메모로 재분류되어 다음 렌더에서 항목 아래로 밀려난다.
+NOTE_MARKER = "⟦auto⟧"
+_NOTE = re.compile(r"^>\s*" + re.escape(NOTE_MARKER) + r"\s?(.*)$")
 
 
 @dataclass
@@ -95,7 +98,7 @@ def render_item(item: Item) -> str:
         lines.extend(["", item.body])
     if item.notes:
         lines.append("")
-        lines.extend(f"> {note}" for note in item.notes)
+        lines.extend(f"> {NOTE_MARKER} {note}" for note in item.notes)
     return "\n".join(lines)
 
 
