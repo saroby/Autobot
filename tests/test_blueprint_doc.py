@@ -19,6 +19,7 @@ from scripts.blueprint_doc import (
     NOTE_KIND_ABSENT,
     NOTE_KIND_PLAIN,
     Document,
+    DocumentWriteRefused,
     Item,
     Note,
     image_line,
@@ -27,6 +28,7 @@ from scripts.blueprint_doc import (
     read_doc,
     render_document,
     render_items,
+    malformed_headings,
     unlabelled,
     write_doc,
 )
@@ -109,6 +111,72 @@ class TestParseItems(unittest.TestCase):
         self.assertEqual(items[0].body, "> 인용문입니다.")
 
 
+class TestHeadingsThatAreNotItems(unittest.TestCase):
+    """항목이 되지 못한 `## ` 줄은 조용히 직전 항목 본문으로 흡수된다.
+
+    그 직전 항목이 `관찰` 이면 다음 병합이 본문을 통째로 갈아끼우므로 사람이
+    손으로 넣은 섹션이 지워진다. 파서가 막을 수는 없지만 검사가 잡을 수는 있다.
+    """
+
+    def test_a_section_without_an_id_is_reported(self):
+        text = """## F-001 피드
+근거: 관찰
+
+카드 3장.
+
+## 우리가 빠뜨린 것 — 오프라인 모드
+근거: 우리 결정
+
+네트워크가 없을 때 캐시를 보여줘야 한다.
+"""
+
+        stray = malformed_headings(text)
+
+        self.assertEqual(stray, [(6, "## 우리가 빠뜨린 것 — 오프라인 모드")])
+
+    def test_an_id_outside_the_five_prefixes_is_not_an_item(self):
+        """접두사는 `V-`/`P-`/`F-`/`E-`/`D-` 다섯뿐이다 — 오타를 항목으로 받으면 안 된다."""
+        text = "## X-001 피드\n근거: 관찰\n\n카드 3장.\n"
+
+        self.assertEqual(parse_items(text), [])
+        self.assertEqual(malformed_headings(text), [(1, "## X-001 피드")])
+
+    def test_every_spec_prefix_is_an_item(self):
+        text = "".join(f"## {prefix}-001 항목\n근거: 관찰\n\n본문.\n\n"
+                       for prefix in "VPFED")
+
+        self.assertEqual([item.id for item in parse_items(text)],
+                         ["V-001", "P-001", "F-001", "E-001", "D-001"])
+        self.assertEqual(malformed_headings(text), [])
+
+    def test_a_heading_inside_a_code_fence_does_not_split_the_item(self):
+        """코드펜스 안의 `## F-999` 는 사람이 쓴 예시다 — 항목이 아니다."""
+        text = """## F-001 피드
+근거: 관찰
+
+이렇게 씁니다:
+
+```markdown
+## F-999 가짜
+근거: 관찰
+```
+"""
+
+        items = parse_items(text)
+
+        self.assertEqual([item.id for item in items], ["F-001"])
+        self.assertEqual(unlabelled(items), [])
+        self.assertIn("## F-999 가짜", items[0].body)
+        self.assertEqual(malformed_headings(text), [])
+
+    def test_a_subheading_is_ordinary_body(self):
+        """`### ` 는 항목 구분자가 아니다 — 사람이 본문에 쓰는 평범한 마크다운이다."""
+        text = "## F-001 피드\n근거: 관찰\n\n### 세부\n\n카드 3장.\n"
+
+        self.assertEqual(malformed_headings(text), [])
+        self.assertIn("### 세부", parse_items(text)[0].body)
+
+
 class TestRenderRoundTrip(unittest.TestCase):
     def test_parsing_then_rendering_preserves_every_field(self):
         """병합은 파싱→수정→렌더링이다. 라운드트립이 새면 조용히 내용을 잃는다."""
@@ -182,6 +250,27 @@ class TestDocFiles(unittest.TestCase):
 
             self.assertEqual(path.read_text(encoding="utf-8"), TestPreamble.TEXT)
             self.assertEqual(read_doc(path), document)
+
+    def test_writing_no_items_over_a_document_that_has_some_is_refused(self):
+        """항목 0개는 '빈 문서' 일 수도 '못 읽었다' 일 수도 있다 — 후자를 쓰면 파일이 빈다."""
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "features.md"
+            path.write_text("## X-001 피드\n근거: 관찰\n\n카드 3장.\n",
+                            encoding="utf-8")
+
+            with self.assertRaises(DocumentWriteRefused):
+                write_doc(path, read_doc(path))
+
+            self.assertIn("카드 3장.", path.read_text(encoding="utf-8"))
+
+    def test_writing_an_empty_document_to_a_new_path_is_fine(self):
+        """첫 회차에는 항목이 0개인 것이 정상이다."""
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "features.md"
+
+            write_doc(path, Document())
+
+            self.assertEqual(path.read_text(encoding="utf-8"), "")
 
     def test_writing_leaves_no_temporary_file_behind(self):
         """제자리 덮어쓰기 금지가 이 레포의 규칙이다 (CONVENTIONS.md 원자성)."""

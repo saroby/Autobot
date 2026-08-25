@@ -33,7 +33,9 @@ from blueprint_doc import (  # noqa: E402
     NOTE_KIND_CONFLICT,
     Item,
     Note,
-    read_doc,
+    duplicate_ids,
+    malformed_headings,
+    parse_document,
     unlabelled,
 )
 
@@ -125,13 +127,33 @@ def main(argv: list[str]) -> int:
     if not path.is_file():
         print(f"ERROR: no such document: {path}", file=sys.stderr)
         return 1
-    items = read_doc(path).items
+    text = path.read_text(encoding="utf-8")
+    items = parse_document(text).items
+    broken = False
+    # 항목이 되지 못한 `## ` 줄. 조용히 직전 항목 본문으로 흡수되므로, 검사가
+    # 잡지 않으면 다음 회차에 그 글이 사라지고 아무도 이유를 모른다.
+    stray = malformed_headings(text)
+    if stray:
+        broken = True
+        print(f"ERROR: {len(stray)} heading(s) are not items — they are absorbed "
+              "into the previous item and deleted on the next round:", file=sys.stderr)
+        for number, line in stray:
+            print(f"ERROR:   line {number}: {line}", file=sys.stderr)
+    duplicates = duplicate_ids(items)
+    if duplicates:
+        broken = True
+        print(f"ERROR: {len(duplicates)} duplicate item id(s) — an id is the merge "
+              "key and the address other documents cite:", file=sys.stderr)
+        for item_id in duplicates:
+            print(f"ERROR:   {item_id}", file=sys.stderr)
     missing = unlabelled(items)
     if missing:
+        broken = True
         print(f"ERROR: {len(missing)} item(s) have no valid 근거 label — "
               "every item must declare who owns it:", file=sys.stderr)
         for item in missing:
             print(f"ERROR:   {item.id} {item.title}", file=sys.stderr)
+    if broken:
         return 1
     print(f"OK: {len(items)} item(s), every one labelled")
     return 0

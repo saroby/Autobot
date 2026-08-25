@@ -31,7 +31,16 @@ EVIDENCE_LABELS = {
 # 새로 만들지 않는다. 원본을 인라인 HTML 로 폭만 제한해 싣는다.
 IMAGE_WIDTH = 220
 
-_HEADING = re.compile(r"^##\s+([A-Z]-\d+)\s+(.*?)\s*$")
+# 접두사는 스펙이 정한 다섯 개뿐이다 (`V-` 제품, `P-` 원칙, `F-` 기능,
+# `E-` 엔티티, `D-` 디자인). 아무 대문자나 받으면 오타난 ID 가 멀쩡한 항목인
+# 척한다.
+_HEADING = re.compile(r"^##\s+([VPFED]-\d+)\s+(.*?)\s*$")
+# 항목이 되지 못한 `## ` 줄. 무시되는 것이 아니라 직전 항목 본문으로 흡수되고,
+# 그 항목이 `관찰` 이면 다음 회차가 본문을 통째로 갈아끼우며 함께 지운다.
+_ANY_HEADING = re.compile(r"^##\s")
+# 코드펜스 안의 `## F-999 …` 는 사람이 쓴 예시지 항목이 아니다. 가르면 멀쩡한
+# 문서가 라벨 없는 항목을 갖게 되고 `check` 가 ERROR 를 낸다.
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
 _EVIDENCE = re.compile(r"^근거:\s*(.+?)\s*$")
 # 줄 **전체**가 이미지 태그일 때만 이미지 줄이다. 아무 데나 찾으면 같은 줄에
 # 사람이 쓴 문장까지 통째로 흡수해 렌더에서 잃는다 — 스펙 규칙 6 이 이미지를
@@ -129,8 +138,11 @@ def parse_document(text: str) -> Document:
     preamble_lines: list[str] = []
     current: Item | None = None
     body_lines: list[str] = []
+    fenced = False
     for line in text.splitlines():
-        heading = _HEADING.match(line)
+        if _FENCE.match(line):
+            fenced = not fenced
+        heading = None if fenced else _HEADING.match(line)
         if heading:
             if current is not None:
                 items.append(_finish(current, body_lines))
@@ -140,7 +152,7 @@ def parse_document(text: str) -> Document:
         if current is None:
             preamble_lines.append(line)
             continue
-        if _absorb(current, line):
+        if not fenced and _absorb(current, line):
             continue
         body_lines.append(line)
     if current is not None:
@@ -184,6 +196,24 @@ def render_document(document: Document) -> str:
     return "\n\n".join(parts) + "\n"
 
 
+class DocumentWriteRefused(RuntimeError):
+    """항목 0개로, 항목이 있던 문서를 덮어쓰려는 시도."""
+
+
+def _refuse_to_blank(path: Path, document: Document) -> None:
+    """항목을 하나도 못 뽑았는데 파일에는 `## ` 줄이 있으면 쓰지 않는다.
+
+    항목 0개는 두 가지를 뜻할 수 있다 — 정말 빈 문서이거나, 파서가 문서를
+    통째로 못 읽었거나. 후자에 쓰기를 허용하면 사람이 쓴 문서가 빈 파일이 된다.
+    """
+    if document.items or not path.is_file():
+        return
+    existing = path.read_text(encoding="utf-8")
+    if any(_ANY_HEADING.match(line) for line in existing.splitlines()):
+        raise DocumentWriteRefused(
+            f"{path}: 항목 0개로 덮어쓰려 한다 — 원본에 `## ` 줄이 있다")
+
+
 def read_doc(path: Path | str) -> Document:
     path = Path(path)
     if not path.is_file():
@@ -194,6 +224,7 @@ def read_doc(path: Path | str) -> Document:
 def write_doc(path: Path | str, document: Document) -> None:
     """제자리에서 덮어쓰지 않는다 — CONVENTIONS.md 의 원자성 규칙."""
     path = Path(path)
+    _refuse_to_blank(path, document)
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
@@ -205,6 +236,41 @@ def write_doc(path: Path | str, document: Document) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def malformed_headings(text: str) -> list[tuple[int, str]]:
+    """`## ` 로 시작하지만 항목 형식이 아닌 줄의 (줄번호, 원문).
+
+    이런 줄은 조용히 직전 항목의 본문이 된다. 사람이 ID 없이 손으로 추가한
+    섹션이 바로 이 모양이고, 직전 항목이 `관찰` 이면 다음 병합이 본문을 통째로
+    갈아끼우며 그 글을 지운다. 흡수는 무성(無聲)이면 안 된다.
+    """
+    stray: list[tuple[int, str]] = []
+    fenced = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        if _FENCE.match(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if _ANY_HEADING.match(line) and not _HEADING.match(line):
+            stray.append((number, line.strip()))
+    return stray
+
+
+def duplicate_ids(items: list[Item]) -> list[str]:
+    """두 번 이상 나온 항목 ID.
+
+    ID 는 병합의 키이고 다른 문서가 참조하는 주소다. 중복이 있으면 뒤의 항목은
+    이번 회차에 관찰됐는데도 `없음` 표시를 받는다 — 문서가 거짓말을 한다.
+    """
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for item in items:
+        if item.id in seen and item.id not in duplicates:
+            duplicates.append(item.id)
+        seen.add(item.id)
+    return duplicates
 
 
 def unlabelled(items: list[Item]) -> list[Item]:

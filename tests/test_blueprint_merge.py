@@ -325,6 +325,31 @@ class TestCheckCommand(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no such document", result.stderr)
 
+    def test_a_heading_that_is_not_an_item_is_rejected(self):
+        """사람이 ID 없이 손으로 넣은 섹션은 다음 회차에 지워진다 — 조용히 통과시키면 안 된다."""
+        result = self._run("## F-001 피드\n근거: 관찰\n\n카드 3장.\n\n"
+                           "## 우리가 빠뜨린 것\n근거: 우리 결정\n\n캐시를 보여준다.\n")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not items", result.stderr)
+        self.assertIn("우리가 빠뜨린 것", result.stderr)
+
+    def test_a_heading_inside_a_code_fence_is_not_reported(self):
+        """멀쩡한 문서가 코드펜스 하나로 ERROR 를 받으면 검사기를 아무도 안 믿는다."""
+        result = self._run("## F-001 피드\n근거: 관찰\n\n```\n## F-999 가짜\n```\n")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("OK:", result.stdout)
+
+    def test_a_duplicate_id_is_rejected(self):
+        """ID 는 병합의 키다. 중복이면 뒤의 항목이 관찰됐는데도 `없음` 표시를 받는다."""
+        result = self._run("## F-002 X\n근거: 관찰\n\n가.\n\n"
+                           "## F-002 Y\n근거: 관찰\n\n나.\n")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("duplicate", result.stderr)
+        self.assertIn("F-002", result.stderr)
+
     def test_an_empty_document_passes(self):
         """빈 파일은 항목이 없는 것이지 오류가 아니다 — 첫 회차의 정상 상태다."""
         result = self._run("")
