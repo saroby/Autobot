@@ -16,6 +16,8 @@
 - **근거 라벨 4종은 정확히 이 문자열이다**: `관찰`, `공개자료`, `가설(미검증)`, `우리 결정`. 다른 표기 금지.
 - **항목 ID 접두사**: `V-` 제품, `P-` 원칙, `F-` 기능, `E-` 엔티티, `D-` 디자인. 형식은 `<접두사><숫자>` (예: `F-012`).
 - **한국어 산문.** 스킬·문서·주석의 설명문은 한국어로 쓴다 (코드 식별자는 영문).
+- **`merge_items` 는 순수 함수다.** 입력으로 받은 `Item` 을 제자리에서 바꾸지 않는다. 노트를 붙이거나 지울 때는 `dataclasses.replace` 로 복사본을 만든다. 호출자가 넘긴 문서가 몰래 바뀌면 드리프트 리포트가 병합 전·후를 비교할 수 없다.
+- **형제 모듈 import 는 `sys.path.insert` 관례를 따른다** (`scripts/device_measure.py` 와 동일). 그 결과 테스트의 `scripts.blueprint_doc` 와 스크립트 내부의 `blueprint_doc` 은 **런타임에 서로 다른 모듈이 되고 `Item` 클래스도 둘이 된다.** 문자열·필드 비교만 하면 안전하지만, `Item` 을 이 경계 너머로 `isinstance` 하거나 등가 비교하면 조용히 실패한다. `blueprint_merge.py` 의 docstring 에 이 경고를 명시한다.
 - **테스트 실행**: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_X`
 
 ## File Structure
@@ -579,11 +581,21 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.blueprint_merg
 그래서 소유권을 파일이 아니라 항목에 둔다. 근거 라벨이 그 표시다.
 선례는 `clone_run.sh` 의 `views.json` 병합 — 이미 있는 이름은 유지하고 새
 state 만 새 이름을 받는다.
+
+`merge_items` 는 순수 함수다. 입력 항목을 제자리에서 바꾸면 호출자가 넘긴
+문서가 몰래 달라지고, 드리프트 리포트가 병합 전·후를 비교할 수 없게 된다.
+
+주의 — 형제 모듈 import 는 이 레포의 `sys.path.insert` 관례를 따르므로
+(`device_measure.py` 와 동일), 테스트가 쓰는 `scripts.blueprint_doc` 과 여기서
+쓰는 `blueprint_doc` 은 런타임에 **서로 다른 모듈**이고 `Item` 클래스도 둘이다.
+문자열과 필드만 비교하면 안전하다. `Item` 을 이 경계 너머로 `isinstance` 하거나
+등가 비교하지 말 것 — 조용히 False 가 된다.
 """
 
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -694,7 +706,8 @@ NOTE_ABSENT = "관찰: 최근 회차에 없음"
 ```python
         if candidate is None:
             if item.evidence == EVIDENCE_OBSERVED and NOTE_ABSENT not in item.notes:
-                item.notes.append(NOTE_ABSENT)
+                # 복사본에 붙인다 — 호출자가 넘긴 문서를 바꾸지 않는다.
+                item = replace(item, notes=[*item.notes, NOTE_ABSENT])
             merged.append(item)
             continue
         if item.evidence == EVIDENCE_OURS:
@@ -795,11 +808,11 @@ NOTE_CONFLICT_PREFIX = "⚠ 관찰이 다름: "
 ```python
         if item.evidence == EVIDENCE_OURS:
             # 회차마다 쌓으면 어느 것이 최신인지 알 수 없다 — 마지막 것만 남긴다.
-            item.notes = [note for note in item.notes
-                          if not note.startswith(NOTE_CONFLICT_PREFIX)]
+            notes = [note for note in item.notes
+                     if not note.startswith(NOTE_CONFLICT_PREFIX)]
             if candidate.body and candidate.body != item.body:
-                item.notes.append(f"{NOTE_CONFLICT_PREFIX}{candidate.body}")
-            merged.append(item)
+                notes.append(f"{NOTE_CONFLICT_PREFIX}{candidate.body}")
+            merged.append(replace(item, notes=notes))
             continue
 ```
 
