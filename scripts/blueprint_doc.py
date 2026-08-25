@@ -27,9 +27,18 @@ EVIDENCE_LABELS = {
     EVIDENCE_OBSERVED, EVIDENCE_PUBLIC, EVIDENCE_HYPOTHESIS, EVIDENCE_OURS,
 }
 
+# 폭 지정은 마크다운 `![]()` 로 불가능하고, 이 레포는 stdlib 만 쓰므로 썸네일을
+# 새로 만들지 않는다. 원본을 인라인 HTML 로 폭만 제한해 싣는다.
+IMAGE_WIDTH = 220
+
 _HEADING = re.compile(r"^##\s+([A-Z]-\d+)\s+(.*?)\s*$")
 _EVIDENCE = re.compile(r"^근거:\s*(.+?)\s*$")
-_IMAGE = re.compile(r'<img\s+src="([^"]+)"')
+# 줄 **전체**가 이미지 태그일 때만 이미지 줄이다. 아무 데나 찾으면 같은 줄에
+# 사람이 쓴 문장까지 통째로 흡수해 렌더에서 잃는다 — 스펙 규칙 6 이 이미지를
+# 문서 어디에나 흔하게 만들므로, 이미지 옆에 설명을 붙이는 것은 예외가 아니라
+# 기본 사용법이다. 저장하는 것도 `src` 가 아니라 줄 원문이다: 사람이 정한
+# `alt`·`width` 는 되살릴 방법이 없으므로 애초에 버리지 않는다.
+_IMAGE_LINE = re.compile(r"^\s*(?:<img\s[^>]*>\s*)+$")
 # 기계 노트는 전용 마커를 달고 나간다. `>` 만으로 가르면 사람이 본문에 쓴
 # 평범한 인용문이 기계 메모로 재분류되어 다음 렌더에서 항목 아래로 밀려난다.
 _NOTE = re.compile(r"^>\s*⟦auto(?::([a-z]+))?⟧\s?(.*)$")
@@ -63,6 +72,11 @@ class Item:
     notes: list[Note] = field(default_factory=list)
 
 
+def image_line(src: str) -> str:
+    """관찰이 새로 싣는 이미지 줄. 파서가 그대로 되읽는 형태다."""
+    return f'<img src="{src}" width="{IMAGE_WIDTH}">'
+
+
 def _finish(item: Item, body_lines: list[str]) -> Item:
     item.body = "\n".join(body_lines).strip()
     return item
@@ -93,9 +107,8 @@ def parse_items(text: str) -> list[Item]:
             current.evidence = unicodedata.normalize("NFC", label.strip())
             current.evidence_ref = reference.strip()
             continue
-        image = _IMAGE.search(line)
-        if image:
-            current.images.append(image.group(1))
+        if _IMAGE_LINE.match(line):
+            current.images.append(line.strip())
             continue
         note = _NOTE.match(line)
         if note:
@@ -115,9 +128,7 @@ def render_item(item: Item) -> str:
     if item.evidence_ref:
         evidence = f"{evidence} · {item.evidence_ref}"
     lines.append(f"근거: {evidence}")
-    # 폭 지정은 마크다운 `![]()` 로 불가능하고, 이 레포는 stdlib 만 쓰므로
-    # 썸네일을 새로 만들지 않는다. 원본을 인라인 HTML 로 폭만 제한해 싣는다.
-    lines.extend(f'<img src="{src}" width="220">' for src in item.images)
+    lines.extend(item.images)
     if item.body:
         lines.extend(["", item.body])
     if item.notes:

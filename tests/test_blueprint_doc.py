@@ -20,6 +20,7 @@ from scripts.blueprint_doc import (
     NOTE_KIND_PLAIN,
     Item,
     Note,
+    image_line,
     parse_items,
     read_doc,
     render_items,
@@ -46,7 +47,8 @@ class TestParseItems(unittest.TestCase):
         self.assertEqual(items[0].title, "피드 무한 스크롤")
         self.assertEqual(items[0].evidence, EVIDENCE_OBSERVED)
         self.assertEqual(items[0].evidence_ref, "observed/inventory.md#feed")
-        self.assertEqual(items[0].images, ["../observed/raw/03-feed.png"])
+        self.assertEqual(items[0].images,
+                         ['<img src="../observed/raw/03-feed.png" width="220">'])
         self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
 
     def test_blockquote_lines_are_machine_notes_not_body(self):
@@ -64,6 +66,31 @@ class TestParseItems(unittest.TestCase):
         self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
         self.assertEqual([(note.kind, note.text) for note in items[0].notes],
                           [(NOTE_KIND_PLAIN, "관찰: 최근 회차에 없음")])
+
+    def test_a_line_that_mixes_prose_and_an_image_stays_in_the_body(self):
+        """이미지 옆의 설명은 사람이 쓴 글이다 — 이미지로 흡수되면 저장 한 번에 사라진다."""
+        text = """## F-012 피드
+근거: 우리 결정
+
+핵심은 필터다 <img src="../observed/raw/03-feed.png" alt="피드" width="600"> 처럼 붙인다.
+"""
+
+        items = parse_items(text)
+
+        self.assertEqual(items[0].images, [])
+        self.assertEqual(
+            items[0].body,
+            '핵심은 필터다 <img src="../observed/raw/03-feed.png" alt="피드" '
+            'width="600"> 처럼 붙인다.')
+
+    def test_an_image_line_keeps_the_attributes_the_person_wrote(self):
+        """`src` 만 뽑아 다시 쓰면 사람이 정한 `alt`·`width` 를 되살릴 방법이 없다."""
+        original = '<img src="../observed/raw/03-feed.png" alt="피드" width="600">'
+
+        items = parse_items(f"## F-012 피드\n근거: 관찰\n{original}\n")
+
+        self.assertEqual(items[0].images, [original])
+        self.assertIn(original, render_items(items))
 
     def test_a_blockquote_without_the_marker_stays_in_the_body(self):
         """`>` 는 사람이 쓰는 평범한 마크다운이다 — 마커 없는 인용문은 본문이다."""
@@ -85,7 +112,7 @@ class TestRenderRoundTrip(unittest.TestCase):
         original = [
             Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED,
                  evidence_ref="observed/inventory.md#login",
-                 images=["../observed/raw/01-login.png"],
+                 images=[image_line("../observed/raw/01-login.png")],
                  body="이메일과 비밀번호를 받는다.",
                  notes=[Note(NOTE_KIND_ABSENT, "관찰: 최근 회차에 없음")]),
             Item(id="F-002", title="다크 모드", evidence=EVIDENCE_OURS,
