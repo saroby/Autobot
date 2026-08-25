@@ -12,6 +12,7 @@ import unittest
 from scripts.blueprint_doc import (
     EVIDENCE_OBSERVED,
     EVIDENCE_OURS,
+    EVIDENCE_PUBLIC,
     NOTE_KIND_CONFLICT,
     Item,
     Note,
@@ -193,6 +194,16 @@ class TestDriftReport(unittest.TestCase):
         items = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED)]
 
         self.assertEqual(drift_report(items, items), "변화 없음.\n")
+
+    def test_a_relabelled_item_is_reported(self):
+        """라벨은 소유권을 정한다 — 그 변화가 리포트에서 사라지면 안 된다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_PUBLIC, body="카드")]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED, body="카드")]
+
+        report = drift_report(existing, incoming)
+
+        self.assertIn("근거가 바뀜", report)
+        self.assertIn("F-001", report)
 
 
 if __name__ == "__main__":

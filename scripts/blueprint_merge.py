@@ -84,7 +84,10 @@ def drift_report(existing: list[Item], incoming: list[Item]) -> str:
     changed = [(before[i], after[i]) for i in before
                if i in after and before[i].evidence != EVIDENCE_OURS
                and after[i].body != before[i].body]
-    if not (added or absent or conflicts or changed):
+    relabelled = [(before[i], after[i]) for i in before
+                  if i in after and before[i].evidence != EVIDENCE_OURS
+                  and after[i].evidence != before[i].evidence]
+    if not (added or absent or conflicts or changed or relabelled):
         return "변화 없음.\n"
     sections: list[str] = []
     if added:
@@ -97,6 +100,10 @@ def drift_report(existing: list[Item], incoming: list[Item]) -> str:
         sections.append("## 내용이 바뀜\n\n"
                         + "\n".join(f"- {b.id} {b.title}: {b.body} → {a.body}"
                                     for b, a in changed))
+    if relabelled:
+        sections.append("## 근거가 바뀜\n\n"
+                        + "\n".join(f"- {b.id} {b.title}: {b.evidence} → {a.evidence}"
+                                    for b, a in relabelled))
     if conflicts:
         sections.append("## 충돌 — 사람이 정한 항목과 관찰이 다름\n\n"
                         + "\n".join(f"- {b.id} {b.title}: 문서 \"{b.body}\" / "
