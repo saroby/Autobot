@@ -1371,3 +1371,44 @@ NOTE_CONFLICT_PREFIX = "⚠ 관찰이 다름: "
   ```
 
   다른 테스트들도 `Note` 객체 등가 비교 대신 `(note.kind, note.text)` 튜플 비교로 바꾼다.
+
+### 개정 — 드리프트에 라벨 변화 (Task 8 수정 라운드 1)
+
+Task 8 리뷰가 짚은 사각지대: **근거 라벨만 바뀐 회차는 네 카테고리 어디에도 안 잡힌다.** `added`·`absent` 는 id 존재 여부만 보고, `conflicts` 는 기존이 `우리 결정` 일 때만 성립하며, `changed` 는 본문만 비교한다. 그래서 항목이 재분류돼도 리포트에 흔적이 남지 않는다.
+
+라벨은 소유권을 정하는 값이므로 그 변화는 사람이 알아야 하고, "커버리지와 근거를 숨기지 않는다"가 이 레포의 규칙이다.
+
+`drift_report` 에 다섯 번째 집합을 넣는다:
+
+```python
+    relabelled = [(before[i], after[i]) for i in before
+                  if i in after and before[i].evidence != EVIDENCE_OURS
+                  and after[i].evidence != before[i].evidence]
+```
+
+`if not (added or absent or conflicts or changed):` 조건에 `relabelled` 를 더하고, `changed` 섹션 뒤에 붙인다:
+
+```python
+    if relabelled:
+        sections.append("## 근거가 바뀜\n\n"
+                        + "\n".join(f"- {b.id} {b.title}: {b.evidence} → {a.evidence}"
+                                    for b, a in relabelled))
+```
+
+`우리 결정` 을 제외하는 이유: 그 라벨은 사람이 직접 붙인 것이고 병합이 바꾸지 않으므로, 리포트가 알릴 새 정보가 아니다.
+
+테스트 하나를 `TestDriftReport` 에 추가한다:
+
+```python
+    def test_a_relabelled_item_is_reported(self):
+        """라벨은 소유권을 정한다 — 그 변화가 리포트에서 사라지면 안 된다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_PUBLIC, body="카드")]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED, body="카드")]
+
+        report = drift_report(existing, incoming)
+
+        self.assertIn("근거가 바뀜", report)
+        self.assertIn("F-001", report)
+```
+
+`EVIDENCE_PUBLIC` 을 테스트 파일의 import 에 추가한다.
