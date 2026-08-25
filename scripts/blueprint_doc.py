@@ -31,8 +31,34 @@ _EVIDENCE = re.compile(r"^근거:\s*(.+?)\s*$")
 _IMAGE = re.compile(r'<img\s+src="([^"]+)"')
 # 기계 노트는 전용 마커를 달고 나간다. `>` 만으로 가르면 사람이 본문에 쓴
 # 평범한 인용문이 기계 메모로 재분류되어 다음 렌더에서 항목 아래로 밀려난다.
-NOTE_MARKER = "⟦auto⟧"
-_NOTE = re.compile(r"^>\s*" + re.escape(NOTE_MARKER) + r"\s?(.*)$")
+_NOTE = re.compile(r"^>\s*⟦auto(?::([a-z]+))?⟧\s?(.*)$")
+
+
+@dataclass(frozen=True)
+class Note:
+    """기계가 항목에 덧붙인 메모. `kind` 가 소유권과 교체 대상을 결정한다.
+
+    문자열만으로는 기계 노트와 사람이 손댄 줄을 가를 수 없다 — 접두사가 같으면
+    사람이 덧붙인 주석까지 다음 병합이 갈아끼운다. 종류를 실어 보내면 병합이
+    문자열이 아니라 `kind` 로 판별하므로 사람의 주석이 안전해진다.
+    """
+    kind: str
+    text: str
+
+    def __eq__(self, other: object) -> bool:
+        # `blueprint_merge.py` 는 형제 모듈 import 관례상 이 파일을 별도
+        # 모듈로 다시 불러온다 (`Item` 과 마찬가지로 이 파일 상단 참고). 그
+        # 쪽에서 만든 `Note` 는 여기 `Note` 와 클래스가 달라 기본 `__eq__`
+        # 는 그 경계를 넘으면 조용히 False 가 된다. 필드만 비교하면 안전하다.
+        try:
+            return (self.kind, self.text) == (other.kind, other.text)
+        except AttributeError:
+            return NotImplemented
+
+
+NOTE_KIND_PLAIN = "note"          # 종류 없는 메모 (사람이 손댄 것 포함)
+NOTE_KIND_ABSENT = "absent"       # 관찰에서 사라짐
+NOTE_KIND_CONFLICT = "conflict"   # 사람 항목과 관찰이 불일치
 
 
 @dataclass
@@ -43,7 +69,7 @@ class Item:
     evidence_ref: str = ""
     images: list[str] = field(default_factory=list)
     body: str = ""
-    notes: list[str] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
 
 
 def _finish(item: Item, body_lines: list[str]) -> Item:
@@ -79,7 +105,8 @@ def parse_items(text: str) -> list[Item]:
             continue
         note = _NOTE.match(line)
         if note:
-            current.notes.append(note.group(1).strip())
+            current.notes.append(Note(note.group(1) or NOTE_KIND_PLAIN,
+                                      note.group(2).strip()))
             continue
         body_lines.append(line)
     if current is not None:
@@ -101,7 +128,7 @@ def render_item(item: Item) -> str:
         lines.extend(["", item.body])
     if item.notes:
         lines.append("")
-        lines.extend(f"> {NOTE_MARKER} {note}" for note in item.notes)
+        lines.extend(f"> ⟦auto:{note.kind}⟧ {note.text}" for note in item.notes)
     return "\n".join(lines)
 
 

@@ -14,7 +14,10 @@ from pathlib import Path
 from scripts.blueprint_doc import (
     EVIDENCE_OBSERVED,
     EVIDENCE_OURS,
+    NOTE_KIND_ABSENT,
+    NOTE_KIND_PLAIN,
     Item,
+    Note,
     parse_items,
     read_doc,
     render_items,
@@ -56,7 +59,7 @@ class TestParseItems(unittest.TestCase):
         items = parse_items(text)
 
         self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
-        self.assertEqual(items[0].notes, ["관찰: 최근 회차에 없음"])
+        self.assertEqual(items[0].notes, [Note(NOTE_KIND_PLAIN, "관찰: 최근 회차에 없음")])
 
     def test_a_blockquote_without_the_marker_stays_in_the_body(self):
         """`>` 는 사람이 쓰는 평범한 마크다운이다 — 마커 없는 인용문은 본문이다."""
@@ -80,7 +83,7 @@ class TestRenderRoundTrip(unittest.TestCase):
                  evidence_ref="observed/inventory.md#login",
                  images=["../observed/raw/01-login.png"],
                  body="이메일과 비밀번호를 받는다.",
-                 notes=["관찰: 최근 회차에 없음"]),
+                 notes=[Note(NOTE_KIND_ABSENT, "관찰: 최근 회차에 없음")]),
             Item(id="F-002", title="다크 모드", evidence=EVIDENCE_OURS,
                  body="원본에 없다. 우리는 넣는다."),
             # 사람이 본문에 쓴 인용문. 마커가 없으므로 노트로 새지 않는다.

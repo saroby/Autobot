@@ -26,9 +26,16 @@ from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from blueprint_doc import EVIDENCE_OBSERVED, EVIDENCE_OURS, Item  # noqa: E402
+from blueprint_doc import (  # noqa: E402
+    EVIDENCE_OBSERVED,
+    EVIDENCE_OURS,
+    NOTE_KIND_ABSENT,
+    NOTE_KIND_CONFLICT,
+    Item,
+    Note,
+)
 
-NOTE_ABSENT = "관찰: 최근 회차에 없음"
+NOTE_ABSENT = Note(NOTE_KIND_ABSENT, "관찰: 최근 회차에 없음")
 NOTE_CONFLICT_PREFIX = "⚠ 관찰이 다름: "
 
 
@@ -39,22 +46,22 @@ def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
     for item in existing:
         candidate = fresh.pop(item.id, None)
         if candidate is None:
-            if item.evidence == EVIDENCE_OBSERVED and NOTE_ABSENT not in item.notes:
+            if (item.evidence == EVIDENCE_OBSERVED
+                    and not any(note.kind == NOTE_KIND_ABSENT for note in item.notes)):
                 # 복사본에 붙인다 — 호출자가 넘긴 문서를 바꾸지 않는다.
                 item = replace(item, notes=[*item.notes, NOTE_ABSENT])
             merged.append(item)
             continue
         if item.evidence == EVIDENCE_OURS:
             notes = list(item.notes)
-            # 갈아끼우는 것은 **새 관찰이 있을 때뿐**이다. 본문을 못 뽑은 회차가
-            # 이전 충돌 노트를 지워 버리면 "지우지도 덮지도 않는다"가 그 자리에서
-            # 깨진다 — 사람에게 이미 알린 불일치가 조용히 사라진다.
+            # 갈아끼우는 것은 새 관찰이 있을 때뿐이고, 갈아끼우는 대상은
+            # **기계가 쓴 conflict 노트뿐**이다. 사람이 그 줄에 덧붙인 주석은
+            # kind 가 다르므로 살아남는다.
             if candidate.body:
-                # 회차마다 쌓으면 어느 것이 최신인지 알 수 없다 — 마지막 것만 남긴다.
-                notes = [note for note in notes
-                         if not note.startswith(NOTE_CONFLICT_PREFIX)]
+                notes = [note for note in notes if note.kind != NOTE_KIND_CONFLICT]
                 if candidate.body != item.body:
-                    notes.append(f"{NOTE_CONFLICT_PREFIX}{candidate.body}")
+                    notes.append(Note(NOTE_KIND_CONFLICT,
+                                      f"{NOTE_CONFLICT_PREFIX}{candidate.body}"))
             merged.append(replace(item, notes=notes))
             continue
         merged.append(candidate)
