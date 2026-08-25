@@ -109,6 +109,28 @@ class TestConflictWithHumanDecision(unittest.TestCase):
 
         self.assertEqual(merged[0].notes, [f"{NOTE_CONFLICT_PREFIX}카드 7장"])
 
+    def test_an_observation_with_no_body_leaves_the_standing_conflict_alone(self):
+        """본문을 못 뽑은 회차는 새 관찰이 아니다 — 알린 불일치를 지우지 않는다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
+                         body="카드 3장 + 필터",
+                         notes=[f"{NOTE_CONFLICT_PREFIX}카드 5장"])]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED, body="")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].notes, [f"{NOTE_CONFLICT_PREFIX}카드 5장"])
+
+    def test_a_conflict_clears_once_the_observation_agrees(self):
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
+                         body="카드 5장",
+                         notes=[f"{NOTE_CONFLICT_PREFIX}카드 3장"])]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 5장")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].notes, [])
+
 
 if __name__ == "__main__":
     unittest.main()

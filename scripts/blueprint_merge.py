@@ -45,11 +45,16 @@ def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
             merged.append(item)
             continue
         if item.evidence == EVIDENCE_OURS:
-            # 회차마다 쌓으면 어느 것이 최신인지 알 수 없다 — 마지막 것만 남긴다.
-            notes = [note for note in item.notes
-                     if not note.startswith(NOTE_CONFLICT_PREFIX)]
-            if candidate.body and candidate.body != item.body:
-                notes.append(f"{NOTE_CONFLICT_PREFIX}{candidate.body}")
+            notes = list(item.notes)
+            # 갈아끼우는 것은 **새 관찰이 있을 때뿐**이다. 본문을 못 뽑은 회차가
+            # 이전 충돌 노트를 지워 버리면 "지우지도 덮지도 않는다"가 그 자리에서
+            # 깨진다 — 사람에게 이미 알린 불일치가 조용히 사라진다.
+            if candidate.body:
+                # 회차마다 쌓으면 어느 것이 최신인지 알 수 없다 — 마지막 것만 남긴다.
+                notes = [note for note in notes
+                         if not note.startswith(NOTE_CONFLICT_PREFIX)]
+                if candidate.body != item.body:
+                    notes.append(f"{NOTE_CONFLICT_PREFIX}{candidate.body}")
             merged.append(replace(item, notes=notes))
             continue
         merged.append(candidate)
