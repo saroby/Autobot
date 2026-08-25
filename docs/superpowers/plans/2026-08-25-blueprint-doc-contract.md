@@ -803,6 +803,28 @@ class TestConflictWithHumanDecision(unittest.TestCase):
         merged = merge_items(existing, incoming)
 
         self.assertEqual(merged[0].notes, [f"{NOTE_CONFLICT_PREFIX}카드 7장"])
+
+    def test_an_observation_with_no_body_leaves_the_standing_conflict_alone(self):
+        """본문을 못 뽑은 회차는 새 관찰이 아니다 — 알린 불일치를 지우지 않는다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
+                         body="카드 3장 + 필터",
+                         notes=[f"{NOTE_CONFLICT_PREFIX}카드 5장"])]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED, body="")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].notes, [f"{NOTE_CONFLICT_PREFIX}카드 5장"])
+
+    def test_a_conflict_clears_once_the_observation_agrees(self):
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
+                         body="카드 5장",
+                         notes=[f"{NOTE_CONFLICT_PREFIX}카드 3장"])]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 5장")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].notes, [])
 ```
 
 같은 파일 상단의 import 를 다음으로 바꾼다:
@@ -829,11 +851,16 @@ NOTE_CONFLICT_PREFIX = "⚠ 관찰이 다름: "
 
 ```python
         if item.evidence == EVIDENCE_OURS:
-            # 회차마다 쌓으면 어느 것이 최신인지 알 수 없다 — 마지막 것만 남긴다.
-            notes = [note for note in item.notes
-                     if not note.startswith(NOTE_CONFLICT_PREFIX)]
-            if candidate.body and candidate.body != item.body:
-                notes.append(f"{NOTE_CONFLICT_PREFIX}{candidate.body}")
+            notes = list(item.notes)
+            # 갈아끼우는 것은 **새 관찰이 있을 때뿐**이다. 본문을 못 뽑은 회차가
+            # 이전 충돌 노트를 지워 버리면 "지우지도 덮지도 않는다"가 그 자리에서
+            # 깨진다 — 사람에게 이미 알린 불일치가 조용히 사라진다.
+            if candidate.body:
+                # 회차마다 쌓으면 어느 것이 최신인지 알 수 없다 — 마지막 것만 남긴다.
+                notes = [note for note in notes
+                         if not note.startswith(NOTE_CONFLICT_PREFIX)]
+                if candidate.body != item.body:
+                    notes.append(f"{NOTE_CONFLICT_PREFIX}{candidate.body}")
             merged.append(replace(item, notes=notes))
             continue
 ```
@@ -842,7 +869,7 @@ NOTE_CONFLICT_PREFIX = "⚠ 관찰이 다름: "
 
 Run: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_blueprint_merge -v`
 
-Expected: PASS (9 tests)
+Expected: PASS (11 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -956,7 +983,7 @@ def drift_report(existing: list[Item], incoming: list[Item]) -> str:
 
 Run: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_blueprint_merge -v`
 
-Expected: PASS (11 tests)
+Expected: PASS (13 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1161,7 +1188,7 @@ if __name__ == "__main__":
 
 Run: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_blueprint_merge -v`
 
-Expected: PASS (13 tests)
+Expected: PASS (15 tests)
 
 - [ ] **Step 5: Run the whole suite**
 
