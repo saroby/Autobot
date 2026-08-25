@@ -26,6 +26,7 @@ EVIDENCE_LABELS = {
 _HEADING = re.compile(r"^##\s+([A-Z]-\d+)\s+(.*?)\s*$")
 _EVIDENCE = re.compile(r"^근거:\s*(.+?)\s*$")
 _IMAGE = re.compile(r'<img\s+src="([^"]+)"')
+_NOTE = re.compile(r"^>\s?(.*)$")
 
 
 @dataclass
@@ -69,6 +70,10 @@ def parse_items(text: str) -> list[Item]:
         image = _IMAGE.search(line)
         if image:
             current.images.append(image.group(1))
+            continue
+        note = _NOTE.match(line)
+        if note:
+            current.notes.append(note.group(1).strip())
             continue
         body_lines.append(line)
     if current is not None:

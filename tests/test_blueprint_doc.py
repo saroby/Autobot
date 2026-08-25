@@ -38,6 +38,21 @@ class TestParseItems(unittest.TestCase):
         self.assertEqual(items[0].images, ["../observed/raw/03-feed.png"])
         self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
 
+    def test_blockquote_lines_are_machine_notes_not_body(self):
+        """노트가 본문에 섞이면 다음 병합이 같은 경고를 다시 쌓는다."""
+        text = """## F-012 피드
+근거: 관찰
+
+스크롤 끝에서 다음 페이지를 불러온다.
+
+> 관찰: 최근 회차에 없음
+"""
+
+        items = parse_items(text)
+
+        self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
+        self.assertEqual(items[0].notes, ["관찰: 최근 회차에 없음"])
+
 
 if __name__ == "__main__":
     unittest.main()
