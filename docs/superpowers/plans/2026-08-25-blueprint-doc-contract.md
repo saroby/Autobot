@@ -1460,3 +1460,56 @@ import unicodedata
 ```
 
 테스트 파일 상단에 `import unicodedata` 를 추가한다.
+
+### 개정 — check 가 없는 파일을 통과시키지 않는다 (Task 10 수정 라운드 1)
+
+Task 10 리뷰가 낸 Critical: `blueprint_merge.py check <없는 경로>` 가 `OK` 로 끝난다. `read_doc` 은 없는 파일을 빈 목록으로 돌려주고(Task 4 가 그렇게 고정했다), 항목이 0개면 라벨 없는 항목도 0개이므로 검사가 통과한다. **경로 오타가 성공으로 보고된다.**
+
+`read_doc` 의 동작은 그대로 둔다 — 첫 회차에 `ssot/` 가 비어 있는 것은 정상이고, 그 자리에서 예외를 던지면 병합이 시작조차 못 한다. 구분은 **CLI 가** 한다: 검사하라고 지목받은 파일이 없는 것은 "검사할 게 없다"가 아니라 오류다.
+
+`main` 을 이렇게 고친다:
+
+```python
+def main(argv: list[str]) -> int:
+    if len(argv) != 3 or argv[1] != "check":
+        print("ERROR: usage: blueprint_merge.py check <doc.md>", file=sys.stderr)
+        return 2
+    path = Path(argv[2])
+    # read_doc 은 없는 파일을 빈 문서로 돌려준다 — 첫 회차의 정상 상태다.
+    # 하지만 검사하라고 지목받은 파일이 없는 것은 "검사할 게 없다"가 아니라
+    # 오류다. 구분하지 않으면 경로 오타가 OK 로 보고된다.
+    if not path.is_file():
+        print(f"ERROR: no such document: {path}", file=sys.stderr)
+        return 1
+    items = read_doc(path)
+    missing = unlabelled(items)
+    if missing:
+        print(f"ERROR: {len(missing)} item(s) have no valid 근거 label — "
+              "every item must declare who owns it:", file=sys.stderr)
+        for item in missing:
+            print(f"ERROR:   {item.id} {item.title}", file=sys.stderr)
+        return 1
+    print(f"OK: {len(items)} item(s), every one labelled")
+    return 0
+```
+
+테스트 두 개를 `TestCheckCommand` 에 추가한다:
+
+```python
+    def test_a_missing_document_is_an_error_not_a_pass(self):
+        """경로 오타가 OK 로 보고되면 검사기가 검사기가 아니다."""
+        with tempfile.TemporaryDirectory() as temp:
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "check", str(Path(temp) / "nope.md")],
+                capture_output=True, text=True)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no such document", result.stderr)
+
+    def test_an_empty_document_passes(self):
+        """빈 파일은 항목이 없는 것이지 오류가 아니다 — 첫 회차의 정상 상태다."""
+        result = self._run("")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("OK:", result.stdout)
+```
