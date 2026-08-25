@@ -40,7 +40,13 @@ _HEADING = re.compile(r"^##\s+([VPFED]-\d+)\s+(.*?)\s*$")
 _ANY_HEADING = re.compile(r"^##\s")
 # 코드펜스 안의 `## F-999 …` 는 사람이 쓴 예시지 항목이 아니다. 가르면 멀쩡한
 # 문서가 라벨 없는 항목을 갖게 되고 `check` 가 ERROR 를 낸다.
-_FENCE = re.compile(r"^\s*(?:```|~~~)")
+#
+# 다만 여닫이를 단순 토글로 세면 안 된다. ``` 블록 안에 `~~~` 줄이 하나 있으면
+# (마크다운 예시를 보여주는 문서에서 흔하다) 상태가 뒤집혀 그 뒤가 영영 "펜스
+# 안" 이 되고, 뒤따르는 `## F-002 …` 는 항목이 되지 못한 채 직전 항목 본문으로
+# 흡수된다 — 직전 항목이 `관찰` 이면 다음 병합이 사람의 글을 통째로 지운다.
+# 그래서 CommonMark 대로 마커의 문자와 길이를 맞춰 닫는다.
+_FENCE_LINE = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
 _EVIDENCE = re.compile(r"^근거:\s*(.+?)\s*$")
 # 줄 **전체**가 이미지 태그일 때만 이미지 줄이다. 아무 데나 찾으면 같은 줄에
 # 사람이 쓴 문장까지 통째로 흡수해 렌더에서 잃는다 — 스펙 규칙 6 이 이미지를
@@ -127,6 +133,49 @@ def _absorb(item: Item, line: str) -> bool:
     return False
 
 
+class _FenceState:
+    """코드펜스 안/밖. 여는 마커의 문자와 길이를 기억한다 (CommonMark).
+
+    펜스를 닫는 것은 **같은 문자**로, 여는 마커만큼 이상 길고, 뒤에 정보
+    문자열이 없는 줄뿐이다. 종류를 안 보고 세면 ``` 안의 `~~~` 한 줄이 펜스를
+    닫은 것으로 오인되고, 반대로 짝이 안 맞는 줄 하나가 뒤 전체를 펜스 안으로
+    만든다. 둘 다 항목을 삼키는 결과는 같다.
+    """
+
+    def __init__(self) -> None:
+        self._marker = ""
+        self.opened_at = 0
+        self.opened_line = ""
+
+    @property
+    def inside(self) -> bool:
+        return bool(self._marker)
+
+    def feed(self, number: int, line: str) -> bool:
+        """줄 하나를 넘기고, 그 줄이 펜스 안인지 돌려준다.
+
+        여는 줄과 닫는 줄 자체도 "안" 으로 본다 — 그 줄은 항목이 될 수 없다.
+        """
+        match = _FENCE_LINE.match(line)
+        if match is None:
+            return self.inside
+        marker = match.group("marker")
+        info = match.group("info")
+        if not self.inside:
+            # 백틱 펜스의 정보 문자열에는 백틱이 올 수 없다 (CommonMark).
+            # 인라인 코드가 든 산문 줄을 펜스로 오인하지 않으려는 규칙이다.
+            if marker[0] == "`" and "`" in info:
+                return False
+            self._marker = marker
+            self.opened_at = number
+            self.opened_line = line.strip()
+            return True
+        if (marker[0] == self._marker[0] and len(marker) >= len(self._marker)
+                and not info.strip()):
+            self._marker = ""
+        return True
+
+
 def parse_document(text: str) -> Document:
     """머리말과 `## <ID> <제목>` 항목들.
 
@@ -138,10 +187,9 @@ def parse_document(text: str) -> Document:
     preamble_lines: list[str] = []
     current: Item | None = None
     body_lines: list[str] = []
-    fenced = False
-    for line in text.splitlines():
-        if _FENCE.match(line):
-            fenced = not fenced
+    fence = _FenceState()
+    for number, line in enumerate(text.splitlines(), start=1):
+        fenced = fence.feed(number, line)
         heading = None if fenced else _HEADING.match(line)
         if heading:
             if current is not None:
@@ -246,16 +294,30 @@ def malformed_headings(text: str) -> list[tuple[int, str]]:
     갈아끼우며 그 글을 지운다. 흡수는 무성(無聲)이면 안 된다.
     """
     stray: list[tuple[int, str]] = []
-    fenced = False
+    fence = _FenceState()
     for number, line in enumerate(text.splitlines(), start=1):
-        if _FENCE.match(line):
-            fenced = not fenced
-            continue
-        if fenced:
+        if fence.feed(number, line):
             continue
         if _ANY_HEADING.match(line) and not _HEADING.match(line):
             stray.append((number, line.strip()))
     return stray
+
+
+def unclosed_fence(text: str) -> tuple[int, str] | None:
+    """문서 끝까지 닫히지 않은 코드펜스의 (여는 줄번호, 원문). 없으면 None.
+
+    닫히지 않은 펜스 뒤의 `## ` 줄은 전부 펜스 안으로 보여 항목이 되지 못하고
+    직전 항목 본문으로 흡수된다. `malformed_headings` 도 펜스 안을 건너뛰므로
+    이 검사가 없으면 그 흡수가 무성(無聲)이고, 직전 항목이 `관찰` 이면 다음
+    병합이 사람의 글을 통째로 지운다. 파서가 삼키는 것을 막을 수 없다면 최소한
+    소리는 내야 한다 — `malformed_headings` 가 이미 세운 기준이다.
+    """
+    fence = _FenceState()
+    for number, line in enumerate(text.splitlines(), start=1):
+        fence.feed(number, line)
+    if not fence.inside:
+        return None
+    return (fence.opened_at, fence.opened_line)
 
 
 def duplicate_ids(items: list[Item]) -> list[str]:

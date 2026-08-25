@@ -29,6 +29,7 @@ from scripts.blueprint_doc import (
     render_document,
     render_items,
     malformed_headings,
+    unclosed_fence,
     unlabelled,
     write_doc,
 )
@@ -168,6 +169,61 @@ class TestHeadingsThatAreNotItems(unittest.TestCase):
         self.assertEqual(unlabelled(items), [])
         self.assertIn("## F-999 가짜", items[0].body)
         self.assertEqual(malformed_headings(text), [])
+
+    def test_a_tilde_line_inside_a_backtick_fence_does_not_close_it(self):
+        """마크다운 예시를 보여주는 평범한 문서다 — 펜스는 같은 마커로만 닫힌다."""
+        text = """# 기능
+
+## F-001 피드
+근거: 관찰
+
+마크다운 예시:
+
+```markdown
+~~~
+```
+
+## F-002 오프라인 모드
+근거: 우리 결정
+
+캐시가 없으면 이 서비스는 반쪽이다. 이 문장은 사람이 썼다.
+"""
+
+        items = parse_items(text)
+
+        self.assertEqual([item.id for item in items], ["F-001", "F-002"])
+        self.assertEqual(items[1].evidence, EVIDENCE_OURS)
+        self.assertIn("이 문장은 사람이 썼다", items[1].body)
+        self.assertEqual(malformed_headings(text), [])
+        self.assertIsNone(unclosed_fence(text))
+
+    def test_a_fence_left_open_is_named_so_the_loss_is_not_silent(self):
+        """닫히지 않은 펜스는 뒤따르는 항목을 삼킨다 — 삼키더라도 소리는 내야 한다."""
+        text = """# 기능
+
+## F-001 피드
+근거: 관찰
+
+예시 코드:
+
+```swift
+let x = 1
+
+## F-002 오프라인 모드
+근거: 우리 결정
+
+캐시가 없으면 이 서비스는 반쪽이다. 이 문장은 사람이 썼다.
+"""
+
+        # 파서는 여전히 삼킨다 — 되살릴 방법이 없다. 그러나 무성이면 안 된다.
+        self.assertEqual([item.id for item in parse_items(text)], ["F-001"])
+        self.assertEqual(unclosed_fence(text), (8, "```swift"))
+
+    def test_a_balanced_fence_leaves_nothing_open(self):
+        """정상 문서가 `unclosed_fence` 에 걸리면 아무도 검사기를 안 믿는다."""
+        text = "## F-001 피드\n근거: 관찰\n\n```swift\nlet x = 1\n```\n"
+
+        self.assertIsNone(unclosed_fence(text))
 
     def test_a_subheading_is_ordinary_body(self):
         """`### ` 는 항목 구분자가 아니다 — 사람이 본문에 쓰는 평범한 마크다운이다."""

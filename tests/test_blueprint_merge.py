@@ -366,6 +366,46 @@ class TestCheckCommand(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("OK:", result.stdout)
 
+    def test_a_fence_left_open_is_rejected(self):
+        """닫히지 않은 펜스는 뒤따르는 `우리 결정` 항목을 삼킨다 — `OK` 를 내면 안 된다."""
+        result = self._run("""## F-001 피드
+근거: 관찰
+
+예시 코드:
+
+```swift
+let x = 1
+
+## F-002 오프라인 모드
+근거: 우리 결정
+
+캐시가 없으면 이 서비스는 반쪽이다. 이 문장은 사람이 썼다.
+""")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("never closed", result.stderr)
+        self.assertIn("line 6", result.stderr)
+
+    def test_a_tilde_line_inside_a_backtick_fence_keeps_the_next_item(self):
+        """마크다운 예시가 든 평범한 문서다 — 항목 두 개가 그대로 남아야 한다."""
+        result = self._run("""## F-001 피드
+근거: 관찰
+
+마크다운 예시:
+
+```markdown
+~~~
+```
+
+## F-002 오프라인 모드
+근거: 우리 결정
+
+캐시가 없으면 이 서비스는 반쪽이다. 이 문장은 사람이 썼다.
+""")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("OK: 2 item(s)", result.stdout)
+
     def test_a_duplicate_id_is_rejected(self):
         """ID 는 병합의 키다. 중복이면 뒤의 항목이 관찰됐는데도 `없음` 표시를 받는다."""
         result = self._run("## F-002 X\n근거: 관찰\n\n가.\n\n"

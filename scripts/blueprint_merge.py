@@ -36,6 +36,7 @@ from blueprint_doc import (  # noqa: E402
     duplicate_ids,
     malformed_headings,
     parse_document,
+    unclosed_fence,
     unlabelled,
 )
 
@@ -136,6 +137,17 @@ def main(argv: list[str]) -> int:
     text = path.read_text(encoding="utf-8")
     items = parse_document(text).items
     broken = False
+    # 닫히지 않은 코드펜스. 그 뒤의 `## ` 줄은 전부 펜스 안으로 보여 항목이 되지
+    # 못하고, stray 검사도 펜스 안을 건너뛰므로 아무 소리 없이 사라진다.
+    # 먼저 낸다 — 뒤의 검사들이 조용한 이유가 바로 이것이기 때문이다.
+    fence = unclosed_fence(text)
+    if fence is not None:
+        broken = True
+        opened_at, opened_line = fence
+        print("ERROR: a code fence is never closed — every `## ` line after it is "
+              "absorbed into the previous item and deleted on the next round:",
+              file=sys.stderr)
+        print(f"ERROR:   line {opened_at}: {opened_line}", file=sys.stderr)
     # 항목이 되지 못한 `## ` 줄. 조용히 직전 항목 본문으로 흡수되므로, 검사가
     # 잡지 않으면 다음 회차에 그 글이 사라지고 아무도 이유를 모른다.
     stray = malformed_headings(text)
