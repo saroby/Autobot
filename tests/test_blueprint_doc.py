@@ -372,5 +372,43 @@ class TestLabelValidation(unittest.TestCase):
         self.assertEqual(items[0].evidence, EVIDENCE_OURS)
 
 
+class TestUnicodeNormalization(unittest.TestCase):
+    """제목·본문·노트도 근거 라벨과 같은 이유로 NFC 여야 한다.
+
+    macOS 는 NFD 를 만든다 — 사람이 macOS 에서 편집하거나 관찰 레이어가 NFD 로
+    쓰면, 글자로는 같은 본문이 `!=` 로 갈린다. 정규화하지 않은 필드가 하나라도
+    있으면 그 필드를 비교하는 쪽(드리프트 리포트, 충돌 검사)이 매 회차 가짜
+    변화를 본다.
+    """
+
+    def test_a_decomposed_title_is_normalized(self):
+        decomposed_title = unicodedata.normalize("NFD", "피드")
+        self.assertNotEqual(decomposed_title, "피드")   # 전제 확인
+
+        items = parse_items(f"## F-001 {decomposed_title}\n근거: 관찰\n\n카드 3장.\n")
+
+        self.assertEqual(items[0].title, "피드")
+
+    def test_a_decomposed_body_is_normalized(self):
+        composed_body = "카드 3장."
+        decomposed_body = unicodedata.normalize("NFD", composed_body)
+        self.assertNotEqual(decomposed_body, composed_body)   # 전제 확인
+
+        items = parse_items(f"## F-001 피드\n근거: 관찰\n\n{decomposed_body}\n")
+
+        self.assertEqual(items[0].body, composed_body)
+
+    def test_a_decomposed_note_is_normalized(self):
+        composed_note = "관찰: 최근 회차에 없음"
+        decomposed_note = unicodedata.normalize("NFD", composed_note)
+        self.assertNotEqual(decomposed_note, composed_note)   # 전제 확인
+
+        items = parse_items(
+            f"## F-001 피드\n근거: 관찰\n\n카드 3장.\n\n"
+            f"> ⟦auto:absent⟧ {decomposed_note}\n")
+
+        self.assertEqual(items[0].notes[0].text, composed_note)
+
+
 if __name__ == "__main__":
     unittest.main()

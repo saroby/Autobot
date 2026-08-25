@@ -10,6 +10,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -279,6 +280,48 @@ class TestTheWholePath(unittest.TestCase):
         feed = {item.id: item for item in back.items}["F-001"]
         self.assertEqual([note.kind for note in feed.notes], [])
         self.assertEqual(feed.body, "카드 5장.")
+
+
+class TestUnicodeNormalizationAcrossRounds(unittest.TestCase):
+    """macOS 는 NFD 를 만든다 — 사람의 편집과 관찰 텍스트가 정규형만 다르면
+
+    글자로는 완전히 같은 내용인데 `merge_items`/`drift_report` 는 `!=` 로
+    비교하므로 매 회차 가짜 `changed` 를 보고하고, `우리 결정` 항목에는 매번
+    `⚠ 관찰이 다름:` 이 새로 붙는다 — 사람에게 존재하지 않는 불일치를
+    알리는 것이다. `blueprint_doc.parse_document` 가 NFC 로 정규화하면 이
+    시나리오 전체가 사라져야 한다.
+    """
+
+    def test_an_nfd_observation_of_an_identical_our_item_adds_no_conflict_note(self):
+        composed_body = "카드 3장 + 우리가 추가한 필터."
+        decomposed_body = unicodedata.normalize("NFD", composed_body)
+        self.assertNotEqual(decomposed_body, composed_body)   # 전제 확인
+
+        existing_text = f"## F-001 피드\n근거: 우리 결정\n\n{composed_body}\n"
+        incoming_text = f"## F-001 피드\n근거: 관찰\n\n{decomposed_body}\n"
+
+        existing = parse_document(existing_text).items
+        incoming = parse_document(incoming_text).items
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].body, composed_body)
+        self.assertEqual(merged[0].notes, [])
+
+    def test_an_nfd_re_observation_reports_no_drift(self):
+        composed_body = "카드 3장."
+        decomposed_body = unicodedata.normalize("NFD", composed_body)
+        self.assertNotEqual(decomposed_body, composed_body)   # 전제 확인
+
+        existing_text = f"## F-001 피드\n근거: 관찰\n\n{composed_body}\n"
+        incoming_text = f"## F-001 피드\n근거: 관찰\n\n{decomposed_body}\n"
+
+        existing = parse_document(existing_text).items
+        incoming = parse_document(incoming_text).items
+
+        report = drift_report(existing, incoming)
+
+        self.assertEqual(report, "변화 없음.\n")
 
 
 class TestDriftReport(unittest.TestCase):

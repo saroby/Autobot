@@ -106,7 +106,12 @@ def image_line(src: str) -> str:
 
 
 def _finish(item: Item, body_lines: list[str]) -> Item:
-    item.body = "\n".join(body_lines).strip()
+    # 근거 라벨과 같은 이유로 정규화한다 — macOS 는 NFD 를 만들고, 관찰
+    # 레이어가 쓰는 텍스트도 마찬가지다. 정규화하지 않으면 글자로는 똑같은
+    # 본문이 `!=` 로 갈려 매 회차 `changed` 로 보고되고, `우리 결정` 항목에는
+    # 매번 새 `⚠ 관찰이 다름:` 이 붙는다 — 사람 글과 관찰이 실제로는 한 글자도
+    # 다르지 않은데도.
+    item.body = unicodedata.normalize("NFC", "\n".join(body_lines).strip())
     return item
 
 
@@ -127,8 +132,11 @@ def _absorb(item: Item, line: str) -> bool:
         return True
     note = _NOTE.match(line)
     if note:
+        # 노트 본문도 정규화한다. `merge_items` 자체는 노트를 `kind` 로만
+        # 가르지만, 노트 텍스트는 렌더된 문서에 그대로 실려 사람과 다른
+        # 도구가 다시 읽는다 — 본문·라벨과 다른 정규형을 남겨 둘 이유가 없다.
         item.notes.append(Note(note.group(1) or NOTE_KIND_PLAIN,
-                               note.group(2).strip()))
+                               unicodedata.normalize("NFC", note.group(2).strip())))
         return True
     return False
 
@@ -194,7 +202,9 @@ def parse_document(text: str) -> Document:
         if heading:
             if current is not None:
                 items.append(_finish(current, body_lines))
-            current = Item(id=heading.group(1), title=heading.group(2), evidence="")
+            current = Item(id=heading.group(1),
+                           title=unicodedata.normalize("NFC", heading.group(2)),
+                           evidence="")
             body_lines = []
             continue
         if current is None:
