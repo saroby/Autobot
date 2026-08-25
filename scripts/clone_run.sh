@@ -508,6 +508,15 @@ cmd_polish() {
     else
       echo "WARN: AXe is not installed — no screen can be checked for missing elements" >&2
     fi
+    # Neither the element check above nor the pixel compare below says whether
+    # the generated Swift HAS structure — a feed emitted as N independent
+    # absolute blocks passes both. This is the third axis: every repeat group
+    # `structure/<stem>.json` declares must appear as an extracted component,
+    # or the screen silently reverted to flat replay.
+    if ! python3 "$_HERE/clone_structure_audit.py" "$CLONE_ROOT" "$stem" "$view"; then
+      echo "ERROR: $stem lost declared repeat structure — see above" >&2
+      failures=$((failures + 1))
+    fi
     # The comparison needs no simulator, so it runs alongside the next render
     # instead of after it — it was about half the wall time of a polish run.
     while [[ "$(jobs -rp | grep -c .)" -ge "$workers" ]]; do sleep 0.2; done

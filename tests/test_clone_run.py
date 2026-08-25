@@ -609,3 +609,31 @@ class TestVisualGateIsWired(unittest.TestCase):
     def test_the_bound_is_operator_overridable(self):
         self.assertTrue("CLONE_MAX_MISMATCH" in self.source,
                         "the bound must be tunable without editing the script")
+
+
+class TestStructureGateIsWired(unittest.TestCase):
+    """The third `polish` axis: did extraction happen, not just fidelity.
+
+    `device_render.sh` needs a real simulator, so no offline test can drive
+    `cmd_polish` far enough to observe `clone_structure_audit.py` actually run
+    (same limitation `TestVisualGateIsWired` works around above). What matters
+    here is the source contract: the per-screen loop must call it and must
+    count a non-zero exit as a failure — an unwired check is a screen that lost
+    its structure and `polish` still reports success.
+    """
+
+    def setUp(self):
+        self.source = SCRIPT.read_text(encoding="utf-8")
+        start = self.source.index("cmd_polish()")
+        self.polish = self.source[start:self.source.index("\n}\n", start)]
+
+    def test_the_per_screen_loop_calls_the_structure_audit(self):
+        self.assertIn("clone_structure_audit.py", self.polish)
+
+    def test_a_failed_audit_counts_toward_verification_failure(self):
+        start = self.polish.index("clone_structure_audit.py")
+        # The nearest `failures=$((failures + 1))` after the call is the branch
+        # that must fire when the audit exits non-zero — not just printed and
+        # discarded, which would leave `polish` reporting success anyway.
+        branch = self.polish[start:start + 300]
+        self.assertIn("failures=$((failures + 1))", branch)
