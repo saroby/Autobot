@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -464,6 +465,50 @@ let x = 1
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("OK:", result.stdout)
+
+    def test_a_directory_is_reported_as_not_a_file_not_as_missing(self):
+        """디렉터리는 '없다' 가 아니다 — 잘못된 원인을 말하면 경로를 고쳐도 계속 실패한다."""
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / "features.md"
+            directory.mkdir()
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "check", str(directory)],
+                capture_output=True, text=True)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ERROR:", result.stderr)
+        self.assertIn("not a file", result.stderr)
+        self.assertNotIn("no such document", result.stderr)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0,
+                     "root ignores file permissions — chmod 000 would not block the read")
+    def test_an_unreadable_file_is_an_error_not_a_bare_traceback(self):
+        """`read_text` 를 감싸지 않으면 PermissionError 가 접두사 없는 트레이스백을 낸다.
+
+        이 레포의 출력 접두사 정책(모든 줄이 OK:/WARN:/INFO:/ERROR: 로 시작)을
+        어기는 유일한 자리였다.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "features.md"
+            path.write_text("## F-001 피드\n근거: 관찰\n\n카드 3장.\n", encoding="utf-8")
+            path.chmod(0o000)
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), "check", str(path)],
+                    capture_output=True, text=True)
+            finally:
+                path.chmod(0o644)
+
+        self.assertEqual(result.returncode, 1)
+        for line in (result.stdout + result.stderr).splitlines():
+            if line.strip():
+                self.assertTrue(
+                    line.startswith(("OK:", "WARN:", "INFO:", "ERROR:")),
+                    msg=f"unprefixed output line: {line!r}")
+        self.assertIn("ERROR:", result.stderr)
+        self.assertIn("cannot read document", result.stderr)
+        self.assertNotIn("no such document", result.stderr)
 
 
 if __name__ == "__main__":

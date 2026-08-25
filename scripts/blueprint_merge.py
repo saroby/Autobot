@@ -131,10 +131,24 @@ def main(argv: list[str]) -> int:
     # read_doc 은 없는 파일을 빈 문서로 돌려준다 — 첫 회차의 정상 상태다.
     # 하지만 검사하라고 지목받은 파일이 없는 것은 "검사할 게 없다"가 아니라
     # 오류다. 구분하지 않으면 경로 오타가 OK 로 보고된다.
-    if not path.is_file():
+    if not path.exists():
         print(f"ERROR: no such document: {path}", file=sys.stderr)
         return 1
-    text = path.read_text(encoding="utf-8")
+    if not path.is_file():
+        # 존재는 하지만 파일이 아니다 (디렉터리 등). "no such document" 라고
+        # 하면 실제 원인과 다른 말을 하는 것이고, 사람이 경로를 아무리
+        # 고쳐도 같은 오류가 반복된다 — 세 경우(없음/파일 아님/못 읽음)는
+        # 각각 실제로 일어난 일을 말해야 한다.
+        print(f"ERROR: not a file: {path}", file=sys.stderr)
+        return 1
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        # 존재하고 파일이지만 읽을 수 없다 (권한 등). 여기서 막지 않으면
+        # 처리 안 된 예외가 접두사 없는 트레이스백을 찍어 출력 접두사 정책
+        # (모든 줄이 OK:/WARN:/INFO:/ERROR: 로 시작해야 한다)을 깬다.
+        print(f"ERROR: cannot read document: {path} ({exc})", file=sys.stderr)
+        return 1
     items = parse_document(text).items
     broken = False
     # 닫히지 않은 코드펜스. 그 뒤의 `## ` 줄은 전부 펜스 안으로 보여 항목이 되지
