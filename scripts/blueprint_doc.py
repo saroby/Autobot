@@ -62,6 +62,19 @@ NOTE_KIND_CONFLICT = "conflict"   # 사람 항목과 관찰이 불일치
 
 
 @dataclass
+class Document:
+    """문서 하나 — 첫 항목 앞의 머리말과 항목들.
+
+    머리말은 문서 제목과 사람이 쓴 안내문이다. 항목만 들고 다니면
+    `read_doc → merge_items → write_doc` 이 역함수가 아니게 되고, 저장 한 번에
+    그 글이 조용히 사라진다. 소유권 라벨은 항목에만 붙으므로 항목 밖의 글은
+    보호받을 자리조차 없다 — 그러니 잃지 않는 것이 유일한 보호다.
+    """
+    preamble: str = ""
+    items: list[Item] = field(default_factory=list)
+
+
+@dataclass
 class Item:
     id: str
     title: str
@@ -82,9 +95,38 @@ def _finish(item: Item, body_lines: list[str]) -> Item:
     return item
 
 
-def parse_items(text: str) -> list[Item]:
-    """`## <ID> <제목>` 으로 시작하는 항목들. 그 밖의 줄은 무시한다."""
+def _absorb(item: Item, line: str) -> bool:
+    """항목의 구조 줄(근거·이미지·기계 노트)이면 흡수하고 True 를 돌려준다."""
+    evidence = _EVIDENCE.match(line)
+    if evidence and not item.evidence:
+        raw = evidence.group(1)
+        label, _, reference = raw.partition("·")
+        # 한글은 NFC/NFD 로 다르게 저장될 수 있고 macOS 는 NFD 를 만든다.
+        # 정규화하지 않으면 눈에 같은 `우리 결정` 이 상수와 어긋나 소유권
+        # 보호가 조용히 풀린다 — 이 계약이 지키려는 단 하나의 성질이다.
+        item.evidence = unicodedata.normalize("NFC", label.strip())
+        item.evidence_ref = reference.strip()
+        return True
+    if _IMAGE_LINE.match(line):
+        item.images.append(line.strip())
+        return True
+    note = _NOTE.match(line)
+    if note:
+        item.notes.append(Note(note.group(1) or NOTE_KIND_PLAIN,
+                               note.group(2).strip()))
+        return True
+    return False
+
+
+def parse_document(text: str) -> Document:
+    """머리말과 `## <ID> <제목>` 항목들.
+
+    첫 항목 앞의 줄은 머리말로 보관한다. 항목 형식이 아닌 `## ` 줄은 직전 항목의
+    본문으로 들어간다 — 무시되는 것이 아니므로 `malformed_headings` 가 따로
+    집어내고 CLI 가 거부한다.
+    """
     items: list[Item] = []
+    preamble_lines: list[str] = []
     current: Item | None = None
     body_lines: list[str] = []
     for line in text.splitlines():
@@ -96,29 +138,19 @@ def parse_items(text: str) -> list[Item]:
             body_lines = []
             continue
         if current is None:
+            preamble_lines.append(line)
             continue
-        evidence = _EVIDENCE.match(line)
-        if evidence and not current.evidence:
-            raw = evidence.group(1)
-            label, _, reference = raw.partition("·")
-            # 한글은 NFC/NFD 로 다르게 저장될 수 있고 macOS 는 NFD 를 만든다.
-            # 정규화하지 않으면 눈에 같은 `우리 결정` 이 상수와 어긋나 소유권
-            # 보호가 조용히 풀린다 — 이 계약이 지키려는 단 하나의 성질이다.
-            current.evidence = unicodedata.normalize("NFC", label.strip())
-            current.evidence_ref = reference.strip()
-            continue
-        if _IMAGE_LINE.match(line):
-            current.images.append(line.strip())
-            continue
-        note = _NOTE.match(line)
-        if note:
-            current.notes.append(Note(note.group(1) or NOTE_KIND_PLAIN,
-                                      note.group(2).strip()))
+        if _absorb(current, line):
             continue
         body_lines.append(line)
     if current is not None:
         items.append(_finish(current, body_lines))
-    return items
+    return Document(preamble="\n".join(preamble_lines).strip("\n"), items=items)
+
+
+def parse_items(text: str) -> list[Item]:
+    """`## <ID> <제목>` 으로 시작하는 항목들. 머리말이 필요하면 `parse_document`."""
+    return parse_document(text).items
 
 
 def render_item(item: Item) -> str:
@@ -137,29 +169,36 @@ def render_item(item: Item) -> str:
     return "\n".join(lines)
 
 
-def render_items(items: list[Item], heading: str = "") -> str:
-    blocks = [render_item(item) for item in items]
-    text = "\n\n".join(blocks)
-    if heading:
-        text = f"# {heading}\n\n{text}"
-    return text + "\n"
+def render_items(items: list[Item]) -> str:
+    if not items:
+        return ""
+    return "\n\n".join(render_item(item) for item in items) + "\n"
 
 
-def read_doc(path: Path | str) -> list[Item]:
+def render_document(document: Document) -> str:
+    """`parse_document` 가 그대로 되읽을 수 있어야 한다 — 이 둘은 역함수다."""
+    parts = [part for part in (document.preamble.strip("\n"),
+                               render_items(document.items).rstrip("\n")) if part]
+    if not parts:
+        return ""
+    return "\n\n".join(parts) + "\n"
+
+
+def read_doc(path: Path | str) -> Document:
     path = Path(path)
     if not path.is_file():
-        return []
-    return parse_items(path.read_text(encoding="utf-8"))
+        return Document()
+    return parse_document(path.read_text(encoding="utf-8"))
 
 
-def write_doc(path: Path | str, items: list[Item], heading: str = "") -> None:
+def write_doc(path: Path | str, document: Document) -> None:
     """제자리에서 덮어쓰지 않는다 — CONVENTIONS.md 의 원자성 규칙."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as out:
-            out.write(render_items(items, heading))
+            out.write(render_document(document))
             out.flush()
             os.fsync(out.fileno())
         os.replace(temporary, path)

@@ -11,15 +11,19 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from scripts.blueprint_doc import (
     EVIDENCE_OBSERVED,
     EVIDENCE_OURS,
     EVIDENCE_PUBLIC,
+    NOTE_KIND_ABSENT,
     NOTE_KIND_CONFLICT,
     Item,
     Note,
+    parse_document,
+    render_document,
 )
 from scripts.blueprint_merge import (
     NOTE_ABSENT,
@@ -173,6 +177,83 @@ class TestConflictWithHumanDecision(unittest.TestCase):
         self.assertEqual([(note.kind, note.text) for note in merged[0].notes],
                          [(NOTE_KIND_CONFLICT,
                            f"{NOTE_CONFLICT_PREFIX}카드 7장{NOTE_KEEP_HINT}")])
+
+
+class TestTheWholePath(unittest.TestCase):
+    """마크다운 → `parse_document` → `merge_items` → `render_document` → 재파싱.
+
+    두 모듈이 실제로 만나는 유일한 경로다. 각 모듈만 따로 보면 병합 규칙도
+    라운드트립도 옳은데, 이음매에서 사람이 쓴 글이 샌다 — 소유권 판정은
+    항목 단위로 내려지므로, 사람이 쓴 것이 먼저 항목 안에 온전히 들어와
+    있지 않으면 라벨이 아무것도 지키지 못한다.
+    """
+
+    DOCUMENT = """# 기능
+
+이 문서는 관찰로 채워지고, 부족한 부분은 우리가 채운다.
+읽는 순서: F-001 부터.
+
+## F-001 피드
+근거: 관찰
+
+카드 3장.
+
+## F-002 오프라인 모드
+근거: 우리 결정
+
+핵심은 필터다 <img src="../observed/raw/03-feed.png" alt="피드 화면" width="600"> 처럼 붙인다.
+캐시가 없으면 이 서비스는 반쪽이다.
+"""
+
+    HUMAN_BODY = ('핵심은 필터다 <img src="../observed/raw/03-feed.png" alt="피드 화면" '
+                  'width="600"> 처럼 붙인다.\n캐시가 없으면 이 서비스는 반쪽이다.')
+
+    def _round(self, text: str, incoming: list[Item]) -> str:
+        document = parse_document(text)
+        merged = merge_items(document.items, incoming)
+        return render_document(replace(document, items=merged))
+
+    def test_a_human_item_survives_a_full_round_verbatim(self):
+        """`우리 결정` 항목의 본문은 인라인 이미지째로 글자 그대로 남는다."""
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 5장.")]
+
+        after = parse_document(self._round(self.DOCUMENT, incoming))
+
+        human = {item.id: item for item in after.items}["F-002"]
+        self.assertEqual(human.body, self.HUMAN_BODY)
+        self.assertEqual(human.evidence, EVIDENCE_OURS)
+
+    def test_the_preamble_the_person_wrote_survives_the_round(self):
+        """첫 항목 앞의 제목과 머리말도 사람이 쓴 글이다."""
+        after = parse_document(self._round(self.DOCUMENT, []))
+
+        self.assertIn("읽는 순서: F-001 부터.", after.preamble)
+        self.assertIn("# 기능", after.preamble)
+
+    def test_a_second_round_with_the_same_observation_changes_nothing(self):
+        """회차가 반복돼도 문서는 자라거나 줄지 않는다."""
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 5장.")]
+
+        once = self._round(self.DOCUMENT, incoming)
+        twice = self._round(once, incoming)
+
+        self.assertEqual(twice, once)
+
+    def test_an_item_that_reappears_drops_its_absent_note(self):
+        """사라졌다 돌아온 항목에 낡은 `없음` 표시가 남으면 문서가 거짓말을 한다."""
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 5장.")]
+
+        gone = self._round(self.DOCUMENT, [])
+        self.assertIn(NOTE_KIND_ABSENT, gone)
+
+        back = parse_document(self._round(gone, incoming))
+
+        feed = {item.id: item for item in back.items}["F-001"]
+        self.assertEqual([note.kind for note in feed.notes], [])
+        self.assertEqual(feed.body, "카드 5장.")
 
 
 class TestDriftReport(unittest.TestCase):

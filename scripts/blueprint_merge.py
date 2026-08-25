@@ -125,7 +125,7 @@ def main(argv: list[str]) -> int:
     if not path.is_file():
         print(f"ERROR: no such document: {path}", file=sys.stderr)
         return 1
-    items = read_doc(path)
+    items = read_doc(path).items
     missing = unlabelled(items)
     if missing:
         print(f"ERROR: {len(missing)} item(s) have no valid 근거 label — "

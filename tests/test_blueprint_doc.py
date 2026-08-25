@@ -18,11 +18,14 @@ from scripts.blueprint_doc import (
     EVIDENCE_OURS,
     NOTE_KIND_ABSENT,
     NOTE_KIND_PLAIN,
+    Document,
     Item,
     Note,
     image_line,
+    parse_document,
     parse_items,
     read_doc,
+    render_document,
     render_items,
     unlabelled,
     write_doc,
@@ -127,29 +130,65 @@ class TestRenderRoundTrip(unittest.TestCase):
         self.assertEqual(reparsed, original)
 
 
+class TestPreamble(unittest.TestCase):
+    """첫 항목 앞의 제목과 안내문도 사람이 쓴 글이다."""
+
+    TEXT = """# 기능
+
+이 문서는 관찰로 채워지고, 부족한 부분은 우리가 채운다.
+읽는 순서: F-001 부터.
+
+## F-001 피드
+근거: 관찰
+
+카드 3장.
+"""
+
+    def test_the_lines_before_the_first_item_are_kept(self):
+        document = parse_document(self.TEXT)
+
+        self.assertEqual(document.preamble,
+                         "# 기능\n\n이 문서는 관찰로 채워지고, 부족한 부분은 우리가 "
+                         "채운다.\n읽는 순서: F-001 부터.")
+        self.assertEqual([item.id for item in document.items], ["F-001"])
+
+    def test_rendering_puts_the_preamble_back(self):
+        """`parse_document` 와 `render_document` 가 역함수가 아니면 저장이 글을 지운다."""
+        document = parse_document(self.TEXT)
+
+        self.assertEqual(render_document(document), self.TEXT)
+        self.assertEqual(parse_document(render_document(document)), document)
+
+    def test_a_document_with_no_preamble_round_trips_too(self):
+        text = "## F-001 피드\n근거: 관찰\n\n카드 3장.\n"
+
+        self.assertEqual(render_document(parse_document(text)), text)
+
+
 class TestDocFiles(unittest.TestCase):
-    def test_a_missing_document_reads_as_no_items(self):
+    def test_a_missing_document_reads_as_an_empty_document(self):
         """첫 회차에는 ssot/ 가 비어 있다. 없는 파일은 오류가 아니라 빈 문서다."""
         with tempfile.TemporaryDirectory() as temp:
-            self.assertEqual(read_doc(Path(temp) / "features.md"), [])
+            self.assertEqual(read_doc(Path(temp) / "features.md"), Document())
 
     def test_a_written_document_reads_back_unchanged(self):
+        """읽은 문서를 그대로 다시 쓰는 실제 경로 — 머리말째로 같아야 한다."""
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "features.md"
-            items = [Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED,
-                          body="이메일과 비밀번호를 받는다.")]
+            path.write_text(TestPreamble.TEXT, encoding="utf-8")
 
-            write_doc(path, items, heading="기능")
+            document = read_doc(path)
+            write_doc(path, document)
 
-            self.assertIn("# 기능", path.read_text(encoding="utf-8"))
-            self.assertEqual(read_doc(path), items)
+            self.assertEqual(path.read_text(encoding="utf-8"), TestPreamble.TEXT)
+            self.assertEqual(read_doc(path), document)
 
     def test_writing_leaves_no_temporary_file_behind(self):
         """제자리 덮어쓰기 금지가 이 레포의 규칙이다 (CONVENTIONS.md 원자성)."""
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
-            write_doc(directory / "features.md",
-                      [Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED)])
+            write_doc(directory / "features.md", Document(items=[
+                Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED)]))
 
             self.assertEqual([p.name for p in directory.iterdir()], ["features.md"])
 
