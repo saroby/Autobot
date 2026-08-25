@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 
 from scripts.blueprint_doc import EVIDENCE_OBSERVED, EVIDENCE_OURS, Item
-from scripts.blueprint_merge import NOTE_ABSENT, merge_items
+from scripts.blueprint_merge import NOTE_ABSENT, NOTE_CONFLICT_PREFIX, merge_items
 
 
 class TestMergeOwnership(unittest.TestCase):
@@ -72,6 +72,42 @@ class TestDisappearedItems(unittest.TestCase):
         merged = merge_items(existing, [])
 
         self.assertEqual(merged[0].notes, [])
+
+
+class TestConflictWithHumanDecision(unittest.TestCase):
+    def test_a_conflicting_observation_is_appended_as_a_note(self):
+        """지우지도 덮지도 않는다 — 판단은 사람이 한다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
+                         body="카드 3장 + 필터")]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 5장")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].body, "카드 3장 + 필터")
+        self.assertEqual(merged[0].notes, [f"{NOTE_CONFLICT_PREFIX}카드 5장"])
+
+    def test_an_agreeing_observation_adds_no_note(self):
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
+                         body="카드 5장")]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 5장")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].notes, [])
+
+    def test_a_new_conflict_replaces_the_previous_one(self):
+        """회차마다 쌓이면 사람이 어느 것이 최신인지 알 수 없다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
+                         body="카드 3장 + 필터",
+                         notes=[f"{NOTE_CONFLICT_PREFIX}카드 5장"])]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 7장")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].notes, [f"{NOTE_CONFLICT_PREFIX}카드 7장"])
 
 
 if __name__ == "__main__":

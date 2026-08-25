@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from blueprint_doc import EVIDENCE_OBSERVED, EVIDENCE_OURS, Item  # noqa: E402
 
 NOTE_ABSENT = "관찰: 최근 회차에 없음"
+NOTE_CONFLICT_PREFIX = "⚠ 관찰이 다름: "
 
 
 def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
@@ -44,7 +45,12 @@ def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
             merged.append(item)
             continue
         if item.evidence == EVIDENCE_OURS:
-            merged.append(item)
+            # 회차마다 쌓으면 어느 것이 최신인지 알 수 없다 — 마지막 것만 남긴다.
+            notes = [note for note in item.notes
+                     if not note.startswith(NOTE_CONFLICT_PREFIX)]
+            if candidate.body and candidate.body != item.body:
+                notes.append(f"{NOTE_CONFLICT_PREFIX}{candidate.body}")
+            merged.append(replace(item, notes=notes))
             continue
         merged.append(candidate)
     merged.extend(item for item in incoming if item.id in fresh)
