@@ -18,6 +18,7 @@
 - **한국어 산문.** 스킬·문서·주석의 설명문은 한국어로 쓴다 (코드 식별자는 영문).
 - **`merge_items` 는 순수 함수다.** 입력으로 받은 `Item` 을 제자리에서 바꾸지 않는다. 노트를 붙이거나 지울 때는 `dataclasses.replace` 로 복사본을 만든다. 호출자가 넘긴 문서가 몰래 바뀌면 드리프트 리포트가 병합 전·후를 비교할 수 없다.
 - **형제 모듈 import 는 `sys.path.insert` 관례를 따른다** (`scripts/device_measure.py` 와 동일). 그 결과 테스트의 `scripts.blueprint_doc` 와 스크립트 내부의 `blueprint_doc` 은 **런타임에 서로 다른 모듈이 되고 `Item` 클래스도 둘이 된다.** 문자열·필드 비교만 하면 안전하지만, `Item` 을 이 경계 너머로 `isinstance` 하거나 등가 비교하면 조용히 실패한다. `blueprint_merge.py` 의 docstring 에 이 경고를 명시한다.
+- **기계 노트 마커는 `⟦auto⟧` 다.** 렌더 시 `> ⟦auto⟧ <내용>` 으로 나가고, 파싱 시 마커를 떼어 `Item.notes` 에는 순수 내용만 담는다. 마커는 **직렬화 세부사항**이며 `blueprint_doc` 이 소유한다 — `blueprint_merge` 의 노트 상수에는 마커가 들어가지 않는다. 마커 없는 `>` 줄은 사람이 쓴 본문 인용문이므로 본문으로 남긴다.
 - **테스트 실행**: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_X`
 
 ## File Structure
@@ -213,6 +214,8 @@ git commit -m "feat(blueprint): ssot 항목 파서 — ID·근거 라벨·이미
 
 노트는 병합이 항목에 덧붙이는 기계 메모다 (`관찰: 최근 회차에 없음`, `⚠ 관찰이 다름: …`). 본문과 섞이면 사람이 고친 문장인지 기계가 붙인 경고인지 구분할 수 없고, 다음 병합이 노트를 중복해서 쌓는다.
 
+블록쿼트만으로는 가를 수 없다 — `>` 는 사람이 본문에 쓰는 평범한 마크다운 문법이라, 모든 `>` 줄을 노트로 삼으면 사람의 인용문이 기계 메모로 재분류되어 다음 렌더에서 항목 맨 아래로 밀려난다. 그래서 **전용 마커 `⟦auto⟧`** 를 함께 요구한다. 마커는 파싱 시 벗겨져 `Item.notes` 에는 순수 내용만 남으므로, 병합은 마커의 존재를 모른 채 메시지만 쓴다.
+
 - [ ] **Step 1: Write the failing test**
 
 `tests/test_blueprint_doc.py` 의 `TestParseItems` 클래스 안에 추가한다:
@@ -225,27 +228,43 @@ git commit -m "feat(blueprint): ssot 항목 파서 — ID·근거 라벨·이미
 
 스크롤 끝에서 다음 페이지를 불러온다.
 
-> 관찰: 최근 회차에 없음
+> ⟦auto⟧ 관찰: 최근 회차에 없음
 """
 
         items = parse_items(text)
 
         self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
         self.assertEqual(items[0].notes, ["관찰: 최근 회차에 없음"])
+
+    def test_a_blockquote_without_the_marker_stays_in_the_body(self):
+        """`>` 는 사람이 쓰는 평범한 마크다운이다 — 마커 없는 인용문은 본문이다."""
+        text = """## F-012 피드
+근거: 관찰
+
+> 인용문입니다.
+"""
+
+        items = parse_items(text)
+
+        self.assertEqual(items[0].notes, [])
+        self.assertEqual(items[0].body, "> 인용문입니다.")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_blueprint_doc.TestParseItems.test_blockquote_lines_are_machine_notes_not_body -v`
 
-Expected: FAIL — `notes` 가 `[]` 이고 `body` 에 `> 관찰: 최근 회차에 없음` 이 남아 있다
+Expected: FAIL — `notes` 가 `[]` 이고 `body` 에 `> ⟦auto⟧ 관찰: 최근 회차에 없음` 이 남아 있다
 
 - [ ] **Step 3: Write minimal implementation**
 
 `scripts/blueprint_doc.py` 에서 `_IMAGE` 정규식 아래에 추가:
 
 ```python
-_NOTE = re.compile(r"^>\s?(.*)$")
+# 기계 노트는 전용 마커를 달고 나간다. `>` 만으로 가르면 사람이 본문에 쓴
+# 평범한 인용문이 기계 메모로 재분류되어 다음 렌더에서 항목 아래로 밀려난다.
+NOTE_MARKER = "⟦auto⟧"
+_NOTE = re.compile(r"^>\s*" + re.escape(NOTE_MARKER) + r"\s?(.*)$")
 ```
 
 `parse_items` 의 이미지 처리 블록 바로 뒤, `body_lines.append(line)` 앞에 추가:
@@ -261,7 +280,7 @@ _NOTE = re.compile(r"^>\s?(.*)$")
 
 Run: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_blueprint_doc -v`
 
-Expected: PASS (2 tests)
+Expected: PASS (3 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -300,6 +319,9 @@ class TestRenderRoundTrip(unittest.TestCase):
                  notes=["관찰: 최근 회차에 없음"]),
             Item(id="F-002", title="다크 모드", evidence=EVIDENCE_OURS,
                  body="원본에 없다. 우리는 넣는다."),
+            # 사람이 본문에 쓴 인용문. 마커가 없으므로 노트로 새지 않는다.
+            Item(id="F-003", title="톤", evidence=EVIDENCE_OURS,
+                 body="> 인용문입니다.\n일반 문장."),
         ]
 
         reparsed = parse_items(render_items(original))
@@ -344,7 +366,7 @@ def render_item(item: Item) -> str:
         lines.extend(["", item.body])
     if item.notes:
         lines.append("")
-        lines.extend(f"> {note}" for note in item.notes)
+        lines.extend(f"> {NOTE_MARKER} {note}" for note in item.notes)
     return "\n".join(lines)
 
 
@@ -360,7 +382,7 @@ def render_items(items: list[Item], heading: str = "") -> str:
 
 Run: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_blueprint_doc -v`
 
-Expected: PASS (3 tests)
+Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -479,7 +501,7 @@ def write_doc(path: Path | str, items: list[Item], heading: str = "") -> None:
 
 Run: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_blueprint_doc -v`
 
-Expected: PASS (6 tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1019,7 +1041,7 @@ def unlabelled(items: list[Item]) -> list[Item]:
 
 Run: `XDG_CONFIG_HOME="$(mktemp -d)" AUTOBOT_TEST_XDG_ISOLATED=1 AUTOBOT_NO_GLOBAL_PUBLISH=1 python3 -m unittest tests.test_blueprint_doc -v`
 
-Expected: PASS (9 tests)
+Expected: PASS (10 tests)
 
 - [ ] **Step 5: Commit**
 
