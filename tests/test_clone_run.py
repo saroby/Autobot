@@ -175,6 +175,26 @@ class TestCodegenOnItsOwn(CloneRunCase):
         for view in views.values():
             self.assertTrue((self.root / "Sources" / f"{view}.swift").is_file(), view)
 
+    def test_codegen_drafts_the_structure_a_person_confirms(self):
+        """Repeat groups are the layer measurement cannot express, so they are drafted here.
+
+        Without a draft per screen the only way to say "these thirty blocks are
+        one card" is prose nobody writes, and the generator keeps emitting
+        thirty absolute-positioned blocks that pass every check and help no one.
+        """
+        self.write_flow([
+            {"type": "screen", "statekey": "state-a", "name": "01-home",
+             "tree": "t", "png": "p"},
+        ])
+        self.write_measurement("01-home")
+
+        r = self.run_clone("codegen")
+
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        draft = self.root / "structure" / "01-home.json"
+        self.assertTrue(draft.is_file(), f"no structure draft — stderr: {r.stderr}")
+        self.assertIn("groups", json.loads(draft.read_text(encoding="utf-8")))
+
     def test_codegen_keeps_names_already_chosen_for_a_state(self):
         # compare/ evidence and hand-polished files are keyed by the view name,
         # so re-running generation must not rename a state that already has one.
@@ -560,3 +580,32 @@ class TestSudoGate(CloneRunCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVisualGateIsWired(unittest.TestCase):
+    """`polish` already counts a non-zero compare as a failure — the flag is what arms it.
+
+    This is a source contract, not an end-to-end run: `_compare_one` is only
+    reached after `device_render.sh` succeeds, which needs a simulator and
+    swiftc, so no offline test can observe the invocation. What it guards is the
+    regression that matters — drop the flag and `device_compare.py` falls back
+    to its advisory default, so every screen passes no matter how it looks, and
+    `polish` reports success on a reproduction nobody would accept.
+    """
+
+    def setUp(self):
+        self.source = SCRIPT.read_text(encoding="utf-8")
+        start = self.source.index("_compare_one()")
+        self.compare_one = self.source[start:self.source.index("\n}\n", start)]
+
+    def test_every_compare_invocation_arms_the_visual_gate(self):
+        invocations = self.compare_one.count("device_compare.py")
+        self.assertGreater(invocations, 0, "_compare_one must invoke device_compare.py")
+        self.assertEqual(
+            self.compare_one.count("--max-mismatch"), invocations,
+            "every branch of _compare_one must arm the gate — one unarmed branch is a "
+            "screen that passes on looks alone")
+
+    def test_the_bound_is_operator_overridable(self):
+        self.assertTrue("CLONE_MAX_MISMATCH" in self.source,
+                        "the bound must be tunable without editing the script")

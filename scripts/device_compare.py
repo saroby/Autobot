@@ -217,6 +217,12 @@ def _parser() -> argparse.ArgumentParser:
                         metavar="x,y,w,h", help="exclude a pixel rectangle from advisory metrics")
     parser.add_argument("--mask-system-chrome", action="store_true",
                         help="explicitly exclude standard top and bottom volatile system chrome")
+    parser.add_argument("--max-mismatch", metavar="RATIO", type=float, default=None,
+                        help="fail (exit 1) when the thresholded mismatch ratio exceeds "
+                             "RATIO. Without it the visual score stays advisory, which is "
+                             "correct for one-off diagnosis and wrong for a gate: "
+                             "clone_run.sh polish passes this so a reproduction that does "
+                             "not look like the original cannot report success.")
     parser.add_argument("--mask-assets", metavar="MANIFEST.JSON",
                         help="exclude every capture crop this screen draws, so the score "
                              "measures the pixels the reproduction actually draws. A crop is "
@@ -429,6 +435,7 @@ def _report_regions(measurement: dict[str, object], left: Rows, right: Rows,
 
 
 def main(argv: list[str]) -> int:
+    gate_failure: str | None = None
     try:
         args = _parser().parse_args(argv[1:])
     except SystemExit as exc:
@@ -504,11 +511,30 @@ def main(argv: list[str]) -> int:
                   "side-by-side evidence remains unmasked", file=sys.stderr)
 
         metrics = _detailed_metrics(left, right, mask)
+        # "advisory" stops being true the moment something gates on the number,
+        # and a log line that misreports its own authority is how this check
+        # went unnoticed for as long as it did.
+        armed = args.max_mismatch is not None
         if metrics is None:
-            print("INFO: visual diff advisory skipped — no unmasked pixels", file=sys.stderr)
+            print("INFO: visual diff skipped — no unmasked pixels", file=sys.stderr)
+            if armed:
+                # Masking is what makes the score meaningful; masking everything
+                # makes it meaningless. Passing here would report an unverified
+                # screen as a correct one.
+                gate_failure = ("nothing was compared — no unmasked pixels remain, so this "
+                                "screen is unverified, not reproduced")
         else:
-            print(f"INFO: visual diff advisory — mismatch {metrics.mismatch:.2%}, "
-                  f"mean absolute error {metrics.mae:.2%}", file=sys.stderr)
+            print(f"INFO: visual diff {'gate' if armed else 'advisory'} — "
+                  f"mismatch {metrics.mismatch:.2%}, "
+                  f"mean absolute error {metrics.mae:.2%}"
+                  + (f", bound {args.max_mismatch:.2%}" if armed else ""), file=sys.stderr)
+            if armed and metrics.mismatch > args.max_mismatch:
+                # Recorded, not returned: the side-by-side written below is the
+                # evidence a person needs to act on this failure, so it is
+                # produced first and the verdict is applied at the end.
+                gate_failure = (f"visual mismatch {metrics.mismatch:.2%} exceeds the "
+                                f"{args.max_mismatch:.2%} bound — the reproduction does not "
+                                f"look like the original")
 
         if args.heatmap:
             try:
@@ -551,6 +577,10 @@ def main(argv: list[str]) -> int:
         return 1
     print(f"OK: wrote {args.output} ({len(scaled_left[0])}+{len(scaled_right[0])}px wide, "
           f"{height}px tall) — original on the left, reproduction on the right", file=sys.stderr)
+    if gate_failure is not None:
+        print(f"ERROR: {gate_failure}. Compare {args.output} and fix the screen, "
+              "or raise --max-mismatch only with a reason.", file=sys.stderr)
+        return 1
     return 0
 
 

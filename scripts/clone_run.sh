@@ -322,6 +322,11 @@ print(f"INFO: views.json {len(old_views)} -> {len(out['views'])} states ({added}
 PY
   python3 "$_HERE/clone_flow_codegen.py" generate "$FLOW" "$CLONE_ROOT/views.json" \
     "$CLONE_ROOT/Sources/ObservedFlow.swift" "$CLONE_ROOT/screens" || status=1
+  # The repeating units the measurement cannot express, drafted per screen so a
+  # person confirms rather than authors. Runs BEFORE the views so the draft is
+  # on disk by the time anyone reads the generated code and asks why a feed is
+  # thirty separate blocks.
+  python3 "$_HERE/clone_structure.py" "$CLONE_ROOT" || status=1
   # A measured first pass of every screen. Starting Step 5 from a blank
   # placeholder meant `verify` said the same thing about all of them (every
   # element missing) and the author had no idea which screens were close. This
@@ -417,6 +422,14 @@ cmd_functional() {
 # of that round's apparent improvement.
 _compare_one() {
   local stem="$1" mask_assets="" status=0
+  # The bound that turns the visual score from advisory into a gate. 0.30 is a
+  # gross-failure floor, not a similarity target: with system chrome and capture
+  # crops already masked and a 24/765 per-pixel tolerance absorbing
+  # anti-aliasing, a third of the remaining pixels differing cannot be noise —
+  # it means content is in the wrong place or absent. It is deliberately loose
+  # because no run has yet produced a distribution to calibrate against; tighten
+  # it once one has, and record the measurement when you do.
+  local max_mismatch="${CLONE_MAX_MISMATCH:-0.30}"
   [[ -f "$CLONE_ROOT/assets/manifest.json" ]] && mask_assets="$CLONE_ROOT/assets/manifest.json"
   if [[ -n "$mask_assets" ]]; then
     python3 "$_HERE/device_compare.py" \
@@ -424,14 +437,15 @@ _compare_one() {
       "$CLONE_ROOT/compare/$stem-compare.png" \
       --measure "$CLONE_ROOT/screens/$stem.json" \
       --heatmap "$CLONE_ROOT/compare/$stem-heatmap.png" \
-      --mask-system-chrome --mask-assets "$mask_assets" || status=1
+      --mask-system-chrome --mask-assets "$mask_assets" \
+      --max-mismatch "$max_mismatch" || status=1
   else
     python3 "$_HERE/device_compare.py" \
       "$CLONE_ROOT/raw/$stem.png" "$CLONE_ROOT/compare/$stem-rendered.png" \
       "$CLONE_ROOT/compare/$stem-compare.png" \
       --measure "$CLONE_ROOT/screens/$stem.json" \
       --heatmap "$CLONE_ROOT/compare/$stem-heatmap.png" \
-      --mask-system-chrome || status=1
+      --mask-system-chrome --max-mismatch "$max_mismatch" || status=1
   fi
   printf '%s' "$status" > "$compare_status/$stem"
 }

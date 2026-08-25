@@ -194,6 +194,44 @@ class TestDeviceCompare(unittest.TestCase):
             self.assertTrue(output.is_file())
             self.assertFalse(heatmap.exists())
 
+    def test_a_fully_masked_comparison_fails_the_gate(self):
+        """Nothing left to compare is not a pass — it is an unverified screen.
+
+        Masking is what makes the score meaningful, and masking everything is
+        what makes it meaningless. Reporting success there is the hidden
+        coverage the skill forbids: the screen was never checked.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            result, output = self.run_compare(
+                root,
+                [[(0, 0, 0), (255, 255, 255)]],
+                [[(0, 0, 0), (255, 0, 0)]],
+                "--mask", "0,0,2,1",
+                "--max-mismatch", "0.30",
+            )
+            self.assertEqual(result.returncode, 1, msg=result.stderr)
+            self.assertIn("no unmasked pixels", result.stderr)
+            self.assertTrue(output.is_file())
+
+    def test_mismatch_above_max_fails_the_gate(self):
+        """A reproduction that does not look like the original must fail, not advise.
+
+        `clone_run.sh polish` already counts a non-zero `device_compare.py` as a
+        failure, so the convergence loop only exists once this exits non-zero.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            result, output = self.run_compare(
+                root,
+                [[(0, 0, 0), (255, 255, 255)]],
+                [[(0, 0, 0), (255, 0, 0)]],
+                "--max-mismatch", "0.30",
+            )
+            self.assertEqual(result.returncode, 1, msg=result.stderr)
+            self.assertIn("exceeds", result.stderr)
+            self.assertTrue(output.is_file(), "the side-by-side is the evidence for the failure")
+
 
 if __name__ == "__main__":
     unittest.main()
