@@ -26,7 +26,9 @@ from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from blueprint_doc import EVIDENCE_OURS, Item  # noqa: E402
+from blueprint_doc import EVIDENCE_OBSERVED, EVIDENCE_OURS, Item  # noqa: E402
+
+NOTE_ABSENT = "관찰: 최근 회차에 없음"
 
 
 def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
@@ -35,7 +37,13 @@ def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
     merged: list[Item] = []
     for item in existing:
         candidate = fresh.pop(item.id, None)
-        if candidate is None or item.evidence == EVIDENCE_OURS:
+        if candidate is None:
+            if item.evidence == EVIDENCE_OBSERVED and NOTE_ABSENT not in item.notes:
+                # 복사본에 붙인다 — 호출자가 넘긴 문서를 바꾸지 않는다.
+                item = replace(item, notes=[*item.notes, NOTE_ABSENT])
+            merged.append(item)
+            continue
+        if item.evidence == EVIDENCE_OURS:
             merged.append(item)
             continue
         merged.append(candidate)

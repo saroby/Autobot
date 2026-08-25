@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 
 from scripts.blueprint_doc import EVIDENCE_OBSERVED, EVIDENCE_OURS, Item
-from scripts.blueprint_merge import merge_items
+from scripts.blueprint_merge import NOTE_ABSENT, merge_items
 
 
 class TestMergeOwnership(unittest.TestCase):
@@ -45,6 +45,33 @@ class TestMergeOwnership(unittest.TestCase):
         merged = merge_items(existing, incoming)
 
         self.assertEqual([item.id for item in merged], ["F-002", "F-001", "F-003"])
+
+
+class TestDisappearedItems(unittest.TestCase):
+    def test_an_item_the_observation_no_longer_sees_is_marked_not_deleted(self):
+        """지우면 그 항목을 근거로 삼은 사람의 결정이 붕 뜬다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED)]
+
+        merged = merge_items(existing, [])
+
+        self.assertEqual([item.id for item in merged], ["F-001"])
+        self.assertIn(NOTE_ABSENT, merged[0].notes)
+
+    def test_the_absent_note_is_not_stacked_on_every_round(self):
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         notes=[NOTE_ABSENT])]
+
+        merged = merge_items(existing, [])
+
+        self.assertEqual(merged[0].notes, [NOTE_ABSENT])
+
+    def test_an_item_the_person_owns_is_not_marked_absent(self):
+        """`우리 결정` 항목은 원본에 없는 것이 정상이다 — 그것이 추가한 이유다."""
+        existing = [Item(id="F-002", title="다크 모드", evidence=EVIDENCE_OURS)]
+
+        merged = merge_items(existing, [])
+
+        self.assertEqual(merged[0].notes, [])
 
 
 if __name__ == "__main__":
