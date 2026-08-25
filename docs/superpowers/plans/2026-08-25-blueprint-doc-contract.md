@@ -1412,3 +1412,51 @@ Task 8 리뷰가 짚은 사각지대: **근거 라벨만 바뀐 회차는 네 �
 ```
 
 `EVIDENCE_PUBLIC` 을 테스트 파일의 import 에 추가한다.
+
+### 개정 — 라벨 유니코드 정규화 (Task 9 수정 라운드 1)
+
+Task 9 리뷰가 짚은 것: 한글은 NFC(`관찰`)와 NFD(`ㄱㅘㄴㅊㅏㄹ` 조합형)로 다르게 저장될 수 있고, macOS 파일시스템과 일부 에디터는 NFD 를 만든다. 그러면 **눈에 똑같이 보이는 라벨이 문자열 비교에서 어긋난다.**
+
+영향은 검증 오탐에 그치지 않는다. `merge_items` 는 `item.evidence == EVIDENCE_OURS` 로 소유권을 판별하므로, 사람이 NFD 환경에서 라벨을 `우리 결정` 으로 바꿔도 **그 항목이 보호되지 않고 다음 회차에 덮인다.** 이 계획 전체가 지키려는 단 하나의 성질이 조용히 깨지는 경로다.
+
+고치는 자리는 `unlabelled` 이 아니라 **파싱**이다 — 한 번 정규화하면 검증·병합·드리프트가 전부 안전해진다.
+
+`scripts/blueprint_doc.py` 상단:
+
+```python
+import unicodedata
+```
+
+`parse_items` 의 근거 줄 처리에서 라벨을 정규화한다:
+
+```python
+        evidence = _EVIDENCE.match(line)
+        if evidence and not current.evidence:
+            raw = evidence.group(1)
+            label, _, reference = raw.partition("·")
+            # 한글은 NFC/NFD 로 다르게 저장될 수 있고 macOS 는 NFD 를 만든다.
+            # 정규화하지 않으면 눈에 같은 `우리 결정` 이 상수와 어긋나 소유권
+            # 보호가 조용히 풀린다 — 이 계약이 지키려는 단 하나의 성질이다.
+            current.evidence = unicodedata.normalize("NFC", label.strip())
+            current.evidence_ref = reference.strip()
+            continue
+```
+
+테스트 하나를 `TestLabelValidation` 에 추가한다:
+
+```python
+    def test_a_decomposed_label_is_recognised(self):
+        """macOS 가 만드는 NFD 라벨도 같은 라벨이다.
+
+        어긋나면 사람이 `우리 결정` 으로 바꾼 항목이 보호되지 않고 덮인다.
+        """
+        decomposed = unicodedata.normalize("NFD", EVIDENCE_OURS)
+        self.assertNotEqual(decomposed, EVIDENCE_OURS)   # 전제 확인
+
+        items = parse_items(f"## F-001 피드\n근거: {decomposed}\n\n카드 3장.\n")
+
+        self.assertEqual(unlabelled(items), [])
+        self.assertEqual(items[0].evidence, EVIDENCE_OURS)
+```
+
+테스트 파일 상단에 `import unicodedata` 를 추가한다.
