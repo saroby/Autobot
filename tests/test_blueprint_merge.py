@@ -20,6 +20,7 @@ from scripts.blueprint_merge import (
     NOTE_ABSENT,
     NOTE_CONFLICT_PREFIX,
     NOTE_KEEP_HINT,
+    drift_report,
     merge_items,
 )
 
@@ -165,6 +166,33 @@ class TestConflictWithHumanDecision(unittest.TestCase):
         self.assertEqual([(note.kind, note.text) for note in merged[0].notes],
                          [(NOTE_KIND_CONFLICT,
                            f"{NOTE_CONFLICT_PREFIX}카드 7장{NOTE_KEEP_HINT}")])
+
+
+class TestDriftReport(unittest.TestCase):
+    def test_it_names_added_absent_and_conflicting_items(self):
+        existing = [
+            Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED, body="카드 3장"),
+            Item(id="F-002", title="검색", evidence=EVIDENCE_OBSERVED),
+            Item(id="F-003", title="다크 모드", evidence=EVIDENCE_OURS, body="우리 것"),
+        ]
+        incoming = [
+            Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED, body="카드 5장"),
+            Item(id="F-003", title="다크 모드", evidence=EVIDENCE_OBSERVED, body="원본에도 있다"),
+            Item(id="F-004", title="설정", evidence=EVIDENCE_OBSERVED),
+        ]
+
+        report = drift_report(existing, incoming)
+
+        self.assertIn("F-004", report)   # 새로 관찰됨
+        self.assertIn("F-002", report)   # 사라짐
+        self.assertIn("F-003", report)   # 사람 항목과 충돌
+        self.assertNotIn("F-001", report.split("## 충돌")[-1])
+
+    def test_no_change_says_so_instead_of_an_empty_file(self):
+        """빈 파일은 '안 돌았다'와 '변화 없다'를 구분하지 못한다."""
+        items = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED)]
+
+        self.assertEqual(drift_report(items, items), "변화 없음.\n")
 
 
 if __name__ == "__main__":

@@ -69,3 +69,36 @@ def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
         merged.append(candidate)
     merged.extend(item for item in incoming if item.id in fresh)
     return merged
+
+
+def drift_report(existing: list[Item], incoming: list[Item]) -> str:
+    """이번 회차가 무엇을 바꿨는지. `observed/drift.md` 의 내용이 된다."""
+    before = {item.id: item for item in existing}
+    after = {item.id: item for item in incoming}
+    added = [after[i] for i in after if i not in before]
+    absent = [before[i] for i in before
+              if i not in after and before[i].evidence == EVIDENCE_OBSERVED]
+    conflicts = [(before[i], after[i]) for i in before
+                 if i in after and before[i].evidence == EVIDENCE_OURS
+                 and after[i].body and after[i].body != before[i].body]
+    changed = [(before[i], after[i]) for i in before
+               if i in after and before[i].evidence != EVIDENCE_OURS
+               and after[i].body != before[i].body]
+    if not (added or absent or conflicts or changed):
+        return "변화 없음.\n"
+    sections: list[str] = []
+    if added:
+        sections.append("## 새로 관찰됨\n\n"
+                        + "\n".join(f"- {i.id} {i.title}" for i in added))
+    if absent:
+        sections.append("## 최근 회차에 없음\n\n"
+                        + "\n".join(f"- {i.id} {i.title}" for i in absent))
+    if changed:
+        sections.append("## 내용이 바뀜\n\n"
+                        + "\n".join(f"- {b.id} {b.title}: {b.body} → {a.body}"
+                                    for b, a in changed))
+    if conflicts:
+        sections.append("## 충돌 — 사람이 정한 항목과 관찰이 다름\n\n"
+                        + "\n".join(f"- {b.id} {b.title}: 문서 \"{b.body}\" / "
+                                    f"관찰 \"{a.body}\"" for b, a in conflicts))
+    return "\n\n".join(sections) + "\n"
