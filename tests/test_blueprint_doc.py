@@ -7,14 +7,18 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.blueprint_doc import (
     EVIDENCE_OBSERVED,
     EVIDENCE_OURS,
     Item,
     parse_items,
+    read_doc,
     render_items,
+    write_doc,
 )
 
 
@@ -87,6 +91,33 @@ class TestRenderRoundTrip(unittest.TestCase):
         reparsed = parse_items(render_items(original))
 
         self.assertEqual(reparsed, original)
+
+
+class TestDocFiles(unittest.TestCase):
+    def test_a_missing_document_reads_as_no_items(self):
+        """첫 회차에는 ssot/ 가 비어 있다. 없는 파일은 오류가 아니라 빈 문서다."""
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(read_doc(Path(temp) / "features.md"), [])
+
+    def test_a_written_document_reads_back_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "features.md"
+            items = [Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED,
+                          body="이메일과 비밀번호를 받는다.")]
+
+            write_doc(path, items, heading="기능")
+
+            self.assertIn("# 기능", path.read_text(encoding="utf-8"))
+            self.assertEqual(read_doc(path), items)
+
+    def test_writing_leaves_no_temporary_file_behind(self):
+        """제자리 덮어쓰기 금지가 이 레포의 규칙이다 (CONVENTIONS.md 원자성)."""
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            write_doc(directory / "features.md",
+                      [Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED)])
+
+            self.assertEqual([p.name for p in directory.iterdir()], ["features.md"])
 
 
 if __name__ == "__main__":

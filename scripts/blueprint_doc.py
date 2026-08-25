@@ -12,8 +12,11 @@
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 EVIDENCE_OBSERVED = "관찰"
 EVIDENCE_PUBLIC = "공개자료"
@@ -108,3 +111,26 @@ def render_items(items: list[Item], heading: str = "") -> str:
     if heading:
         text = f"# {heading}\n\n{text}"
     return text + "\n"
+
+
+def read_doc(path: Path | str) -> list[Item]:
+    path = Path(path)
+    if not path.is_file():
+        return []
+    return parse_items(path.read_text(encoding="utf-8"))
+
+
+def write_doc(path: Path | str, items: list[Item], heading: str = "") -> None:
+    """제자리에서 덮어쓰지 않는다 — CONVENTIONS.md 의 원자성 규칙."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(render_items(items, heading))
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
