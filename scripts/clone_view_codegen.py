@@ -367,17 +367,159 @@ def element_literals(measurement: dict, actions: set[str],
     return literals
 
 
+def confirmed_groups(root: Path, stem: str) -> list[dict]:
+    """The repeat groups declared for one screen, machine-drafted or hand-owned.
+
+    Missing, unreadable or empty all mean the same thing here — no claim — and
+    the generator falls back to the flat replay rather than inventing structure.
+    """
+    path = root / "structure" / f"{stem}.json"
+    if not path.is_file():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        print(f"WARN: ignoring unreadable {path}: {exc}", file=sys.stderr)
+        return []
+    groups = payload.get("groups") if isinstance(payload, dict) else None
+    return [g for g in groups if isinstance(g, dict)] if isinstance(groups, list) else []
+
+
+def _subtree_ids(measurement: dict, index: int) -> set[int]:
+    """Every element id under `index`, inclusive."""
+    children: dict[int, list[int]] = {}
+    for position, element in enumerate(measurement.get("elements") or []):
+        parent = element.get("parent", -1)
+        if isinstance(parent, int) and parent >= 0:
+            children.setdefault(parent, []).append(position)
+    found, stack = set(), [index]
+    while stack:
+        at = stack.pop()
+        if at in found:
+            continue
+        found.add(at)
+        stack.extend(children.get(at, []))
+    return found
+
+
+def _lower_camel(name: str) -> str:
+    return name[:1].lower() + name[1:] if name else name
+
+
+def repeat_units(measurement: dict, literals: list[dict],
+                 groups: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split the flat replay into (what stays flat, one unit per confirmed group).
+
+    The replay is faithful and unreadable: thirty cards are thirty independent
+    blocks, and no amount of pixel work turns that into something a person can
+    edit. A confirmed repeat says which blocks are one unit, and this is where
+    that claim becomes a type instead of a note.
+
+    Element ids are preserved across the move — a restructuring that drops an
+    element would trade the readability problem for the dominant reproduction
+    failure, which is a bad trade at any price.
+    """
+    by_id = {literal["id"]: literal for literal in literals if "id" in literal}
+    taken: set[int] = set()
+    units: list[dict] = []
+    for group in groups:
+        component = group.get("component")
+        members = group.get("children") or []
+        if not component or len(members) < 2:
+            continue
+        subtrees = [sorted(_subtree_ids(measurement, member)) for member in members]
+        ids = {i for subtree in subtrees for i in subtree}
+        # A group whose ids are not all present (a crop dropped one, another
+        # group already claimed them) is left flat rather than emitted half.
+        if ids & taken or not ids <= set(by_id):
+            continue
+        scrolls = {by_id[i].get("scroll") for i in ids}
+        if len(scrolls) > 1:
+            continue          # spans the scroll boundary — not one unit
+        items = []
+        for member, subtree in zip(members, subtrees):
+            origin = by_id[member]
+            items.append({
+                "origin": (origin["x"], origin["y"]),
+                "literals": [{**by_id[i], "x": round(by_id[i]["x"] - origin["x"], 1),
+                              "y": round(by_id[i]["y"] - origin["y"], 1)}
+                             for i in subtree],
+            })
+        units.append({
+            "component": component,
+            "scroll": next(iter(scrolls)),
+            "width": by_id[members[0]]["w"],
+            "height": by_id[members[0]]["h"],
+            "items": items,
+        })
+        taken |= ids
+    remaining = [literal for literal in literals
+                 if literal.get("id") not in taken]
+    return remaining, units
+
+
+def _unit_storage(unit: dict) -> str:
+    handle = _lower_camel(unit["component"])
+    blobs = ",\n        ".join(f"cloneElements({_records(item['literals'])})"
+                               for item in unit["items"])
+    origins = ", ".join(f"CGPoint(x: {item['origin'][0]}, y: {item['origin'][1]})"
+                        for item in unit["items"])
+    return (f"    private static let {handle}Items: [[CloneElement]] = [\n"
+            f"        {blobs},\n    ]\n"
+            f"    private static let {handle}Origins: [CGPoint] = [{origins}]\n")
+
+
+def _unit_body(unit: dict, indent: str) -> str:
+    handle = _lower_camel(unit["component"])
+    return (f"{indent}ForEach(Array(Self.{handle}Items.enumerated()), id: \\.offset) "
+            f"{{ index, item in\n"
+            f"{indent}    {unit['component']}(elements: item, onAction: onAction)\n"
+            f"{indent}        .offset(x: Self.{handle}Origins[index].x,\n"
+            f"{indent}                y: Self.{handle}Origins[index].y)\n"
+            f"{indent}}}\n")
+
+
+def _unit_struct(unit: dict) -> str:
+    return f"""
+
+/// One repeated unit, extracted from a confirmed structure group. Edit it once
+/// and every instance follows — that is the whole reason it exists.
+struct {unit['component']}: View {{
+    let elements: [CloneElement]
+    var onAction: (String) -> Void = {{ _ in }}
+
+    var body: some View {{
+        ZStack(alignment: .topLeading) {{
+            ForEach(elements) {{ element in
+                CloneElementView(element: element)
+            }}
+            CloneActionLayer(elements: elements, onAction: onAction)
+        }}
+        .frame(width: {unit['width']}, height: {unit['height']}, alignment: .topLeading)
+    }}
+}}"""
+
+
 def render_view(name: str, measurement: dict, actions: set[str], source: str,
                 state: str, points: dict[str, tuple[float, float]] | None = None,
                 crops: dict[int, str] | None = None,
-                uncovered: list[tuple[str, dict]] | None = None) -> str:
+                uncovered: list[tuple[str, dict]] | None = None,
+                groups: list[dict] | None = None) -> str:
     # Not `points` — that name is the tap coordinates parameter, and shadowing
     # it silently dropped every synthesised target.
     logical = (measurement.get("screen") or {}).get("points") or {}
     width, height = _num(logical.get("width"), 375.0), _num(logical.get("height"), 812.0)
     background = _hex(((measurement.get("palette") or [{}])[0]).get("hex")) or "#000000"
     scroll = scroll_container(measurement)
-    body = _records(element_literals(measurement, actions, points, crops, uncovered, scroll))
+    literals = element_literals(measurement, actions, points, crops, uncovered, scroll)
+    # No confirmed group means no restructuring and a byte-identical file: the
+    # extraction is opt-in on evidence, never on the generator's own guess.
+    literals, units = repeat_units(measurement, literals, groups or [])
+    body = _records(literals)
+    storage = "".join(_unit_storage(unit) for unit in units)
+    structs = "".join(_unit_struct(unit) for unit in units)
+    scroll_units = "".join(_unit_body(u, " " * 20) for u in units if u["scroll"] == 1)
+    chrome_units = "".join(_unit_body(u, " " * 12) for u in units if u["scroll"] != 1)
     box = scroll[0]
     scroll_drag = "" if not box else (
         f"        .modifier(CloneScrollDrag(offset: $scrollOffset, "
@@ -394,6 +536,7 @@ def render_view(name: str, measurement: dict, actions: set[str], source: str,
                     ForEach(Self.elements.filter {{ $0.scroll == 1 }}) {{ element in
                         CloneElementView(element: element)
                     }}
+{scroll_units}
                     CloneActionLayer(elements: Self.elements.filter {{ $0.scroll == 1 }},
                                      onAction: onAction)
                 }}
@@ -410,7 +553,7 @@ struct {name}: View {{
     @State private var scrollOffset: CGFloat = 0
 
     private static let elements: [CloneElement] = cloneElements({body})
-
+{storage}
     var body: some View {{
         ZStack(alignment: .topLeading) {{
             cloneColor("{background}")
@@ -423,6 +566,7 @@ struct {name}: View {{
 {scroll_body}            ForEach(Self.elements.filter {{ $0.scroll != 1 }}) {{ element in
                 CloneElementView(element: element)
             }}
+{chrome_units}
             CloneActionLayer(elements: Self.elements.filter {{ $0.scroll != 1 }},
                              onAction: onAction)
         }}
@@ -437,7 +581,7 @@ struct {name}: View {{
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
     }}
-}}
+}}{structs}
 """
 
 
@@ -884,7 +1028,8 @@ def main(argv: list[str]) -> int:
                         {label: point for (source, label), point in points.items()
                          if source == state},
                         crops_by_element(root, stem),
-                        uncovered_crops(root, stem)),
+                        uncovered_crops(root, stem),
+                        confirmed_groups(root, stem)),
             encoding="utf-8")
         written += 1
 

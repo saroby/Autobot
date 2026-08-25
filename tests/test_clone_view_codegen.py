@@ -515,3 +515,135 @@ class TestObservedActions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+sys.path.insert(0, str(SCRIPT.parent.parent))
+from scripts.clone_structure import write_structure  # noqa: E402
+
+
+def _card(top: float, name: str, name_width: float) -> list[dict]:
+    return [
+        {"role": "AXOther", "label": "", "enabled": True, "depth": 2, "parent": 0,
+         "frame": {"x": 0.0, "y": top, "width": 375.0, "height": 100.0},
+         "colors": {"background": "#101010", "fill": "#202020"}},
+        {"role": "AXImage", "label": "", "enabled": True, "depth": 3, "parent": -1,
+         "frame": {"x": 8.0, "y": top + 8, "width": 40.0, "height": 40.0},
+         "colors": {"background": "#101010", "fill": "#F3F6F7"}},
+        {"role": "AXStaticText", "label": name, "enabled": True, "depth": 3, "parent": -1,
+         "frame": {"x": 56.0, "y": top + 8, "width": name_width, "height": 20.0},
+         "colors": {"background": "#101010", "foreground": "#F3F6F7"},
+         "text": {"estimatedPointSize": 14.1, "styleSize": 15}},
+    ]
+
+
+FEED = {
+    "screen": {"points": {"width": 375.0, "height": 812.0},
+               "pixels": {"width": 1125, "height": 2436}, "scale": 3.0},
+    "palette": [{"count": 100, "hex": "#101010"}],
+    "elements": [{"role": "AXApplication", "label": "Feed", "enabled": True, "depth": 1,
+                  "parent": -1,
+                  "frame": {"x": 0.0, "y": 0.0, "width": 375.0, "height": 812.0},
+                  "colors": {"background": "#101010", "fill": "#101010"}}],
+}
+for _top, _name, _width in ((0.0, "Alice", 100.0), (100.0, "Bob", 80.0), (200.0, "Carol", 120.0)):
+    _base = len(FEED["elements"])
+    _container, *_kids = _card(_top, _name, _width)
+    FEED["elements"].append(_container)
+    FEED["elements"].extend({**kid, "parent": _base} for kid in _kids)
+
+
+class TestRepeatGroupsBecomeAComponent(unittest.TestCase):
+    """The one thing the absolute-position replay cannot say: "this card, N times".
+
+    A replay that scores perfectly and still has to be rewritten by hand is the
+    failure this closes. Structure has to reach the code, or confirming it is
+    bookkeeping nobody benefits from.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        workspace(self.root, {"s1": "Auto0001View"},
+                  [{"type": "screen", "statekey": "s1", "name": "auto-0001"}])
+        (self.root / "screens" / "auto-0001.json").write_text(
+            json.dumps(FEED), encoding="utf-8")
+        write_structure(self.root)
+        self.view = self.root / "Sources" / "Auto0001View.swift"
+
+    def _blobs(self) -> list[list[dict]]:
+        source = self.view.read_text(encoding="utf-8")
+        return [json.loads(found) for found
+                in re.findall(r'cloneElements\(###"(.*?)"###\)', source, re.S)]
+
+    def test_the_repeated_unit_is_emitted_once_as_a_component(self):
+        self.assertEqual(generate(self.root).returncode, 0)
+        source = self.view.read_text(encoding="utf-8")
+        self.assertIn("struct AutoItem: View", source,
+                      "the repeated unit must exist as one editable type")
+        self.assertTrue(
+            re.search(r"ForEach\(.*?AutoItem\(elements:", source, re.S),
+            "and be instantiated per item, not pasted per item")
+
+    def test_no_element_is_lost_when_the_group_moves_into_the_component(self):
+        """Missing elements are the dominant reproduction failure — restructuring must not add any."""
+        self.assertEqual(generate(self.root).returncode, 0)
+        emitted = sum(len(blob) for blob in self._blobs())
+        self.assertEqual(emitted, len(FEED["elements"]))
+
+    def test_a_screen_with_no_confirmed_group_is_generated_exactly_as_before(self):
+        """The restructuring is opt-in on evidence; without a group nothing changes."""
+        (self.root / "structure" / "auto-0001.json").unlink()
+        self.assertEqual(generate(self.root).returncode, 0)
+        with_no_structure = self.view.read_text(encoding="utf-8")
+
+        write_structure(self.root)
+        self.assertEqual(generate(self.root).returncode, 0)
+
+        self.assertNotEqual(with_no_structure, self.view.read_text(encoding="utf-8"))
+
+
+def _swift_sdk_available() -> bool:
+    try:
+        return subprocess.run(["xcrun", "--sdk", "iphonesimulator", "--find", "swiftc"],
+                              capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+@unittest.skipUnless(_swift_sdk_available(), "no iphonesimulator SDK — cannot type-check")
+class TestGeneratedSwiftTypeChecks(unittest.TestCase):
+    """A generator's dominant risk is emitting Swift that does not compile.
+
+    `polish` finds it too, by building on a simulator — after an observe run and
+    a render. Finding it here costs a second and points at the generator instead
+    of at 24 identical compiler diagnostics.
+    """
+
+    def _typecheck(self, root: Path) -> subprocess.CompletedProcess:
+        self.assertEqual(generate(root).returncode, 0)
+        sources = sorted((root / "Sources").glob("*.swift"))
+        self.assertTrue(sources, "nothing was generated")
+        return subprocess.run(
+            ["xcrun", "--sdk", "iphonesimulator", "swiftc", "-typecheck",
+             "-target", "arm64-apple-ios17.0-simulator", *[str(path) for path in sources]],
+            capture_output=True, text=True, timeout=600)
+
+    def test_a_flat_replay_type_checks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace(root, {"s1": "Auto0001View"},
+                      [{"type": "screen", "statekey": "s1", "name": "auto-0001"}])
+            result = self._typecheck(root)
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_an_extracted_repeat_component_type_checks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace(root, {"s1": "Auto0001View"},
+                      [{"type": "screen", "statekey": "s1", "name": "auto-0001"}])
+            (root / "screens" / "auto-0001.json").write_text(
+                json.dumps(FEED), encoding="utf-8")
+            write_structure(root)
+            result = self._typecheck(root)
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
