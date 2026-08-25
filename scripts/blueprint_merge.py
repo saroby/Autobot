@@ -70,6 +70,12 @@ def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
                                       f"{NOTE_KEEP_HINT}"))
             merged.append(replace(item, notes=notes))
             continue
+        if not candidate.body and (item.body or item.images):
+            # `우리 결정` 경로와 같은 가드다 — 본문을 못 뽑은 회차는 새 관찰이
+            # 아니다. 한 화면에서 텍스트 추출이 실패했다고 해서 누적된 서술과
+            # 이미지·참조를 지우면, 부분 관찰이 "없어졌다"로 둔갑한다.
+            merged.append(item)
+            continue
         merged.append(candidate)
     merged.extend(item for item in incoming if item.id in fresh)
     return merged

@@ -59,6 +59,31 @@ class TestMergeOwnership(unittest.TestCase):
         self.assertEqual(merged[0].body, "카드 3장 + 우리가 추가한 필터")
         self.assertEqual(merged[0].evidence, EVIDENCE_OURS)
 
+    def test_a_round_that_extracted_no_body_does_not_empty_an_observed_item(self):
+        """본문을 못 뽑은 회차는 새 관찰이 아니다 — `우리 결정` 경로와 같은 가드다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
+                         body="카드 3장", evidence_ref="observed/inventory.md#feed",
+                         images=['<img src="../observed/raw/03-feed.png" width="220">'])]
+        incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED, body="")]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].body, "카드 3장")
+        self.assertEqual(merged[0].images,
+                         ['<img src="../observed/raw/03-feed.png" width="220">'])
+        self.assertEqual(merged[0].evidence_ref, "observed/inventory.md#feed")
+
+    def test_a_round_with_no_body_still_fills_an_item_that_had_none(self):
+        """지킬 것이 없으면 가드가 걸리지 않는다 — 새 관찰이 그대로 들어온다."""
+        existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED)]
+        incoming = [Item(id="F-001", title="피드 목록", evidence=EVIDENCE_OBSERVED,
+                         images=['<img src="a.png" width="220">'])]
+
+        merged = merge_items(existing, incoming)
+
+        self.assertEqual(merged[0].title, "피드 목록")
+        self.assertEqual(merged[0].images, ['<img src="a.png" width="220">'])
+
     def test_a_newly_observed_item_is_appended_after_the_existing_order(self):
         """사람이 정리해 둔 순서를 재관찰이 흩뜨리지 않는다."""
         existing = [Item(id="F-002", title="검색", evidence=EVIDENCE_OBSERVED),
