@@ -45,16 +45,6 @@ class Note:
     kind: str
     text: str
 
-    def __eq__(self, other: object) -> bool:
-        # `blueprint_merge.py` 는 형제 모듈 import 관례상 이 파일을 별도
-        # 모듈로 다시 불러온다 (`Item` 과 마찬가지로 이 파일 상단 참고). 그
-        # 쪽에서 만든 `Note` 는 여기 `Note` 와 클래스가 달라 기본 `__eq__`
-        # 는 그 경계를 넘으면 조용히 False 가 된다. 필드만 비교하면 안전하다.
-        try:
-            return (self.kind, self.text) == (other.kind, other.text)
-        except AttributeError:
-            return NotImplemented
-
 
 NOTE_KIND_PLAIN = "note"          # 종류 없는 메모 (사람이 손댄 것 포함)
 NOTE_KIND_ABSENT = "absent"       # 관찰에서 사라짐

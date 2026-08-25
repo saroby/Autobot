@@ -13,11 +13,15 @@ from scripts.blueprint_doc import (
     EVIDENCE_OBSERVED,
     EVIDENCE_OURS,
     NOTE_KIND_CONFLICT,
-    NOTE_KIND_PLAIN,
     Item,
     Note,
 )
-from scripts.blueprint_merge import NOTE_ABSENT, NOTE_CONFLICT_PREFIX, merge_items
+from scripts.blueprint_merge import (
+    NOTE_ABSENT,
+    NOTE_CONFLICT_PREFIX,
+    NOTE_KEEP_HINT,
+    merge_items,
+)
 
 
 class TestMergeOwnership(unittest.TestCase):
@@ -92,8 +96,8 @@ class TestConflictWithHumanDecision(unittest.TestCase):
         merged = merge_items(existing, incoming)
 
         self.assertEqual(merged[0].body, "카드 3장 + 필터")
-        self.assertEqual(merged[0].notes,
-                          [Note(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 5장")])
+        self.assertEqual([(note.kind, note.text) for note in merged[0].notes],
+                          [(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 5장{NOTE_KEEP_HINT}")])
 
     def test_an_agreeing_observation_adds_no_note(self):
         existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
@@ -109,31 +113,34 @@ class TestConflictWithHumanDecision(unittest.TestCase):
         """회차마다 쌓이면 사람이 어느 것이 최신인지 알 수 없다."""
         existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
                          body="카드 3장 + 필터",
-                         notes=[Note(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 5장")])]
+                         notes=[Note(NOTE_KIND_CONFLICT,
+                                    f"{NOTE_CONFLICT_PREFIX}카드 5장{NOTE_KEEP_HINT}")])]
         incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
                          body="카드 7장")]
 
         merged = merge_items(existing, incoming)
 
-        self.assertEqual(merged[0].notes,
-                          [Note(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 7장")])
+        self.assertEqual([(note.kind, note.text) for note in merged[0].notes],
+                          [(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 7장{NOTE_KEEP_HINT}")])
 
     def test_an_observation_with_no_body_leaves_the_standing_conflict_alone(self):
         """본문을 못 뽑은 회차는 새 관찰이 아니다 — 알린 불일치를 지우지 않는다."""
         existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
                          body="카드 3장 + 필터",
-                         notes=[Note(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 5장")])]
+                         notes=[Note(NOTE_KIND_CONFLICT,
+                                    f"{NOTE_CONFLICT_PREFIX}카드 5장{NOTE_KEEP_HINT}")])]
         incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED, body="")]
 
         merged = merge_items(existing, incoming)
 
-        self.assertEqual(merged[0].notes,
-                          [Note(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 5장")])
+        self.assertEqual([(note.kind, note.text) for note in merged[0].notes],
+                          [(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 5장{NOTE_KEEP_HINT}")])
 
     def test_a_conflict_clears_once_the_observation_agrees(self):
         existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
                          body="카드 5장",
-                         notes=[Note(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 3장")])]
+                         notes=[Note(NOTE_KIND_CONFLICT,
+                                    f"{NOTE_CONFLICT_PREFIX}카드 3장{NOTE_KEEP_HINT}")])]
         incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
                          body="카드 5장")]
 
@@ -142,21 +149,22 @@ class TestConflictWithHumanDecision(unittest.TestCase):
         self.assertEqual(merged[0].notes, [])
 
     def test_a_note_the_person_edited_is_not_replaced_by_the_next_conflict(self):
-        """사람이 기계 노트에 주석을 달면 그 줄은 사람 것이 된다.
+        """마커를 지운 줄은 본문이 되어 병합이 건드리지 않는다.
 
-        문자열 접두사로 판별하던 때는 이 주석이 다음 회차에 통째로 갈아끼워졌다.
+        이것이 노트의 소유권 제스처다 — 근거 라벨을 바꾸는 것, 생성 마커를
+        지우는 것과 같은 동작이다.
         """
-        annotated = Note(NOTE_KIND_PLAIN, "⚠ 관찰이 다름: 카드 5장 ← 확인함, 3장 유지")
         existing = [Item(id="F-001", title="피드", evidence=EVIDENCE_OURS,
-                         body="카드 3장 + 필터", notes=[annotated])]
+                         body="카드 3장 + 필터\n> ⚠ 관찰이 다름: 카드 5장 ← 확인함, 3장 유지")]
         incoming = [Item(id="F-001", title="피드", evidence=EVIDENCE_OBSERVED,
                          body="카드 7장")]
 
         merged = merge_items(existing, incoming)
 
-        self.assertIn(annotated, merged[0].notes)
-        self.assertIn(Note(NOTE_KIND_CONFLICT, f"{NOTE_CONFLICT_PREFIX}카드 7장"),
-                      merged[0].notes)
+        self.assertIn("← 확인함, 3장 유지", merged[0].body)
+        self.assertEqual([(note.kind, note.text) for note in merged[0].notes],
+                         [(NOTE_KIND_CONFLICT,
+                           f"{NOTE_CONFLICT_PREFIX}카드 7장{NOTE_KEEP_HINT}")])
 
 
 if __name__ == "__main__":

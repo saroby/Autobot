@@ -37,6 +37,7 @@ from blueprint_doc import (  # noqa: E402
 
 NOTE_ABSENT = Note(NOTE_KIND_ABSENT, "관찰: 최근 회차에 없음")
 NOTE_CONFLICT_PREFIX = "⚠ 관찰이 다름: "
+NOTE_KEEP_HINT = " (이 줄을 지키려면 ⟦…⟧ 마커를 지우세요)"
 
 
 def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
@@ -61,7 +62,8 @@ def merge_items(existing: list[Item], incoming: list[Item]) -> list[Item]:
                 notes = [note for note in notes if note.kind != NOTE_KIND_CONFLICT]
                 if candidate.body != item.body:
                     notes.append(Note(NOTE_KIND_CONFLICT,
-                                      f"{NOTE_CONFLICT_PREFIX}{candidate.body}"))
+                                      f"{NOTE_CONFLICT_PREFIX}{candidate.body}"
+                                      f"{NOTE_KEEP_HINT}"))
             merged.append(replace(item, notes=notes))
             continue
         merged.append(candidate)

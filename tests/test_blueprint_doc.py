@@ -59,7 +59,8 @@ class TestParseItems(unittest.TestCase):
         items = parse_items(text)
 
         self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
-        self.assertEqual(items[0].notes, [Note(NOTE_KIND_PLAIN, "관찰: 최근 회차에 없음")])
+        self.assertEqual([(note.kind, note.text) for note in items[0].notes],
+                          [(NOTE_KIND_PLAIN, "관찰: 최근 회차에 없음")])
 
     def test_a_blockquote_without_the_marker_stays_in_the_body(self):
         """`>` 는 사람이 쓰는 평범한 마크다운이다 — 마커 없는 인용문은 본문이다."""
