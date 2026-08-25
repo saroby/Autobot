@@ -79,3 +79,29 @@ def parse_items(text: str) -> list[Item]:
     if current is not None:
         items.append(_finish(current, body_lines))
     return items
+
+
+def render_item(item: Item) -> str:
+    """항목 하나를 마크다운으로. `parse_items` 가 그대로 되읽을 수 있어야 한다."""
+    lines = [f"## {item.id} {item.title}"]
+    evidence = item.evidence
+    if item.evidence_ref:
+        evidence = f"{evidence} · {item.evidence_ref}"
+    lines.append(f"근거: {evidence}")
+    # 폭 지정은 마크다운 `![]()` 로 불가능하고, 이 레포는 stdlib 만 쓰므로
+    # 썸네일을 새로 만들지 않는다. 원본을 인라인 HTML 로 폭만 제한해 싣는다.
+    lines.extend(f'<img src="{src}" width="220">' for src in item.images)
+    if item.body:
+        lines.extend(["", item.body])
+    if item.notes:
+        lines.append("")
+        lines.extend(f"> {note}" for note in item.notes)
+    return "\n".join(lines)
+
+
+def render_items(items: list[Item], heading: str = "") -> str:
+    blocks = [render_item(item) for item in items]
+    text = "\n\n".join(blocks)
+    if heading:
+        text = f"# {heading}\n\n{text}"
+    return text + "\n"

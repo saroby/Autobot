@@ -14,6 +14,7 @@ from scripts.blueprint_doc import (
     EVIDENCE_OURS,
     Item,
     parse_items,
+    render_items,
 )
 
 
@@ -52,6 +53,24 @@ class TestParseItems(unittest.TestCase):
 
         self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
         self.assertEqual(items[0].notes, ["관찰: 최근 회차에 없음"])
+
+
+class TestRenderRoundTrip(unittest.TestCase):
+    def test_parsing_then_rendering_preserves_every_field(self):
+        """병합은 파싱→수정→렌더링이다. 라운드트립이 새면 조용히 내용을 잃는다."""
+        original = [
+            Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED,
+                 evidence_ref="observed/inventory.md#login",
+                 images=["../observed/raw/01-login.png"],
+                 body="이메일과 비밀번호를 받는다.",
+                 notes=["관찰: 최근 회차에 없음"]),
+            Item(id="F-002", title="다크 모드", evidence=EVIDENCE_OURS,
+                 body="원본에 없다. 우리는 넣는다."),
+        ]
+
+        reparsed = parse_items(render_items(original))
+
+        self.assertEqual(reparsed, original)
 
 
 if __name__ == "__main__":
