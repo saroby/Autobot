@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -86,7 +87,10 @@ def parse_items(text: str) -> list[Item]:
         if evidence and not current.evidence:
             raw = evidence.group(1)
             label, _, reference = raw.partition("·")
-            current.evidence = label.strip()
+            # 한글은 NFC/NFD 로 다르게 저장될 수 있고 macOS 는 NFD 를 만든다.
+            # 정규화하지 않으면 눈에 같은 `우리 결정` 이 상수와 어긋나 소유권
+            # 보호가 조용히 풀린다 — 이 계약이 지키려는 단 하나의 성질이다.
+            current.evidence = unicodedata.normalize("NFC", label.strip())
             current.evidence_ref = reference.strip()
             continue
         image = _IMAGE.search(line)

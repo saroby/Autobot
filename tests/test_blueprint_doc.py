@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -145,6 +146,19 @@ class TestLabelValidation(unittest.TestCase):
             for index, label in enumerate(sorted(EVIDENCE_LABELS)))
 
         self.assertEqual(unlabelled(parse_items(text)), [])
+
+    def test_a_decomposed_label_is_recognised(self):
+        """macOS 가 만드는 NFD 라벨도 같은 라벨이다.
+
+        어긋나면 사람이 `우리 결정` 으로 바꾼 항목이 보호되지 않고 덮인다.
+        """
+        decomposed = unicodedata.normalize("NFD", EVIDENCE_OURS)
+        self.assertNotEqual(decomposed, EVIDENCE_OURS)   # 전제 확인
+
+        items = parse_items(f"## F-001 피드\n근거: {decomposed}\n\n카드 3장.\n")
+
+        self.assertEqual(unlabelled(items), [])
+        self.assertEqual(items[0].evidence, EVIDENCE_OURS)
 
 
 if __name__ == "__main__":
