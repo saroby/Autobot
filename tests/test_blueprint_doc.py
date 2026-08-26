@@ -55,7 +55,11 @@ class TestParseItems(unittest.TestCase):
         self.assertEqual(items[0].evidence_ref, "observed/inventory.md#feed")
         self.assertEqual(items[0].images,
                          ['<img src="../observed/raw/03-feed.png" width="220">'])
-        self.assertEqual(items[0].body, "스크롤 끝에서 다음 페이지를 불러온다.")
+        # 이미지는 본문 밖으로 뽑히지 않는다 — 원래 있던 자리 그대로 남는다.
+        self.assertEqual(
+            items[0].body,
+            '<img src="../observed/raw/03-feed.png" width="220">\n\n'
+            '스크롤 끝에서 다음 페이지를 불러온다.')
 
     def test_blockquote_lines_are_machine_notes_not_body(self):
         """노트가 본문에 섞이면 다음 병합이 같은 경고를 다시 쌓는다."""
@@ -235,12 +239,17 @@ let x = 1
 
 class TestRenderRoundTrip(unittest.TestCase):
     def test_parsing_then_rendering_preserves_every_field(self):
-        """병합은 파싱→수정→렌더링이다. 라운드트립이 새면 조용히 내용을 잃는다."""
+        """병합은 파싱→수정→렌더링이다. 라운드트립이 새면 조용히 내용을 잃는다.
+
+        이미지는 본문 안에 그대로 살아 있어야 파서가 되읽었을 때 같은 위치에
+        남는다 — `images` 필드는 그 본문에서 되읽은 값과 일치해야 한다.
+        """
+        login_image = image_line("../observed/raw/01-login.png")
         original = [
             Item(id="F-001", title="로그인", evidence=EVIDENCE_OBSERVED,
                  evidence_ref="observed/inventory.md#login",
-                 images=[image_line("../observed/raw/01-login.png")],
-                 body="이메일과 비밀번호를 받는다.",
+                 images=[login_image],
+                 body=f"{login_image}\n이메일과 비밀번호를 받는다.",
                  notes=[Note(NOTE_KIND_ABSENT, "관찰: 최근 회차에 없음")]),
             Item(id="F-002", title="다크 모드", evidence=EVIDENCE_OURS,
                  body="원본에 없다. 우리는 넣는다."),
@@ -252,6 +261,81 @@ class TestRenderRoundTrip(unittest.TestCase):
         reparsed = parse_items(render_items(original))
 
         self.assertEqual(reparsed, original)
+
+
+class TestImagePositionRoundTrip(unittest.TestCase):
+    """이미지는 본문 어디에 있든 그 자리에서 그대로 되읽혀야 한다.
+
+    `근거:` 줄 바로 뒤로 끌어올리면 이미지 순서가 사라지고, 이미지를 감싸던
+    두 문장이 붙어버려 어느 문장이 그 이미지를 설명하는지 알 수 없게 된다 —
+    `우리 결정` 항목이면 그 손실이 저장할 때마다 반복된다.
+    """
+
+    IMAGE = '<img src="../observed/raw/03-feed.png" width="220">'
+
+    def test_an_image_at_the_top_of_the_body_round_trips(self):
+        text = (f"## F-001 피드\n근거: 우리 결정\n\n"
+                f"{self.IMAGE}\n아래는 필터 영역이다.\n")
+
+        items = parse_items(text)
+
+        self.assertEqual(items[0].images, [self.IMAGE])
+        self.assertEqual(render_items(items), text)
+
+    def test_an_image_in_the_middle_of_the_body_round_trips(self):
+        """정확히 보고된 버그 — 이미지가 위로 끌려 올라가고 앞뒤 문장이 붙었었다."""
+        text = (f"## F-001 피드\n근거: 우리 결정\n\n"
+                f"카드가 세 장 보인다.\n{self.IMAGE}\n아래는 필터 영역이다.\n")
+
+        items = parse_items(text)
+
+        self.assertEqual(items[0].images, [self.IMAGE])
+        self.assertEqual(items[0].body,
+                         f"카드가 세 장 보인다.\n{self.IMAGE}\n아래는 필터 영역이다.")
+        self.assertEqual(render_items(items), text)
+
+    def test_an_image_at_the_end_of_the_body_round_trips(self):
+        text = f"## F-001 피드\n근거: 우리 결정\n\n카드가 세 장 보인다.\n{self.IMAGE}\n"
+
+        items = parse_items(text)
+
+        self.assertEqual(items[0].images, [self.IMAGE])
+        self.assertEqual(render_items(items), text)
+
+    def test_two_images_in_one_item_keep_their_own_positions(self):
+        second_image = '<img src="../observed/raw/04-filter.png" width="220">'
+        text = (f"## F-001 피드\n근거: 관찰\n\n첫 화면.\n{self.IMAGE}\n"
+                f"중간 설명.\n{second_image}\n마지막 설명.\n")
+
+        items = parse_items(text)
+
+        self.assertEqual(items[0].images, [self.IMAGE, second_image])
+        self.assertEqual(render_items(items), text)
+
+    def test_an_item_that_is_only_an_image_round_trips(self):
+        text = f"## F-001 피드\n근거: 관찰\n\n{self.IMAGE}\n"
+
+        items = parse_items(text)
+
+        self.assertEqual(items[0].images, [self.IMAGE])
+        self.assertEqual(items[0].body, self.IMAGE)
+        self.assertEqual(render_items(items), text)
+
+    def test_write_doc_after_read_doc_is_byte_identical_with_images_anywhere(self):
+        """실제 경로 — 사람이 저장 버튼을 누를 때 겪는 것과 같은 계약."""
+        for label, text in (
+            ("top", f"## F-001 피드\n근거: 우리 결정\n\n{self.IMAGE}\n본문.\n"),
+            ("middle", f"## F-001 피드\n근거: 우리 결정\n\n앞.\n{self.IMAGE}\n뒤.\n"),
+            ("bottom", f"## F-001 피드\n근거: 우리 결정\n\n본문.\n{self.IMAGE}\n"),
+        ):
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as temp:
+                    path = Path(temp) / "features.md"
+                    path.write_text(text, encoding="utf-8")
+
+                    write_doc(path, read_doc(path))
+
+                    self.assertEqual(path.read_text(encoding="utf-8"), text)
 
 
 class TestPreamble(unittest.TestCase):

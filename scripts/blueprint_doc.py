@@ -53,6 +53,11 @@ _EVIDENCE = re.compile(r"^근거:\s*(.+?)\s*$")
 # 문서 어디에나 흔하게 만들므로, 이미지 옆에 설명을 붙이는 것은 예외가 아니라
 # 기본 사용법이다. 저장하는 것도 `src` 가 아니라 줄 원문이다: 사람이 정한
 # `alt`·`width` 는 되살릴 방법이 없으므로 애초에 버리지 않는다.
+#
+# 이 줄은 본문에서 뽑아내지 않는다 — 뽑으면 위치가 사라져 다음 렌더가 모든
+# 이미지를 `근거:` 바로 뒤로 끌어올리고, 이미지를 감싸던 두 문장이 붙어버려
+# 어느 문장이 그 이미지를 설명하는지도 알 수 없게 된다. `Item.images` 는
+# `_finish` 가 완성된 본문에서 이 정규식으로 되읽어 채우는 파생값이다.
 _IMAGE_LINE = re.compile(r"^\s*(?:<img\s[^>]*>\s*)+$")
 # 기계 노트는 전용 마커를 달고 나간다. `>` 만으로 가르면 사람이 본문에 쓴
 # 평범한 인용문이 기계 메모로 재분류되어 다음 렌더에서 항목 아래로 밀려난다.
@@ -95,6 +100,8 @@ class Item:
     title: str
     evidence: str
     evidence_ref: str = ""
+    # 본문 안 이미지 줄을 되읽은 값 — `_finish` 가 채운다. 위치 정보는 여기가
+    # 아니라 `body` 자체가 들고 있다: 이 목록은 순서만 보존한 조회용 사본이다.
     images: list[str] = field(default_factory=list)
     body: str = ""
     notes: list[Note] = field(default_factory=list)
@@ -112,11 +119,21 @@ def _finish(item: Item, body_lines: list[str]) -> Item:
     # 매번 새 `⚠ 관찰이 다름:` 이 붙는다 — 사람 글과 관찰이 실제로는 한 글자도
     # 다르지 않은데도.
     item.body = unicodedata.normalize("NFC", "\n".join(body_lines).strip())
+    # 이미지는 흡수하지 않고 본문에 그대로 남겨 뒀다 (`_absorb` 참고) — 여기서
+    # 완성된 본문을 되읽어 조회용 목록만 채운다. 스캔이지 원본이 아니므로
+    # 위치가 새지 않는다.
+    item.images = [line for line in item.body.splitlines() if _IMAGE_LINE.match(line)]
     return item
 
 
 def _absorb(item: Item, line: str) -> bool:
-    """항목의 구조 줄(근거·이미지·기계 노트)이면 흡수하고 True 를 돌려준다."""
+    """항목의 구조 줄(근거·기계 노트)이면 흡수하고 True 를 돌려준다.
+
+    이미지 줄은 여기서 흡수하지 않는다 — 흡수하면 본문에서 빠져 위치가
+    사라지고, 다음 렌더가 모든 이미지를 `근거:` 바로 뒤로 끌어올린다. 이미지
+    줄은 그냥 본문 줄로 남아 `body_lines` 에 쌓이고, `_finish` 가 완성된
+    본문에서 되읽어 `item.images` 를 채운다.
+    """
     evidence = _EVIDENCE.match(line)
     if evidence and not item.evidence:
         raw = evidence.group(1)
@@ -126,9 +143,6 @@ def _absorb(item: Item, line: str) -> bool:
         # 보호가 조용히 풀린다 — 이 계약이 지키려는 단 하나의 성질이다.
         item.evidence = unicodedata.normalize("NFC", label.strip())
         item.evidence_ref = reference.strip()
-        return True
-    if _IMAGE_LINE.match(line):
-        item.images.append(line.strip())
         return True
     note = _NOTE.match(line)
     if note:
@@ -224,13 +238,17 @@ def parse_items(text: str) -> list[Item]:
 
 
 def render_item(item: Item) -> str:
-    """항목 하나를 마크다운으로. `parse_items` 가 그대로 되읽을 수 있어야 한다."""
+    """항목 하나를 마크다운으로. `parse_items` 가 그대로 되읽을 수 있어야 한다.
+
+    이미지는 따로 싣지 않는다 — `body` 안에 원래 있던 자리 그대로 이미 들어
+    있다 (`_finish` 참고). 여기서 또 실으면 이미지가 두 번 나오거나
+    `근거:` 바로 뒤로 되돌아간다.
+    """
     lines = [f"## {item.id} {item.title}"]
     evidence = item.evidence
     if item.evidence_ref:
         evidence = f"{evidence} · {item.evidence_ref}"
     lines.append(f"근거: {evidence}")
-    lines.extend(item.images)
     if item.body:
         lines.extend(["", item.body])
     if item.notes:
