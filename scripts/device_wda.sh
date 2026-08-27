@@ -47,6 +47,15 @@
 #   A signing team: DEVELOPMENT_TEAM (or TEAM_ID) in the environment.
 set -euo pipefail
 
+# Reset, never inherited. This grants an exemption from the tap budget, so a
+# caller that exported it would lift the ceiling on someone's real account:
+# `_TAP_REVERTING=1 device_wda.sh tap ...` would tap without limit. Only the
+# revert path inside this script may set it.
+_TAP_REVERTING=0
+# Set when a tap could not be written to the flow log; the budget is blind after
+# that, so no further tap is allowed.
+_FLOW_BROKEN=0
+
 APPIUM_URL="${APPIUM_URL:-http://127.0.0.1:4723}"
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLONE_STATE_DIR="${CLONE_STATE_DIR:-$PWD/.autobot/clone}"
@@ -1329,6 +1338,10 @@ _budget_allows() {
   # A revert is not exploration, it is putting something back. Refusing it on
   # a spent budget leaves the user's switch flipped — worse than the tap the
   # budget was protecting them from.
+  if [[ "${_FLOW_BROKEN:-0}" == "1" ]]; then
+    echo "ERROR: a previous tap could not be logged — the budget cannot bind. Stop." >&2
+    return 1
+  fi
   if [[ "${_TAP_REVERTING:-0}" == "1" ]]; then
     return 0
   fi
@@ -1491,7 +1504,24 @@ sys.exit(0 if moved or not shared else 1)
 # happened must not report failure because the log path was unwritable — the
 # exploration loop would retry it and double-tap a real phone.
 _flow_event() {
-  _flow_write "$@" || echo "WARN: could not append to the exploration log (${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}) — flow map and resume will be incomplete"
+  if _flow_write "$@"; then
+    return 0
+  fi
+  # A tap that is not recorded is a tap the cumulative budget cannot see. The
+  # count comes from this log, so a silent write failure means the ceiling
+  # quietly stops existing — the run keeps tapping someone's real account with
+  # no limit and nothing to audit or resume from. A screen capture failing to
+  # log is only lost evidence; a tap failing to log is a lost guard rail.
+  if [[ "${1:-}" == "tap" ]]; then
+    # Do not fail the call: the tap already happened, and reporting it as a
+    # failure would not undo it. Fail the NEXT one — that is the tap the budget
+    # can still stop.
+    echo "ERROR: could not append this tap to ${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}" >&2
+    echo "ERROR:   the tap budget is counted from that log, so no further tap is allowed." >&2
+    _FLOW_BROKEN=1
+    return 0
+  fi
+  echo "WARN: could not append to the exploration log (${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}) — flow map and resume will be incomplete"
 }
 
 _flow_write() {
@@ -1654,7 +1684,17 @@ _landed_elsewhere() {
   local sid="$1" landed expected
   landed="$(_active_target "$sid" || true)"
   expected="$(_cached_session_bundle "$sid" || _session_target "$sid" || true)"
-  if [[ -n "$landed" && -n "$expected" && "$landed" != "$expected" ]]; then
+  if [[ -z "$expected" ]]; then
+    return 0            # nothing to compare against; the session gate owns this
+  fi
+  # An empty answer is NOT "still on target". The query fails when the session
+  # is dying or another app is in front, which are exactly the cases this
+  # exists to catch — reading it as success made the check fail open.
+  if [[ -z "$landed" ]]; then
+    printf 'unknown'
+    return 1
+  fi
+  if [[ "$landed" != "$expected" ]]; then
     printf '%s' "$landed"
     return 1
   fi

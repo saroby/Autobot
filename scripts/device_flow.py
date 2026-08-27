@@ -393,9 +393,15 @@ def unexplored(records: list[dict], events: list[dict], state: str) -> list[dict
 
 
 def observed_edges(events: list[dict]) -> "OrderedDict[str, list[tuple[str, str]]]":
-    """from state key → [(behavior, to state key)] for transitions that changed."""
+    """from state key → [(behavior, to state key)] for transitions that changed.
+
+    Built from `explored_taps`: an unstable tap never settled, so its
+    destination was never seen. Routing over it would plan a hop through a
+    transition nobody observed, and the map would draw an edge to a screen that
+    may not be there.
+    """
     edges: "OrderedDict[str, list[tuple[str, str]]]" = OrderedDict()
-    for tap in taps(events):
+    for tap in explored_taps(events):
         if not changed(tap):
             continue
         source, destination = action_source(tap), action_destination(tap)
@@ -781,7 +787,11 @@ def map_edges(events: list[dict]) -> list[tuple[str, str, str, float, float]]:
     """
     out, seen = [], set()
     for index, event in enumerate(events):
-        if event.get("type") != "tap" or not changed(event):
+        # An unstable tap never settled, so the "next screen captured" after it
+        # is not evidence of where it went — drawing that edge invents a
+        # transition nobody observed.
+        if (event.get("type") != "tap" or not changed(event)
+                or event.get("evidence") == "unstable"):
             continue
         before = next((map_key(e) for e in reversed(events[:index])
                        if e.get("type") == "screen"), "")

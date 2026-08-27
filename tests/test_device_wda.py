@@ -2198,11 +2198,64 @@ class TestFlowLogging(unittest.TestCase):
             capture_output=True, text=True, env=env,
         )
 
-    def test_an_unwritable_log_warns_but_succeeds(self):
+    def test_an_unwritable_log_does_not_fail_the_tap_that_already_happened(self):
+        # The tap is on the device; calling it a failure would not undo it.
         with tempfile.TemporaryDirectory() as d:
             r = self._call("/nonexistent/deep/flow.jsonl", Path(d))
         self.assertEqual(r.returncode, 0)
+
+    def test_an_unwritable_log_is_an_error_for_a_tap_and_blocks_the_next_one(self):
+        # The cumulative budget is counted FROM this log. A tap that does not
+        # reach it is a tap the ceiling cannot see, so the ceiling stops
+        # existing — quietly, which is the worst way for a limit on someone's
+        # real account to fail.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d) / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            r = subprocess.run(
+                ["bash", "-c",
+                 f"source {lib}; _flow_event tap from=a to=b; "
+                 f"echo BROKEN=$_FLOW_BROKEN; _budget_allows && echo ALLOWED || echo REFUSED"],
+                capture_output=True, text=True,
+                env={**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl"},
+            )
+        self.assertIn("ERROR: could not append this tap", r.stderr)
+        self.assertIn("BROKEN=1", r.stdout)
+        self.assertIn("REFUSED", r.stdout)
+
+    def test_a_screen_event_that_cannot_be_logged_is_only_a_warning(self):
+        # Lost evidence, not a lost guard rail.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d) / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            r = subprocess.run(
+                ["bash", "-c", f"source {lib}; _flow_event screen node=a; "
+                               f"echo BROKEN=$_FLOW_BROKEN"],
+                capture_output=True, text=True,
+                env={**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl"},
+            )
         self.assertIn("WARN: could not append", r.stdout)
+        self.assertIn("BROKEN=0", r.stdout)
+
+    def test_the_revert_exemption_cannot_be_granted_from_outside(self):
+        # `_TAP_REVERTING=1` lifts the budget. Inheriting it from the caller's
+        # environment would lift the ceiling on every tap.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d) / "wda_lib.sh"
+            log = Path(d) / "flow.jsonl"
+            log.write_text("".join(
+                '{"type": "tap", "from": "a", "to": "b"}\n' for _ in range(30)),
+                encoding="utf-8")
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            r = subprocess.run(
+                ["bash", "-c", f"source {lib}; _budget_allows && echo ALLOWED || echo REFUSED"],
+                capture_output=True, text=True,
+                env={**os.environ, "CLONE_FLOW_LOG": str(log), "_TAP_REVERTING": "1"},
+            )
+        self.assertIn("REFUSED", r.stdout)
 
     def test_events_are_one_json_object_per_line(self):
         with tempfile.TemporaryDirectory() as d:

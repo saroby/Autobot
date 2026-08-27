@@ -813,3 +813,21 @@ class TestUnstableTapsAreNotExplored(FlowCase):
         self.write([self.screen(), self.unstable()])
         self.assertEqual(len(DEVICE_FLOW.taps(DEVICE_FLOW.load(str(self.log)))), 1)
         self.assertEqual(len(DEVICE_FLOW.explored_taps(DEVICE_FLOW.load(str(self.log)))), 0)
+
+    def test_an_unstable_tap_is_not_an_observed_transition(self):
+        # `changed=true` on a tap that never settled still meant "we saw it go
+        # there" to routing and to the map.
+        moved = {"type": "tap", "from": "n1", "to": "n2", "label": "가", "behavior": "b1",
+                 "x": "50", "y": "120", "changed": "true", "evidence": "unstable"}
+        self.write([self.screen(), moved, self.screen(node="n2", name="s2")])
+        events = DEVICE_FLOW.load(str(self.log))
+        self.assertEqual(dict(DEVICE_FLOW.observed_edges(events)), {})
+        self.assertEqual(DEVICE_FLOW.map_edges(events), [])
+
+    def test_a_settled_transition_is_still_observed(self):
+        moved = {"type": "tap", "from": "n1", "to": "n2", "label": "가", "behavior": "b1",
+                 "x": "50", "y": "120", "changed": "true"}
+        self.write([self.screen(), moved, self.screen(node="n2", name="s2")])
+        events = DEVICE_FLOW.load(str(self.log))
+        self.assertTrue(DEVICE_FLOW.observed_edges(events))
+        self.assertTrue(DEVICE_FLOW.map_edges(events))
