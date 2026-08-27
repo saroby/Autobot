@@ -364,8 +364,60 @@ def _node_identity(els: list[dict]) -> tuple[str, list[str]]:
                      and _data_cell_index(els, index) is None
                      and not _inside_keyboard(els, index)
                      and not _inside_modal(els, index)})
+    shape += _chrome_shape(els, sum(counts.values()))
     digest = hashlib.sha1("\n".join(titles + shape).encode()).hexdigest()[:12]
     return digest, shape
+
+
+# Short enough to be a nav item, a tab, or a filter chip; long enough to exclude
+# a card's title, a message, or a feed row's summary.
+CHROME_LABEL_MAX = 8
+
+
+def _chrome_shape(els: list[dict], role_elements: int) -> list[str]:
+    """A structural fallback for screens that report no structure.
+
+    The shape above deliberately ignores AXOther, so a custom-rendered app has
+    nothing left to hash — measured on zeta, its ranking and contest screens
+    both produced sha1(""), and its home and creator tabs produced the same
+    digest too. Everything downstream inherits that: statekey collapses, a real
+    transition records `changed=false`, and coverage, resume and the flow graph
+    merge screens that share nothing.
+
+    What still separates those screens is their CHROME — the nav items, tabs and
+    filter chips. Those are short, and they do not scroll away, which is the
+    property that matters: hashing every label (what `sig` does) would make a
+    feed a new node on every scroll. Measured across 57 captures of zeta, this
+    yields 21 groups, each one a genuinely distinct screen, with the home feed's
+    seven scroll positions collapsed into one.
+
+    Only when roles explain almost nothing. Counting BUCKETS was not enough: the
+    search screen reports two roles for a screen of fifteen unnamed chips, which
+    read as "structured" and left it colliding with its own results page. What
+    decides is how much of the labelled surface the roles actually account for.
+    An app that reports roles keeps the identity it already had, so no existing
+    graph or log is re-keyed.
+    """
+    leaves = _label_leaves(els)
+    chrome = set()
+    others = 0
+    for index, e in enumerate(els):
+        label = (e["label"] or "").strip()
+        if not leaves[index] or not label or e["visible"] is False:
+            continue
+        if e["role"] in CONTAINERS or NOISE.search(label):
+            continue
+        if _inside_keyboard(els, index) or _inside_modal(els, index):
+            continue
+        others += e["role"] == "AXOther"
+        if len(label) <= CHROME_LABEL_MAX and "\n" not in label:
+            chrome.add(label)
+    # A genuinely sparse screen (a spinner, an empty state) is not the same
+    # thing as a custom-rendered one; without a crowd of unnamed boxes there is
+    # nothing here worth disambiguating.
+    if others < 5 or not chrome or role_elements * 3 > others:
+        return []
+    return ["chrome:" + hashlib.sha1("|".join(sorted(chrome)).encode()).hexdigest()[:12]]
 
 
 def nodekey(els: list[dict]) -> None:

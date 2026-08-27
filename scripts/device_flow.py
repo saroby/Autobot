@@ -691,16 +691,19 @@ def _frame_of(tree: str) -> tuple[float, float]:
 def map_key(event: dict) -> str:
     """A screen's identity ON THE MAP: its labels AND its interaction state.
 
-    Neither half is enough. `statekey` alone merged the home feed, the creator
-    tab, the ranking tab and the contest tab onto one card, because it hashes
-    the tree's SHAPE and a custom-rendered app has none — measured on zeta,
-    every screen reported the coarse node `da39a3ee5e6b`, which is sha1(""), so
-    taps made on one screen were drawn on a screenshot of another. `sig` alone
-    loses the states that share a label set, which is what separates a sheet
-    that is open from the same screen with it closed. Together they split on
-    either difference.
+    `statekey`, same as the rest of the reader. It used to be `sig:statekey`,
+    because a custom-rendered app collapsed every screen onto one coarse node —
+    the map worked around that by splitting on the label set as well. The cost
+    was the opposite error: a feed re-sigs as it scrolls, so one screen became
+    several cards. `_node_identity` now falls back to a chrome fingerprint when
+    roles explain nothing, so statekey carries the distinction on its own and
+    the workaround is gone.
+
+    Logs written BEFORE that fix still carry the collapsed keys — the map reads
+    the log, not the trees, so an old log maps as it was recorded. `cmd_map`
+    says so rather than quietly drawing a merged graph.
     """
-    return f'{_first_value(event, "sig")}:{screen_identity(event)}'
+    return screen_identity(event)
 
 
 def map_screens(events: list[dict]) -> "OrderedDict[str, dict]":
@@ -877,6 +880,19 @@ def cmd_map(path: str, out: str) -> int:
         todo[sig] = {"points": points, "left": len(points),
                      "total": sum(1 for r in records if not r["withheld"]),
                      "withheld": sum(1 for r in records if r["withheld"])}
+
+    # A statekey hosting many different label sets means the log predates the
+    # chrome fallback in `_node_identity`; its screens are merged and no amount
+    # of reading can unmerge them.
+    per_state: dict[str, set] = {}
+    for e in events:
+        if e.get("type") == "screen":
+            per_state.setdefault(screen_identity(e), set()).add(_first_value(e, "sig"))
+    merged = sum(1 for sigs in per_state.values() if len(sigs) > 3)
+    if merged:
+        print(f"WARN: {merged} screen(s) in this log hold more than 3 distinct label sets — "
+              "the log predates the chrome-fingerprint identity fix, so distinct screens "
+              "are recorded under one key. Re-explore for an accurate graph.", file=sys.stderr)
 
     boxes, links, lanes = _layout(cards_by_sig, todo, edges, depth,
                                   out_path.resolve().parent)

@@ -1040,3 +1040,51 @@ class TestLeavingTheApp(unittest.TestCase):
     def test_labels_that_only_look_like_a_switch_are_navigation(self):
         r = idb([ROOT, el("전환 안내", 0, 200), el("열기", 0, 260), el("홈", 0, 320)])
         self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)
+
+
+class TestChromeFingerprintIdentity(unittest.TestCase):
+    """Structural identity for apps that report no structure.
+
+    `_node_identity` ignores AXOther on purpose, so a custom-rendered app had
+    nothing left to hash — measured on zeta, its ranking and contest screens
+    both produced sha1(""), and home and the creator tab produced one digest
+    between them. statekey is layered on top, so a real transition recorded
+    `changed=false` and coverage, resume and the graph merged unrelated screens.
+    """
+
+    def custom(self, *labels: str, extra: str = "") -> str:
+        # A crowd of unnamed boxes, which is what a custom renderer emits.
+        return extra + "".join(
+            node("Other", lab, 10 + 60 * i, 68, 50, 34) for i, lab in enumerate(labels))
+
+    def key(self, inner: str) -> str:
+        out = wda(inner, mode="nodekey").stdout
+        return next(l.split()[-1] for l in out.splitlines() if l.startswith("INFO: nodekey"))
+
+    def test_screens_with_different_chrome_are_different_nodes(self):
+        ranking = self.key(self.custom("트렌딩", "베스트", "신작", "전체", "홈", "대화"))
+        contest = self.key(self.custom("연애", "성장", "미스터리", "전체", "홈", "대화"))
+        self.assertNotEqual(ranking, contest)
+
+    def test_scrolling_does_not_make_a_new_node(self):
+        # The chrome stays; only the long content labels change.
+        chrome = ("추천", "스토리챗", "비주얼", "홈", "대화", "만들기")
+        top = self.key(self.custom(*chrome, extra=node("Other", "23.4만 어떤 긴 카드 제목", 16, 300, 177, 300)))
+        down = self.key(self.custom(*chrome, extra=node("Other", "43.7만 완전히 다른 카드", 16, 300, 177, 300)))
+        self.assertEqual(top, down)
+
+    def test_an_app_that_reports_roles_keeps_its_identity(self):
+        # No re-keying of existing graphs or logs.
+        rich = (node("Button", "계속", 38, 700, 299, 52)
+                + node("Button", "취소", 38, 600, 299, 52)
+                + node("StaticText", "제목", 20, 100, 200, 30))
+        before = self.key(rich)
+        # Adding unnamed boxes must not flip it into the fallback.
+        after = self.key(rich + "".join(
+            node("Other", f"칩{i}", 10 + 40 * i, 200, 30, 24) for i in range(6)))
+        self.assertEqual(before, after)
+
+    def test_a_sparse_screen_is_not_treated_as_custom_rendered(self):
+        # An empty state has no crowd of unnamed boxes to disambiguate.
+        self.assertNotIn("chrome:", wda(node("Other", "홈", 28, 774, 48, 39),
+                                        mode="nodekey").stdout)
