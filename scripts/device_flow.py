@@ -43,6 +43,7 @@ import json
 import os
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections import OrderedDict, deque
 from pathlib import Path
 
@@ -583,25 +584,47 @@ def cmd_stats(path: str) -> int:
     return 0
 
 
-def _edges(events: list[dict]) -> list[tuple[str, str, str]]:
+def _edges(events: list[dict]) -> list[tuple[str, str, str, float, float]]:
+    """Transitions, each carrying the point that was actually tapped.
+
+    The coordinate is what lets the map draw the edge from the spot on the
+    screenshot instead of from the bottom of the card: "tapping HERE goes there"
+    is the thing a flow map is for, and a line leaving the card's edge does not
+    say it.
+    """
     seen, out = set(), []
     for t in taps(events):
         edge = (action_source(t) or "?", action_destination(t), t.get("label", "?"))
         if edge not in seen and changed(t):
             seen.add(edge)
-            out.append(edge)
+            try:
+                x, y = float(t.get("x", -1)), float(t.get("y", -1))
+            except (TypeError, ValueError):
+                x = y = -1.0
+            out.append((*edge, x, y))
     return out
 
 
-def _depths(nodes: list[str], edges: list[tuple[str, str, str]]) -> dict[str, int]:
-    """Distance from the first captured screen — the map's rows."""
+def _depths(nodes: list[str], edges: list[tuple]) -> dict[str, int]:
+    """Distance from an entry screen — the map's rows.
+
+    Seeded from every screen nothing leads INTO, not just the first capture.
+    Seeding only the first put all 25 screens on one row: exploration began on
+    an unscrolled home feed which was never returned to, so the seed had no
+    outgoing edge and the relaxation never started.
+    """
     if not nodes:
         return {}
-    depth = {nodes[0]: 0}
+    incoming = {n: 0 for n in nodes}
+    for src, dst, *_rest in edges:
+        if dst in incoming and dst != src:
+            incoming[dst] += 1
+    roots = [n for n in nodes if not incoming.get(n)] or [nodes[0]]
+    depth = {n: 0 for n in roots}
     changed = True
     while changed:
         changed = False
-        for src, dst, _ in edges:
+        for src, dst, *_rest in edges:
             if src in depth and (dst not in depth or depth[dst] > depth[src] + 1) and dst != src:
                 depth[dst] = depth[src] + 1
                 changed = True
@@ -610,101 +633,217 @@ def _depths(nodes: list[str], edges: list[tuple[str, str, str]]) -> dict[str, in
     return depth
 
 
-# Node geometry. Fixed sizes so the SVG edges can be laid out server-side —
-# there is no layout engine here and no CDN to borrow one from.
-NODE_W, NODE_H = 200, 268
-TODO_W, TODO_H = 148, 62
-GAP_X, GAP_S, ROW_GAP, PAD = 28, 10, 64, 32
-TODO_COLS = 4          # a screen with 20 untapped targets must not be 20 nodes wide
+# Card geometry. The card is sized FROM the capture's own frame so the phone
+# image fills it exactly — no letterbox, no crop, and a tap at (x, y) lands at
+# (x/fw, y/fh) of the card with no correction term to get wrong. The first
+# attempt fixed the card at 200x232 and relied on `object-fit: contain`; the
+# render cropped the screenshots and every marker was placed against letterbox
+# offsets that were not there.
+SHOT_H, META_H = 300, 34
+FALLBACK_W = 160          # a capture whose frame we cannot read
+GAP_X, ROW_GAP, PAD = 34, 96, 40
 
 
-def _layout(scr: dict, rows: dict, edges: list, depth: dict, out_dir: Path) -> tuple[list, list, list]:
-    """Place every node on a grid and resolve the edges into coordinates.
+def _frame_of(tree: str) -> tuple[float, float]:
+    """The app's point-space frame — what tap coordinates are relative to."""
+    try:
+        for node in ET.parse(tree).getroot().iter():
+            if (node.get("type") or node.tag).endswith("Application"):
+                w, h = float(node.get("width") or 0), float(node.get("height") or 0)
+                return (w, h) if w > 0 and h > 0 else (0.0, 0.0)
+    except (OSError, ET.ParseError, ValueError):
+        pass
+    return (0.0, 0.0)
 
-    Unexplored candidates become real nodes — empty ones, hanging off the screen
-    that offers them. A target nobody tapped is exactly a screen nobody has seen,
-    and drawing it as a blank card says that better than a count does.
 
-    A screen's unexplored children are wrapped into a block instead of one long
-    row: laid out flat, 51 of them made the canvas 9000px wide and unreadable.
+def map_key(event: dict) -> str:
+    """A screen's identity ON THE MAP: its labels AND its interaction state.
+
+    Neither half is enough. `statekey` alone merged the home feed, the creator
+    tab, the ranking tab and the contest tab onto one card, because it hashes
+    the tree's SHAPE and a custom-rendered app has none — measured on zeta,
+    every screen reported the coarse node `da39a3ee5e6b`, which is sha1(""), so
+    taps made on one screen were drawn on a screenshot of another. `sig` alone
+    loses the states that share a label set, which is what separates a sheet
+    that is open from the same screen with it closed. Together they split on
+    either difference.
     """
-    placed: dict[str, dict] = {}
-    screens_at: dict[int, list] = {}
-    todos_at: dict[int, list] = {}
+    return f'{_first_value(event, "sig")}:{screen_identity(event)}'
 
-    for node in scr:
-        screens_at.setdefault(depth.get(node, 0), []).append(node)
-        kids = rows.get(node, {}).get("todo", [])
-        if kids:
-            todos_at.setdefault(depth.get(node, 0) + 1, []).append((node, kids))
 
-    def put(key, kind, x, y, w, h, label, parent=None):
-        placed[key] = {"kind": kind, "x": x, "y": y, "w": w, "h": h,
-                       "label": label, "parent": parent, "node": key}
+def map_screens(events: list[dict]) -> "OrderedDict[str, dict]":
+    """Screens for the MAP, identified by their label set rather than structure.
 
-    lanes = []
-    y = PAD
-    for level in sorted(set(screens_at) | set(todos_at)):
+    `nodekey`/`statekey` hash the tree's SHAPE, and a custom-rendered app has no
+    shape to hash: measured on zeta, every screen reported the same coarse node
+    `da39a3ee5e6b`, which is sha1(""). The home feed, the creator tab, the
+    ranking tab and the contest tab all collapsed onto one card, so taps made on
+    one screen were drawn on a screenshot of another. `sig` hashes the labels,
+    which is exactly what differs between those screens.
+
+    The cost is the opposite error: a feed re-sigs as it scrolls, so one screen
+    can become several cards. For a map that is the safe direction — a duplicate
+    card is visibly a duplicate, while a merged card silently lies about where a
+    tap was.
+    """
+    out: "OrderedDict[str, dict]" = OrderedDict()
+    for e in events:
+        if e.get("type") != "screen":
+            continue
+        key = map_key(e)
+        if key and key not in out:
+            out[key] = e
+    return out
+
+
+def map_edges(events: list[dict]) -> list[tuple[str, str, str, float, float]]:
+    """Transitions between MAP screens, resolved chronologically.
+
+    A tap records statekeys, which are the identities that collapse. The log is
+    ordered, though, so the screen a tap left is the last one captured before it
+    and the screen it reached is the next one captured after — that ordering is
+    real information the statekey abstraction throws away.
+    """
+    out, seen = [], set()
+    for index, event in enumerate(events):
+        if event.get("type") != "tap" or not changed(event):
+            continue
+        before = next((map_key(e) for e in reversed(events[:index])
+                       if e.get("type") == "screen"), "")
+        after = next((map_key(e) for e in events[index + 1:]
+                      if e.get("type") == "screen"), "")
+        if not before or not after or before == after:
+            continue
+        label = event.get("label", "?")
+        try:
+            x, y = float(event.get("x", -1)), float(event.get("y", -1))
+        except (TypeError, ValueError):
+            x = y = -1.0
+        key = (before, after, label)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((before, after, label, x, y))
+    return out
+
+
+def _layout(cards: "OrderedDict[str, dict]", todo: dict, edges: list, depth: dict,
+            out_dir: Path) -> tuple[list, list, list]:
+    """One row per exploration depth, each card sized to its own screenshot."""
+    at: dict[int, list] = {}
+    for key in cards:
+        at.setdefault(depth.get(key, 0), []).append(key)
+
+    boxes: dict[str, dict] = {}
+    lanes, y = [], PAD
+    for level in sorted(at):
         lanes.append((level, y))
         x, row_h = PAD, 0
-        for node in screens_at.get(level, []):
-            put(node, "screen", x, y, NODE_W, NODE_H, scr[node].get("name", node))
-            x += NODE_W + GAP_X
-            row_h = max(row_h, NODE_H)
-        for parent, kids in todos_at.get(level, []):
-            cols = min(TODO_COLS, len(kids))
-            for i, (_tx, _ty, label) in enumerate(kids):
-                put(f"{parent}#{i}", "todo",
-                    x + (i % cols) * (TODO_W + GAP_S),
-                    y + (i // cols) * (TODO_H + GAP_S),
-                    TODO_W, TODO_H, label, parent)
-            x += cols * (TODO_W + GAP_S) + GAP_X
-            row_h = max(row_h, -(-len(kids) // cols) * (TODO_H + GAP_S))
+        for key in at[level]:
+            event = cards[key]
+            fw, fh = _frame_of(event.get("tree", ""))
+            w = round(SHOT_H * fw / fh) if fw and fh else FALLBACK_W
+            png = event.get("png", "")
+            boxes[key] = {
+                "kind": "screen", "node": key, "x": x, "y": y,
+                "w": w, "h": SHOT_H + META_H, "shot_w": w, "shot_h": SHOT_H,
+                "frame": (fw, fh), "label": event.get("name", key),
+                "png": (os.path.relpath(Path(png).resolve(), out_dir)
+                        if png and Path(png).exists() else ""),
+                "todo": todo.get(key, {}).get("points", []),
+                "todo_count": todo.get(key, {}).get("left", 0),
+                "total": todo.get(key, {}).get("total", 0),
+            }
+            x += w + GAP_X
+            row_h = max(row_h, SHOT_H + META_H)
         y += row_h + ROW_GAP
 
-    for key, box in placed.items():
-        if box["kind"] == "screen":
-            png = scr[key].get("png", "")
-            box["png"] = (os.path.relpath(Path(png).resolve(), out_dir)
-                          if png and Path(png).exists() else "")
-            box["todo_count"] = len(rows.get(key, {}).get("todo", []))
-            box["total"] = rows.get(key, {}).get("behavior_total", 0)
+    def spot(key: str, px: float, py: float):
+        box = boxes.get(key)
+        if not box or px < 0 or py < 0:
+            return None
+        fw, fh = box["frame"]
+        if not fw or not fh:
+            return None
+        return (box["x"] + px / fw * box["shot_w"], box["y"] + py / fh * box["shot_h"])
 
-    links = [(src, dst, label) for src, dst, label in edges if src in placed and dst in placed]
-    links += [(box["parent"], key, box["label"]) for key, box in placed.items()
-              if box["kind"] == "todo" and box["parent"] in placed]
-    return (list(placed.values()), [(placed[a], placed[b], lab) for a, b, lab in links], lanes)
+    links = [(boxes[a], boxes[b], lab, spot(a, x, y))
+             for a, b, lab, x, y in edges if a in boxes and b in boxes]
+    return list(boxes.values()), links, lanes
 
 
-def _svg_edges(links: list) -> str:
-    """One cubic curve per transition, from the parent's bottom to the child's top."""
-    out = []
-    for src, dst, label in links:
-        x1, y1 = src["x"] + src["w"] / 2, src["y"] + src["h"]
+def _svg_edges(links: list, boxes: list) -> tuple[str, str]:
+    """What goes behind the cards, and what goes on top of them.
+
+    Two layers, because one does not work: a card is opaque and painted after
+    the SVG, so a marker drawn at the tap coordinate in a single layer is buried
+    under the screenshot — geometrically perfect and completely invisible.
+    Connector curves belong behind (in front they scribble across every
+    screenshot they cross); the tap marker and the short leader tying it to the
+    card's edge belong on top, the only place "you tapped HERE" can be read.
+    """
+    below, above = [], []
+    for src, dst, label, origin in links:
+        bottom = src["y"] + src["h"]
+        x1 = origin[0] if origin else src["x"] + src["w"] / 2
         x2, y2 = dst["x"] + dst["w"] / 2, dst["y"]
-        mid = (y1 + y2) / 2
-        cls = "edge todo" if dst["kind"] == "todo" else "edge"
-        out.append(f'<path class="{cls}" d="M{x1},{y1} C{x1},{mid} {x2},{mid} {x2},{y2}"/>')
-        # Backwards edges (a back button) would otherwise be indistinguishable.
-        if y2 <= y1:
-            out.append(f'<circle class="back" cx="{x2}" cy="{y2}" r="4"/>')
-        if dst["kind"] != "todo":
-            lx, ly = (x1 + x2) / 2, mid
-            out.append(f'<text class="elabel" x="{lx}" y="{ly}" text-anchor="middle">'
-                       f'{html.escape(label)}</text>')
-    return "".join(out)
+        mid = (bottom + y2) / 2
+        below.append(f'<path class="edge" d="M{x1},{bottom} C{x1},{mid} {x2},{mid} {x2},{y2}"/>')
+        if y2 <= bottom:                       # a back edge, pointing upwards
+            below.append(f'<circle class="back" cx="{x2}" cy="{y2}" r="3.5"/>')
+        if origin:
+            tx, ty = origin
+            above.append(f'<path class="leader" d="M{tx},{ty} L{x1},{bottom}"/>')
+            above.append(f'<circle class="tap" cx="{tx}" cy="{ty}" r="5"/>')
+            above.append(f'<circle class="tapdot" cx="{tx}" cy="{ty}" r="1.6"/>')
+        lx, ly = (x1 + x2) / 2, mid
+        below.append(f'<text class="elabel" x="{lx}" y="{ly}" text-anchor="middle">'
+                     f'{html.escape(label)}</text>')
+
+    # Unexplored candidates are dots on the screenshot, not cards of their own.
+    # Drawn as 196 separate nodes they buried the map in dashed lines and said
+    # only how many there were; on the screenshot they say WHERE.
+    for box in boxes:
+        fw, fh = box["frame"]
+        if not fw or not fh:
+            continue
+        for px, py, label in box["todo"]:
+            if px < 0 or py < 0:
+                continue
+            cx = box["x"] + px / fw * box["shot_w"]
+            cy = box["y"] + py / fh * box["shot_h"]
+            above.append(f'<circle class="gap" cx="{cx}" cy="{cy}" r="4">'
+                         f'<title>{html.escape(label)}</title></circle>')
+    return "".join(below), "".join(above)
 
 
 def cmd_map(path: str, out: str) -> int:
     events = load(path)
-    scr = screens(events)
     rows = {r["key"]: r for r in frontier(events)}
-    edges = _edges(events)
-    depth = _depths(list(scr), edges)
+    cards_by_sig = map_screens(events)
+    edges = map_edges(events)
+    depth = _depths(list(cards_by_sig), edges)
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    boxes, links, lanes = _layout(scr, rows, edges, depth, out_path.resolve().parent)
+    # The frontier is keyed by statekey, which is exactly the identity the map
+    # refuses to trust; re-attach it through each card's own capture.
+    todo = {}
+    for sig, event in cards_by_sig.items():
+        tree = event.get("tree", "")
+        state = screen_identity(event)
+        # From THIS capture's own candidates. The statekey row unions candidates
+        # across every capture of that state, so a scrolled feed would show dots
+        # for controls that are not on the screenshot under them.
+        records = candidate_records_of(tree) if tree else []
+        points = [(r["x"], r["y"], r["label"])
+                  for r in unexplored(records, events, state)]
+        todo[sig] = {"points": points, "left": len(points),
+                     "total": len(records)}
+
+    boxes, links, lanes = _layout(cards_by_sig, todo, edges, depth,
+                                  out_path.resolve().parent)
+    edges_below, edges_above = _svg_edges(links, boxes)
     width = max((b["x"] + b["w"] for b in boxes), default=400) + PAD
     height = max((b["y"] + b["h"] for b in boxes), default=200) + PAD
 
@@ -718,29 +857,27 @@ def cmd_map(path: str, out: str) -> int:
     cards = [f'<div class="lane" style="top:{y}px">탐험 거리 {lvl}</div>'
              for lvl, y in lanes]
     for b in boxes:
-        style = f'left:{b["x"]}px; top:{b["y"]}px; width:{b["w"]}px; height:{b["h"]}px'
-        if b["kind"] == "todo":
-            cards.append(f'<div class="node todo" style="{style}" title="미탐험">'
-                         f'<span>{esc(b["label"])}</span></div>')
-            continue
-        shot = (f'<img src="{esc(b["png"])}" alt="">' if b["png"]
-                else '<div class="noshot">캡처 없음</div>')
-        badge = (f'<span class="badge">미탐험 {b["todo_count"]}/{b["total"]}</span>'
+        style = (f'left:{b["x"]}px; top:{b["y"]}px; width:{b["w"]}px; height:{b["h"]}px')
+        shot = (f'<img src="{esc(b["png"])}" alt="" width="{b["shot_w"]}"'
+                f' height="{b["shot_h"]}">' if b["png"]
+                else f'<div class="noshot" style="height:{b["shot_h"]}px">캡처 없음</div>')
+        badge = (f'<span class="badge">미탐 {b["todo_count"]}</span>'
                  if b["todo_count"] else '<span class="badge done">전수</span>')
         cards.append(
             f'<div class="node screen" style="{style}"><div class="shot">{shot}</div>'
             f'<div class="meta"><strong>{esc(b["label"])}</strong>{badge}</div></div>')
 
-    raw_total = sum(r["total"] for r in rows.values())
-    raw_left = sum(len(r["raw_todo"]) for r in rows.values())
-    behavior_total = sum(r["behavior_total"] for r in rows.values())
-    behavior_left = sum(len(r["todo"]) for r in rows.values())
+    # Every number here is counted off the cards the map actually drew. Mixing
+    # a statekey-derived denominator with a card-derived numerator printed
+    # "행동 클래스 -47/219" — the two identities do not share a scale.
+    total = sum(v["total"] for v in todo.values())
+    left = sum(len(v["points"]) for v in todo.values())
     withheld = sum(r["withheld"] for r in rows.values())
-    banner = (f'화면 {len(scr)}개 · 탭 후보 {raw_total - raw_left}/{raw_total} 탐험'
-              f' · 행동 클래스 {behavior_total - behavior_left}/{behavior_total} 탐험'
-              + (f' · <strong>미탐험 {behavior_left}</strong> (점선 노드)'
-                 if behavior_left else ' · 행동 클래스 완료')
-              + (f' · 상태 변경 보류 {withheld}' if withheld else ''))
+    banner = (f'화면 {len(cards_by_sig)}개 · 탭 지점 {total - left}/{total} 탐험'
+              + (f' · <strong>미탐 {left}</strong> (화면 위 빈 점)'
+                 if left else ' · 전수 탐험')
+              + (f' · 상태 변경 보류 {withheld}' if withheld else '')
+              + ' · 같은 화면이라도 스크롤 위치가 다르면 별도 카드')
 
     out_path.write_text(f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -761,27 +898,33 @@ def cmd_map(path: str, out: str) -> int:
   .canvas {{ position:relative; overflow:auto; border:1px solid var(--border);
              border-radius:14px; background:var(--bg); }}
   .stage {{ position:relative; width:{width}px; height:{height}px; }}
+  /* Two layers. A card is opaque and paints after the SVG, so a marker drawn at
+     the tap coordinate in a single layer is buried under the screenshot. */
   svg {{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }}
-  .edge {{ fill:none; stroke:var(--accent); stroke-width:2; }}
-  .edge.todo {{ stroke:var(--muted); stroke-dasharray:4 4; stroke-width:1.5; }}
+  svg.above {{ z-index:3; }}
+  .leader {{ fill:none; stroke:var(--accent); stroke-width:1; opacity:.55; }}
+  .edge {{ fill:none; stroke:var(--accent); stroke-width:1; opacity:.45; }}
   .back {{ fill:var(--accent); }}
-  .elabel {{ fill:var(--muted); font-size:11px; paint-order:stroke;
-             stroke:var(--bg); stroke-width:4px; }}
+  /* The tap marker sits ON the screenshot, at the point the log recorded. */
+  /* Solid ring = tapped. Hollow dot = a candidate nobody tapped. */
+  .tap {{ fill:none; stroke:var(--accent); stroke-width:1.5; }}
+  .tapdot {{ fill:var(--accent); }}
+  .gap {{ fill:none; stroke:#f0f0f4; stroke-width:1; opacity:.5; }}
+  .elabel {{ fill:var(--muted); font-size:10px; paint-order:stroke;
+             stroke:var(--bg); stroke-width:3px; opacity:.8; }}
   .node {{ position:absolute; border-radius:12px; background:var(--card);
            border:1px solid var(--border); overflow:hidden; }}
   .node.screen {{ display:flex; flex-direction:column; }}
-  .shot {{ flex:1; min-height:0; display:grid; place-items:center; background:#000; }}
-  .shot img {{ width:100%; height:100%; object-fit:contain; display:block; }}
+  /* The card is sized to the capture, so the image fills it 1:1 — no contain,
+     no crop, and a tap fraction maps straight onto the card. */
+  .shot {{ height:{SHOT_H}px; background:#000; }}
+  .shot img {{ width:100%; height:100%; display:block; }}
   .noshot {{ color:var(--muted); font-size:12px; }}
-  .meta {{ padding:8px 10px; display:flex; align-items:center; justify-content:space-between;
-           gap:8px; border-top:1px solid var(--border); }}
-  .meta strong {{ font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+  .meta {{ height:{META_H}px; padding:0 8px; display:flex; align-items:center;
+           justify-content:space-between; gap:6px; border-top:1px solid var(--border); }}
+  .meta strong {{ font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
   .badge {{ font-size:11px; color:var(--warn); white-space:nowrap; }}
   .badge.done {{ color:var(--muted); }}
-  .node.todo {{ border-style:dashed; background:transparent; display:grid; place-items:center;
-                padding:6px 8px; text-align:center; }}
-  .node.todo span {{ font-size:12px; color:var(--muted); overflow:hidden;
-                     display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; }}
   .legend {{ margin-top:12px; font-size:13px; color:var(--muted); display:flex; gap:20px;
              flex-wrap:wrap; }}
   .legend i {{ display:inline-block; width:22px; height:0; border-top:2px solid var(--accent);
@@ -794,20 +937,21 @@ def cmd_map(path: str, out: str) -> int:
   <h1>Clone flow map</h1>
   <p class="banner">{banner}</p>
   <div class="canvas"><div class="stage">
-    <svg viewBox="0 0 {width} {height}">{_svg_edges(links)}</svg>
+    <svg class="below" viewBox="0 0 {width} {height}">{edges_below}</svg>
     {"".join(cards)}
+    <svg class="above" viewBox="0 0 {width} {height}">{edges_above}</svg>
   </div></div>
   <p class="legend">
-    <span><i></i>탐험한 전이 (라벨 = 탭한 요소)</span>
-    <span><i class="dash"></i>미탐험 — 이 요소를 탭하면 나올 화면</span>
+    <span><i></i>탐험한 전이 — 선은 <strong>실제로 탭한 지점</strong>에서 출발한다</span>
+    <span>◦ 화면 위 빈 점 = 아직 탭하지 않은 후보</span>
     <span>● 도착점이 위쪽이면 되돌아가는 전이</span>
     <span>세로축 = <strong>탐험 시작 화면으로부터의 거리</strong>이지 앱의 계층이 아니다</span>
   </p>
 </body></html>
 """, encoding="utf-8")
-    todo_nodes = sum(1 for b in boxes if b["kind"] == "todo")
-    print(f"OK: wrote {out_path} ({len(scr)} screens, {len(edges)} transitions, "
-          f"{todo_nodes} unexplored)")
+    gaps = sum(len(b["todo"]) for b in boxes)
+    print(f"OK: wrote {out_path} ({len(cards_by_sig)} screens, {len(edges)} transitions, "
+          f"{gaps} unexplored)")
     return 0
 
 

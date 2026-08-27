@@ -21,7 +21,7 @@ allowed-tools:
 > 분석 절차·데이터 소스·법적 경계·산출물 계약의 SSOT 는 **`autobot-copy-analyze` 스킬**이 소유한다.
 
 - **입력** — 분석할 앱 이름 또는 App Store URL (생략 시 첫 질문으로 대상부터 확정)
-- **결과물** — `.autobot/copy-analysis/brief.md` (architect 의 `architecture.md` 섹션에 대응하는 제품 브리프) + 실기기/스토어 스크린샷 + 리뷰 인사이트
+- **결과물** — `.autobot/copy-analysis/brief.md` (architect 의 `architecture.md` 섹션에 대응하는 제품 브리프) + `flow-map.html` (화면 흐름도 — 어느 지점을 눌러 어디로 갔는지가 스크린샷 위에 찍히고, 미탐 영역도 그 자리에 표시된다) + 실기기/스토어 스크린샷 + 리뷰 인사이트
 - **다음 단계** — 브리프를 `/autobot:plan` 또는 `/autobot:mvp` 에 넘겨 **원본 앱**을 빌드
 
 ## 무엇을 만드는가

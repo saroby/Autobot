@@ -146,6 +146,18 @@ scripts/device_wda.sh quit "$sid"
 
 **탐색 순서** — 탭바 항목을 먼저 한 바퀴(앱의 최상위 구조), 그다음 각 탭의 첫 리스트 항목(상세 화면), 생성/추가(+) 버튼, 마지막에 설정. 각 화면 이름은 `<NN>-<tab>-<purpose>` 로 짓는다.
 
+**어디까지 했는지는 로그가 안다** — `device_wda.sh` 는 `screen`·`tap`·`swipe` 마다 `.autobot/clone/flow.jsonl` 에 한 줄씩 남긴다. 무엇을 눌렀고 어디로 갔는지가 전부 거기 있으므로, 프론티어를 머리로 관리하지 말고 물어본다:
+
+```bash
+scripts/device_flow.py todo .autobot/clone/flow.jsonl <현재 tree.xml>   # 이 화면에서 아직 안 눌러본 후보
+scripts/device_flow.py next-tap .autobot/clone/flow.jsonl <현재 tree.xml> # 다음에 칠 단 하나
+scripts/device_flow.py stats .autobot/clone/flow.jsonl                  # 커버리지
+```
+
+`next-tap` 은 현재 화면이 소진되면 로그의 전이를 따라 미탐 화면까지의 **첫 홉**을 돌려준다 — 좌표는 넘겨준 최신 트리에서 읽으므로 탭 게이트를 그대로 통과한다.
+
+**로그를 언제 비우나** — 로그는 세션 간 누적된다. 같은 앱을 이어서 파는 것이면 그대로 두면 중복 탐색을 피하고 재개가 된다. **다른 앱을 분석하거나 처음부터 다시 하는 것이면 시작 전에 `.autobot/clone/flow.jsonl` 을 지운다** — 안 그러면 흐름도에 남의 화면이 섞인다.
+
 ### 스와이프 좌표는 스크린샷에서 재지 않는다
 
 탭 좌표는 항상 `candidates` 가 **포인트**로 준다. 스와이프만 에이전트가 좌표를 직접 정해야 하고, 여기서 단위를 틀린다.
@@ -172,7 +184,7 @@ scripts/device_wda.sh quit "$sid"
 | 조건 | 신호 | 행동 |
 |------|------|------|
 | 탭 예산 소진 | 누적 탭 25회 | 정상 종료 → Step 4 |
-| 새 화면 고갈 | 직전 3회 연속 `sig` 가 이미 본 값 | 정상 종료 → Step 4 |
+| 새 화면 고갈 | `device_flow.py next` 가 `frontier empty`, 또는 직전 3회 연속 `sig` 가 이미 본 값 | 정상 종료 → Step 4 |
 | 시스템/파괴 다이얼로그 | `WARN: alert/sheet on screen` (후보 0개로 강제) | **즉시 중단**, 사용자에게 처리 요청 |
 | 기기 이탈·잠김 | 어떤 명령이든 `ERROR:` | **즉시 중단**, 재시도 루프 금지 |
 | 예상과 다른 화면 | `ERROR: screen changed since <tree>` | 낡은 좌표로 이어 치지 말고 **다시 `screen` 부터**. 앱 밖으로 나갔으면 사용자에게 복귀 요청 |
@@ -213,8 +225,17 @@ scripts/device_wda.sh quit "$sid"
 
 ### Step 6 — 검토 + 핸드오프
 
-1. 수집 이미지·트리·브리프를 사용자가 보게 연다 (`open .autobot/copy-analysis/`).
-2. 다음 안내:
+1. **화면 흐름도를 만든다.** 탐험 로그가 이미 모든 전이를 갖고 있다 — 쓰지 않으면 버리는 것이다.
+   ```bash
+   scripts/device_flow.py map .autobot/clone/flow.jsonl .autobot/copy-analysis/flow-map.html
+   scripts/device_flow.py stats .autobot/clone/flow.jsonl     # 커버리지 한 줄
+   ```
+   이미지 경로는 출력 파일 기준 상대경로라, **산출물 폴더 안에 직접 생성해야** `device/00-home.png` 로 붙어 폴더째 옮겨도 안 깨진다.
+
+   맵이 보여주는 것: 화면 카드마다 스크린샷이 붙고, **어디를 눌렀는지가 그 스크린샷 위에 점으로 찍히며** 거기서 목적지 화면으로 선이 나간다. 미탐 후보도 같은 방식으로 **눌리지 않은 그 자리에** 점선 점으로 찍힌다 — 빈틈이 몇 개인지가 아니라 **어디인지**가 보인다.
+
+2. 수집 이미지·트리·브리프·흐름도를 사용자가 보게 연다 (`open .autobot/copy-analysis/`).
+3. 다음 안내:
    ```
    브리프 준비 완료 → 원본 앱을 빌드하려면:
      /autobot:plan  (기획·디자인 검토 후 진행)  또는
@@ -227,8 +248,10 @@ scripts/device_wda.sh quit "$sid"
 | 산출물 | 경로 | 소비자 |
 |-------|------|--------|
 | 제품 브리프 | `.autobot/copy-analysis/brief.md` | 사용자 → `/autobot:plan`·`/autobot:mvp` (architect) |
+| **화면 흐름도** | `.autobot/copy-analysis/flow-map.html` | 사용자 — 무엇을 눌러 어디로 갔는지, 무엇이 미탐인지 |
+| 탐험 로그 | `.autobot/clone/flow.jsonl` | `device_flow.py` (흐름도·커버리지·재개) |
 | 접근성 트리 | `.autobot/copy-analysis/device/*.xml` | Step 4 구조 분석 (1급 소스) |
-| 실기기 캡처 | `.autobot/copy-analysis/device/*.png` | 시각 보완 |
+| 실기기 캡처 | `.autobot/copy-analysis/device/*.png` | 시각 보완 + 흐름도 카드 |
 | 스토어 스크린샷 | `.autobot/copy-analysis/store/*.png` | 구조 분석 |
 | 리뷰 인사이트 | `.autobot/copy-analysis/reviews.md` | 브리프 Hook & Retention 근거 |
 

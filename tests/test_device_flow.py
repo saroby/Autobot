@@ -579,7 +579,7 @@ class TestMap(FlowCase):
         r = self.run_flow("map", str(self.log), str(out))
         self.assertEqual(r.returncode, 0)
         page = out.read_text(encoding="utf-8")
-        self.assertIn("미탐험", page)
+        self.assertIn("미탐", page)
         self.assertIn("0/2", r.stdout + page.replace(" ", ""))
 
     def test_no_op_transitions_are_not_drawn_as_edges(self):
@@ -589,15 +589,20 @@ class TestMap(FlowCase):
         out = self.dir / "map.html"
         self.assertIn("0 transitions", self.run_flow("map", str(self.log), str(out)).stdout)
 
-    def test_unexplored_targets_are_drawn_as_empty_nodes(self):
+    def test_unexplored_targets_are_dots_on_the_screen_that_offers_them(self):
+        # Drawn as separate cards, 196 of them buried the map in dashed lines
+        # and said only HOW MANY were left. On the screenshot they say WHERE.
         self.write([self.screen()])
         out = self.dir / "map.html"
         self.run_flow("map", str(self.log), str(out))
         page = out.read_text(encoding="utf-8")
-        # Two untapped candidates in the fixture → two blank nodes, each wired
-        # back to the screen that offers it.
-        self.assertEqual(page.count('class="node todo"'), 2)
-        self.assertEqual(page.count('class="edge todo"'), 2)
+        self.assertEqual(page.count('class="gap"'), 2)
+        self.assertNotIn('class="node todo"', page)
+        # The fixture's candidates sit at (50,120) and (50,220) of a 375x812
+        # frame, so the dots must land at those fractions of the card.
+        w = round(300 * 375 / 812)
+        for px in (50, 50):
+            self.assertIn(f'cx="{40 + px / 375 * w}"', page)
 
     def test_nodes_do_not_overlap_and_edges_land_on_them(self):
         # The layout is computed here, not by a browser, so nothing else would
@@ -613,12 +618,73 @@ class TestMap(FlowCase):
             for bx, by, bw, bh in boxes[i + 1:]:
                 self.assertFalse(ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah,
                                  "two nodes overlap")
-        anchors = {(x + w / 2, y + h) for x, y, w, h in boxes}
-        anchors |= {(x + w / 2, y) for x, y, w, h in boxes}
+        # An edge ENDS on a card's top-centre. It STARTS at the point that was
+        # tapped, which sits inside the source card's screenshot — that is the
+        # whole point of the map — and falls back to the card's bottom-centre
+        # only when the log carried no coordinate.
+        tops = {(x + w / 2, y) for x, y, w, h in boxes}
+        bottoms = {(x + w / 2, y + h) for x, y, w, h in boxes}
         for x1, y1, x2, y2 in re.findall(
                 r'd="M([\d.]+),([\d.]+) C[\d.]+,[\d.]+ [\d.]+,[\d.]+ ([\d.]+),([\d.]+)"', page):
-            self.assertIn((float(x1), float(y1)), anchors)
-            self.assertIn((float(x2), float(y2)), anchors)
+            start = (float(x1), float(y1))
+            inside_a_card = any(
+                bx <= start[0] <= bx + bw and by <= start[1] <= by + bh
+                for bx, by, bw, bh in boxes)
+            self.assertTrue(start in bottoms or inside_a_card,
+                            f"edge starts at {start}, neither a card anchor nor on a card")
+            self.assertIn((float(x2), float(y2)), tops)
+
+    def test_an_edge_starts_at_the_point_that_was_tapped(self):
+        # The log records the tap in POINTS and the screenshot is in device
+        # pixels; the marker has to land where the finger went, not where a
+        # percentage of the card would put it.
+        tap = {"type": "tap", "from": "n1", "to": "n2",
+               "x": "148", "y": "793", "changed": "true", "label": "대화"}
+        self.write([self.screen(), tap, self.screen(node="n2", name="s2")])
+        out = self.dir / "map.html"
+        self.run_flow("map", str(self.log), str(out))
+        page = out.read_text(encoding="utf-8")
+        marks = re.findall(r'<circle class="tap" cx="([\d.]+)" cy="([\d.]+)"', page)
+        self.assertEqual(len(marks), 1, msg=page[:400])
+        mx, my = float(marks[0][0]), float(marks[0][1])
+        # The card is sized to the capture's own 375x812 frame, so the image
+        # fills it exactly: no letterbox, no crop, and no correction term.
+        w = round(300 * 375 / 812)
+        card = re.search(rf'left:(\d+)px; top:(\d+)px; width:{w}px; height:334px', page)
+        self.assertIsNotNone(card, msg=f"no card of width {w}")
+        cx, cy = int(card.group(1)), int(card.group(2))
+        self.assertAlmostEqual(mx, cx + 148 / 375 * w, delta=0.5)
+        self.assertAlmostEqual(my, cy + 793 / 812 * 300, delta=0.5)
+        # And the curve leaves from that same point.
+        self.assertIn(f'd="M{mx},{my}', page)
+
+    def test_the_tap_marker_paints_over_the_screenshot_not_under_it(self):
+        """The first version was geometrically perfect and completely invisible.
+
+        A card is opaque and painted after the SVG, so a marker drawn at the tap
+        coordinate in a single layer sits underneath the screenshot. Correct
+        coordinates are worth nothing if the mark cannot be seen, which is the
+        one thing this map exists to show.
+        """
+        tap = {"type": "tap", "from": "n1", "to": "n2",
+               "x": "148", "y": "793", "changed": "true", "label": "대화"}
+        self.write([self.screen(), tap, self.screen(node="n2", name="s2")])
+        out = self.dir / "map.html"
+        self.run_flow("map", str(self.log), str(out))
+        page = out.read_text(encoding="utf-8")
+
+        below, card, above = (page.find('<svg class="below"'),
+                              page.find('class="node screen"'),
+                              page.find('<svg class="above"'))
+        self.assertNotEqual(above, -1, "no layer paints after the cards")
+        self.assertLess(below, card, "connector curves must sit behind the cards")
+        self.assertLess(card, above, "tap markers must sit in front of the cards")
+        self.assertIn("svg.above", page)
+
+        top_layer = page[above:]
+        self.assertIn('class="tap"', top_layer)
+        self.assertIn('class="leader"', top_layer)
+        self.assertIn('class="gap"', top_layer)   # unexplored dots ride along
 
     def test_a_screen_with_many_untapped_targets_wraps_instead_of_widening(self):
         # 51 candidates laid out flat made the canvas 9000px wide and unreadable.
