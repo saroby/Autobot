@@ -2312,7 +2312,9 @@ class TestFlowLogging(unittest.TestCase):
                                f"_flow_is_broken && echo BROKEN || echo CLEAN"],
                 capture_output=True, text=True,
                 env={**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl",
-                     "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl"},
+                     # Its own state dir: the sentinel lands there, and sharing
+                     # the default made this test depend on run order.
+                     "CLONE_STATE_DIR": str(Path(d) / "state")},
             )
         self.assertIn("WARN: could not append", r.stdout)
         self.assertIn("CLEAN", r.stdout)
@@ -3231,3 +3233,100 @@ class TestSwipeFracConvertsFractionsToPoints(unittest.TestCase):
         r = self.frac("0.5 0.36")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("Fractions of the app frame", r.stderr)
+
+
+class TestScreenWaitsForTheScreen(unittest.TestCase):
+    """`screen` captured whatever was there the instant it was called.
+
+    Taps settled; nothing else did. So a capture after typing, after a swipe
+    that triggers a fetch, or any direct `screen`, photographed a half-loaded
+    screen. Measured 2026-08-27: a search capture taken one second after Return
+    held NO results, and the same screen read later held six autocomplete rows —
+    the run recorded "nothing on this screen" and the brief said the results
+    page never opened. It had.
+    """
+
+    def _run(self, trees: list[str]):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+        served = {"n": 0}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, payload):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path.endswith("/source"):
+                    i = min(served["n"], len(trees) - 1)
+                    served["n"] += 1
+                    self._reply({"value": trees[i]})
+                else:
+                    self._reply({"value": {}})
+
+            def do_POST(self):
+                self._reply({"value": {}})
+
+            def log_message(self, *_a):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                lib = Path(d) / "wda_lib.sh"
+                lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                               encoding="utf-8")
+                (Path(d) / "device_a11y.py").write_text(
+                    (SCRIPT.parent / "device_a11y.py").read_text(encoding="utf-8"),
+                    encoding="utf-8")
+                return subprocess.run(
+                    ["bash", "-c", f"source '{lib}'; _settle_screen session-1"],
+                    capture_output=True, text=True,
+                    env={**os.environ, "APPIUM_URL": f"http://127.0.0.1:{server.server_port}",
+                         "CLONE_SCREEN_SETTLE_INTERVAL": "0.01",
+                         "CLONE_SCREEN_SETTLE_TRIES": "6"},
+                )
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+    def app(self, inner: str) -> str:
+        return ('<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+                '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App"'
+                ' label="App" enabled="true" visible="true" x="0" y="0" width="375"'
+                f' height="812">{inner}</XCUIElementTypeApplication></AppiumAUT>')
+
+    def row(self, label: str, y: int) -> str:
+        return (f'<XCUIElementTypeButton type="XCUIElementTypeButton" label="{label}"'
+                f' name="{label}" enabled="true" visible="true" x="0" y="{y}"'
+                ' width="300" height="40"/>')
+
+    def test_it_waits_for_results_that_arrive_late(self):
+        loading = self.app(self.row("검색", 60))
+        loaded = self.app(self.row("검색", 60) + self.row("순애 플롯 6.8만개", 120))
+        r = self._run([loading, loaded, loaded])
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertNotIn("never settled", r.stderr)
+
+    def test_two_identical_reads_are_what_settled_means(self):
+        # "Differs from the last one" would stop in the middle of an animation.
+        steady = self.app(self.row("검색", 60))
+        r = self._run([steady, steady])
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertNotIn("never settled", r.stderr)
+
+    def test_a_screen_that_never_stops_is_reported_not_hidden(self):
+        # A spinner, a video, a live feed. The capture still happens — it is
+        # labelled as possibly mid-load instead of read as an empty screen.
+        frames = [self.app(self.row(f"프레임{i}", 60)) for i in range(8)]
+        r = self._run(frames)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("never settled", r.stderr)
+        self.assertIn("unproven", r.stderr)

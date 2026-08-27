@@ -1158,6 +1158,47 @@ import base64, json, sys
 open(sys.argv[1], 'wb').write(base64.b64decode(json.load(sys.stdin)['value']))" "$out"
 }
 
+# Wait until the screen stops changing before taking evidence of it.
+#
+# `screen` captured whatever was on the device the instant it was called, and
+# taps were the only thing that settled — their own inner loop. So a capture
+# after typing, or after a swipe that triggers a fetch, or any direct `screen`,
+# photographed a half-loaded screen. Measured 2026-08-27: a search capture taken
+# one second after Return contained NO results, and the same screen read again
+# later held six autocomplete rows. The run recorded "this screen has nothing on
+# it" and the brief said the results page never opened. It had; nobody waited.
+#
+# Settled means two consecutive reads agree — not "differs from before", which
+# returns a tree from the middle of an animation. Bounded, and it says so when
+# the screen never stops (a spinner, a video, a live feed).
+_settle_screen() {
+  local sid="$1" tries="${CLONE_SCREEN_SETTLE_TRIES:-12}" i=0 prev="" now="" tmp
+  [[ "$tries" =~ ^[0-9]+$ ]] || tries=12
+  [[ "$tries" -gt 0 ]] || return 0
+  tmp="$(mktemp -t device_wda_settle)"
+  while [[ "$i" -lt "$tries" ]]; do
+    if ! _live_dump "$sid" "$tmp"; then break; fi
+    # `sig` (the label set), not `statekey`. statekey absorbs content by
+    # design — that is what keeps a scrolling feed one node — so it reads
+    # "settled" while results are still arriving. Settling wants the opposite:
+    # the most sensitive signal available. A screen that genuinely never stops
+    # (a spinner, a live feed) hits the bound below and is reported.
+    now="$(_sig_of "$tmp" 2>/dev/null || true)"
+    if [[ -n "$now" && "$now" == "$prev" ]]; then
+      rm -f "$tmp"
+      [[ "$i" -gt 1 ]] && echo "INFO: settled after $i poll(s)" >&2
+      return 0
+    fi
+    prev="$now"
+    i=$((i + 1))
+    sleep "${CLONE_SCREEN_SETTLE_INTERVAL:-0.35}"
+  done
+  rm -f "$tmp"
+  echo "WARN: the screen never settled after $i poll(s) — this capture may be mid-load;" >&2
+  echo "WARN:   treat an empty-looking result as unproven, not as an empty screen" >&2
+  return 0
+}
+
 cmd_screen() {
   local sid="${1:-}" outdir="${2:-}" name="${3:-}"
   if [[ -z "$sid" || -z "$outdir" || -z "$name" ]]; then
@@ -1165,6 +1206,7 @@ cmd_screen() {
     return 1
   fi
   _assert_target "$sid" || return 1
+  [[ "${CLONE_SCREEN_SETTLE:-1}" == "1" ]] && _settle_screen "$sid"
   mkdir -p "$outdir"
   local png="$outdir/$name.png" xml="$outdir/$name.xml" base="$APPIUM_URL/session/$sid"
   if ! _capture_screenshot "$sid" "$png"; then
@@ -2210,7 +2252,11 @@ _type_for_more() {
   _curl -X POST "$APPIUM_URL/session/$sid/actions" -H 'Content-Type: application/json' \
     -d '{"actions":[{"type":"key","id":"kb","actions":[{"type":"keyDown","value":"\uE007"},{"type":"keyUp","value":"\uE007"}]}]}' \
     >/dev/null 2>&1 || true
+  # A fixed second was never enough for a network-backed search. The capture
+  # that follows settles on its own now, but waiting here too keeps the
+  # transition record honest about where typing actually landed.
   sleep "${CLONE_TYPE_SETTLE:-1}"
+  _settle_screen "$sid"
   cmd_screen "$sid" "$outdir" "$name" >/dev/null || return 1
   to_state="$(_state_of "$outdir/$name.xml" 2>/dev/null || true)"
   _flow_event type "from_statekey=${from_state:-?}" "to_statekey=${to_state:-?}" \
