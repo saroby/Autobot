@@ -103,10 +103,25 @@ STATE_CHANGING = (
     ("social-repost", re.compile(
         r"(?:^|\s)(?:리포스트|재게시)(?:\s*(?:취소|삭제))?$"
         r"|^(?:repost|undo repost)(?:\s+(?:post|thread))?$", re.I)),
+    # 등록 is what a Korean creator tool calls Publish — zeta's plot editor ships
+    # 등록 next to 임시저장, and neither word appears in the English vocabulary
+    # below. Anchored, because 등록된 항목 / 등록 안내 are screens.
     ("publishing", re.compile(
-        r"(?:^|\s)(?:게시|게시하기|포스트)$|^(?:post|publish)(?:\s+(?:reply|thread))?$", re.I)),
+        r"(?:^|\s)(?:게시|게시하기|포스트|등록|등록하기|출품)$"
+        r"|^(?:post|publish|submit)(?:\s+(?:reply|thread|entry))?$", re.I)),
+    # Saving a draft leaves data behind in the user's own account, which the
+    # exploration contract forbids just as much as publishing does.
+    ("persisting", re.compile(
+        r"(?:^|\s)(?:저장|저장하기|임시저장|임시 저장)$"
+        r"|^save(?:\s+(?:draft|changes))?$", re.I)),
     ("communication", re.compile(
         r"(?:^|\s)(?:보내기|전송)$|^send(?:\s+(?:message|reply|post|thread))?$", re.I)),
+    # Leaving a room throws the conversation away — zeta offers 대화방 나가기 in
+    # the chat menu and as a swipe action in the list, and no delete word
+    # matches it. Anchored so 나가기 안내 (a screen) stays navigation.
+    ("leaving", re.compile(
+        r"(?:^|\s)나가기$|^(?:대화방|채팅방|그룹)\s*나가기$"
+        r"|^leave(?:\s+(?:chat|room|group|conversation))?$", re.I)),
     ("recommendation", re.compile(
         r"추천\s*(?:숨기기|제거|무시|안\s*함)|관심\s*없음"
         r"|(?:hide|dismiss)\s+(?:this\s+)?(?:suggestion|recommendation)"
@@ -739,6 +754,60 @@ def verify(els: list[dict], x: int, y: int) -> int:
     return 1
 
 
+BACK_LABEL = re.compile(r"^(뒤로|뒤로 가기|돌아가기|닫기|취소)$|^(back|go back|close|cancel|done)$", re.I)
+
+
+def back(els: list[dict]) -> None:
+    """The nav bar's leading control, even when it carries no label.
+
+    Every other tap must come from a labelled candidate, and that rule holds:
+    a control the tree will not name cannot be screened, so it is not offered.
+    The one exception is getting OUT. A detail screen whose back chevron is an
+    unlabelled glyph — zeta's creator profile, its search screen — has no
+    candidate at all and no tab bar, and the interactive pop gesture does
+    nothing there, so exploration dead-ends on a screen it walked into itself
+    (measured 2026-08-27, three times in one session).
+
+    This is safe to make an exception for because the slot's meaning is a
+    platform convention, not app-specific: the leading edge of the top bar is
+    back / close / cancel. It is never a purchase and never a delete. It stays
+    a deliberate command rather than a candidate, so nothing taps it by
+    accident — the loop asks for it only when it is stuck.
+    """
+    bounds = next((e["frame"] for e in els if e["role"] == "AXApplication"), None)
+    if not bounds or not bounds["width"] or not bounds["height"]:
+        print("ERROR: no application frame — cannot locate the nav bar", file=sys.stderr)
+        return
+    bx, by, bw, bh = bounds["x"], bounds["y"], bounds["width"], bounds["height"]
+    hits = []
+    for e in els:
+        f, w, h = e["frame"], e["frame"]["width"], e["frame"]["height"]
+        if w <= 0 or h <= 0 or e["visible"] is False or not e["enabled"]:
+            continue
+        if e["role"] in CONTAINERS:
+            continue
+        # A named control is already a candidate and answers to the label guards.
+        if e["label"] and not BACK_LABEL.match(e["label"].strip()):
+            continue
+        cx, cy = f["x"] + w / 2, f["y"] + h / 2
+        if not (bx <= cx <= bx + bw * 0.18):
+            continue
+        # Below the status bar, inside the nav bar.
+        if not (by + bh * 0.045 <= cy <= by + bh * 0.16):
+            continue
+        # A chevron, not a title or a segmented control.
+        if w > bw * 0.2 or h > bh * 0.09:
+            continue
+        hits.append((cy, cx, int(cx), int(cy), e["label"], e["role"]))
+    if not hits:
+        print("INFO: back 0 — no leading nav control on this screen")
+        return
+    hits.sort()
+    _, _, x, y, label, role = hits[0]
+    print(f"INFO: back {x} {y} | {role} | {label or '(unlabelled)'}")
+    print(f"OK: 1 back target")
+
+
 def inputs(els: list[dict]) -> None:
     """Text fields that could be typed into, with the id to type by.
 
@@ -763,12 +832,12 @@ def inputs(els: list[dict]) -> None:
 
 def main(argv: list[str]) -> int:
     mode = argv[1] if len(argv) > 1 else ""
-    if mode in ("candidates", "sig", "nodekey", "statekey", "identity", "inputs") and len(argv) == 3:
+    if mode in ("candidates", "sig", "nodekey", "statekey", "identity", "inputs", "back") and len(argv) == 3:
         pass
     elif mode == "verify" and len(argv) == 5:
         pass
     else:
-        print("ERROR: usage: device_a11y.py candidates|sig|nodekey|statekey|identity|inputs <tree> "
+        print("ERROR: usage: device_a11y.py candidates|sig|nodekey|statekey|identity|inputs|back <tree> "
               "| verify <tree> <x> <y>", file=sys.stderr)
         return 1
     try:
@@ -790,7 +859,8 @@ def main(argv: list[str]) -> int:
         nodekey(els)
         statekey(els)
         return 0
-    {"sig": sig, "nodekey": nodekey, "statekey": statekey, "inputs": inputs}.get(mode, candidates)(els)
+    {"sig": sig, "nodekey": nodekey, "statekey": statekey, "inputs": inputs,
+     "back": back}.get(mode, candidates)(els)
     return 0
 
 

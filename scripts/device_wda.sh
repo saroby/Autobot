@@ -21,6 +21,8 @@
 #   swipe <sid> <x1> <y1> <x2> <y2>   Swipe, settle, and log the transition (POINTS).
 #   swipefrac <sid> <fx1> <fy1> <fx2> <fy2> [tree]  Same, in fractions of the app
 #                                     frame — no pixel/point conversion to get wrong.
+#   back <sid>                        Tap the nav bar's leading control — the only
+#                                     unlabelled tap, for escaping a dead-end screen.
 #   quit <sid>                        End the session.
 #   stop-server                       Stop only the Appium server started by this script.
 #   doctor [<udid|name>] [<bundle_id>]  Diagnose the local real-device toolchain.
@@ -1153,6 +1155,56 @@ open(sys.argv[1], 'w', encoding='utf-8').write(json.load(sys.stdin)['value'])" "
   echo "OK: captured $png + $xml"
 }
 
+# The one tap that does not come from `candidates`. See device_a11y.py:back —
+# an unlabelled chevron is invisible to a label-based guard, and a detail screen
+# whose only exit is that chevron is a dead end the loop walked into itself.
+# The slot's meaning is a platform convention (back/close/cancel), never a
+# purchase and never a delete, and this stays a deliberate command so nothing
+# reaches it by accident.
+cmd_back() {
+  local sid="${1:-}"
+  if [[ -z "$sid" ]]; then
+    echo "ERROR: usage: device_wda.sh back <sid>" >&2
+    return 1
+  fi
+  _assert_target "$sid" || return 1
+  local live target x y
+  live="$(mktemp -t device_wda)"
+  if ! _live_dump "$sid" "$live"; then
+    rm -f "$live"
+    echo "ERROR: cannot read the current screen — session dead or device gone. Stop the loop." >&2
+    return 1
+  fi
+  target="$(python3 "$_HERE/device_a11y.py" back "$live" | sed -n 's/^INFO: back \([0-9][0-9]*\) \([0-9][0-9]*\) .*/\1 \2/p')"
+  # The settle loop reads the same origin state `_prepare_tap` would have set;
+  # this path skips that gate on purpose, not its bookkeeping.
+  _TAP_PLANNED="$(_sig_of "$live" || true)"
+  _TAP_FROM_KEY="$(_key_of "$live" || true)"
+  _TAP_FROM_STATE="$(_state_of "$live" || true)"
+  _TAP_BEHAVIOR="back"
+  _TAP_EFFECT="none"
+  rm -f "$live"
+  if [[ -z "$target" ]]; then
+    echo "INFO: no leading nav control on this screen — this is a tab root, or the exit is elsewhere" >&2
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  set -- $target
+  x="$1"; y="$2"
+  local to_tree settle=0
+  to_tree="$(mktemp -t device_wda)"
+  _TAP_LABEL="back"
+  _perform_tap_and_settle "$sid" "$x" "$y" "$to_tree" || settle=$?
+  rm -f "$to_tree"
+  if [[ "$settle" -ne 0 ]]; then
+    echo "ERROR: back tap at $x,$y did not settle" >&2
+    return 1
+  fi
+  _record_tap_transition "$x" "$y" "via=back"
+  echo "OK: back tapped $x,$y"
+  [[ "$_TAP_CHANGED" == true ]] || echo "INFO: screen did not change — that slot was not a back control"
+}
+
 cmd_swipefrac() {
   local sid="${1:-}" fx1="${2:-}" fy1="${3:-}" fx2="${4:-}" fy2="${5:-}" tree="${6:-}"
   if [[ -z "$sid" || -z "$fx1" || -z "$fy1" || -z "$fx2" || -z "$fy2" ]]; then
@@ -2253,6 +2305,7 @@ main() {
     type)       cmd_type "$@" ;;
     swipe)      cmd_swipe "$@" ;;
     swipefrac)  cmd_swipefrac "$@" ;;
+    back)       cmd_back "$@" ;;
     quit)       cmd_quit "$@" ;;
     stop-server) cmd_stop_server "$@" ;;
     doctor)     cmd_doctor "$@" ;;

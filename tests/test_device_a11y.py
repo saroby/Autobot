@@ -330,6 +330,28 @@ class TestStateChangingGuard(unittest.TestCase):
         r = idb([ROOT, el("피스 내역", 0, 200), el("포인트", 0, 260), el("3개의 답글", 0, 320)])
         self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)
 
+    def test_a_creator_tool_publish_and_draft_buttons_are_withheld(self):
+        # zeta's plot editor ships 등록 (publish) beside 임시저장 (save draft).
+        # Neither word was in the vocabulary, and both leave content behind in
+        # the user's own account.
+        for label in ("등록", "임시저장", "출품", "저장하기", "Publish", "Save draft"):
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+
+    def test_screens_about_registration_are_still_navigation(self):
+        r = idb([ROOT, el("등록된 항목", 0, 200), el("등록 안내", 0, 260),
+                 el("저장된 대화", 0, 320)])
+        self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)
+
+    def test_leaving_a_room_is_withheld(self):
+        # 나가기 discards the conversation; no delete word matches it.
+        for label in ("대화방 나가기", "나가기", "Leave chat"):
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+                self.assertIn("effect=leaving", r.stdout)
+
     def test_share_button_named_after_what_it_shares_is_withheld(self):
         # Korean puts the noun first, so anchoring at ^ missed the real button:
         # zeta's profile share reads 프로필 공유 and opened the system sheet,
@@ -828,3 +850,61 @@ class TestStateKey(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBackEscape(unittest.TestCase):
+    """The only tap allowed to come from an unlabelled element.
+
+    A detail screen whose back chevron carries no label has no candidate and no
+    tab bar, and zeta ignores the interactive pop gesture — measured 2026-08-27,
+    exploration dead-ended three times on screens it had walked into itself. The
+    leading edge of a nav bar means back/close/cancel by platform convention, so
+    it is safe to name geometrically; it stays a deliberate command rather than a
+    candidate so nothing taps it by accident.
+    """
+
+    def back(self, inner: str):
+        return wda(inner, mode="back")
+
+    def test_an_unlabelled_chevron_in_the_nav_slot_is_found(self):
+        r = self.back('<XCUIElementTypeOther type="XCUIElementTypeOther" label="" name=""'
+                      ' enabled="true" visible="true" x="6" y="67" width="36" height="36"/>')
+        self.assertIn("INFO: back 24 85", r.stdout)
+        self.assertIn("(unlabelled)", r.stdout)
+
+    def test_a_labelled_back_button_is_found_too(self):
+        r = self.back(node("Button", "Go back", 10, 66, 24, 36))
+        self.assertIn("INFO: back 22 84", r.stdout)
+
+    def test_a_tab_root_offers_no_back(self):
+        # The top-leading control here is the first segment of a nav bar, which
+        # is a candidate in its own right and does not leave the screen.
+        r = self.back(node("Other", "콘테스트", 10, 68, 81, 34)
+                      + node("Other", "홈", 90, 68, 30, 34))
+        self.assertIn("INFO: back 0", r.stdout)
+
+    def test_a_wide_control_is_a_title_not_a_chevron(self):
+        r = self.back('<XCUIElementTypeOther type="XCUIElementTypeOther" label="" name=""'
+                      ' enabled="true" visible="true" x="0" y="67" width="200" height="36"/>')
+        self.assertIn("INFO: back 0", r.stdout)
+
+    def test_something_below_the_nav_bar_is_not_a_back_control(self):
+        r = self.back('<XCUIElementTypeOther type="XCUIElementTypeOther" label="" name=""'
+                      ' enabled="true" visible="true" x="6" y="400" width="36" height="36"/>')
+        self.assertIn("INFO: back 0", r.stdout)
+
+    def test_a_trailing_control_is_not_a_back_control(self):
+        r = self.back('<XCUIElementTypeOther type="XCUIElementTypeOther" label="" name=""'
+                      ' enabled="true" visible="true" x="340" y="67" width="36" height="36"/>')
+        self.assertIn("INFO: back 0", r.stdout)
+
+    def test_an_invisible_chevron_is_not_offered(self):
+        r = self.back('<XCUIElementTypeOther type="XCUIElementTypeOther" label="" name=""'
+                      ' enabled="true" visible="false" x="6" y="67" width="36" height="36"/>')
+        self.assertIn("INFO: back 0", r.stdout)
+
+    def test_unlabelled_elements_are_still_never_tap_candidates(self):
+        # `back` is an exception for one slot, not a loosening of the rule.
+        r = wda('<XCUIElementTypeOther type="XCUIElementTypeOther" label="" name=""'
+                ' enabled="true" visible="true" x="6" y="67" width="36" height="36"/>')
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
