@@ -1156,3 +1156,48 @@ class TestLeavingTheAppPrecision(unittest.TestCase):
         r = idb([ROOT, el("Safari 사용법", 0, 200), el("Browser history", 0, 260),
                  el("열기", 0, 320)])
         self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)
+
+
+class TestNumericChromeIsNormalised(unittest.TestCase):
+    def key(self, inner: str) -> str:
+        out = wda(inner, mode="nodekey").stdout
+        return next(l.split()[-1] for l in out.splitlines() if l.startswith("INFO: nodekey"))
+
+    def custom(self, *labels: str) -> str:
+        return "".join(node("Other", lab, 10 + 55 * i, 68, 50, 34)
+                       for i, lab in enumerate(labels))
+
+    def test_how_many_numeric_chips_still_counts(self):
+        # Dropping numbers outright lost the only thing separating a subway
+        # app's line tabs. Normalising keeps the structure, not the reading.
+        one = self.key(self.custom("홈", "대화", "만들기", "설정", "전체", "1"))
+        three = self.key(self.custom("홈", "대화", "만들기", "설정", "전체", "1", "2", "9"))
+        self.assertNotEqual(one, three)
+
+    def test_but_the_value_does_not(self):
+        a = self.key(self.custom("홈", "대화", "만들기", "설정", "전체", "1", "2", "9"))
+        b = self.key(self.custom("홈", "대화", "만들기", "설정", "전체", "3", "4", "7"))
+        self.assertEqual(a, b)
+
+
+class TestInAppViewSwitchIsNotLeaving(unittest.TestCase):
+    def test_changing_the_view_is_navigation(self):
+        for label in ("목록으로 전환", "캘린더로 전환", "Switch to List", "View in Calendar"):
+            with self.subTest(label=label):
+                self.assertNotIn("leaving-app", idb([ROOT, el(label, 0, 200)]).stdout)
+
+    def test_handing_off_to_another_app_is_still_withheld(self):
+        for label in ("Instagram으로 전환", "Watch on YouTube", "Open in Safari"):
+            with self.subTest(label=label):
+                self.assertIn("effect=leaving-app", idb([ROOT, el(label, 0, 200)]).stdout)
+
+
+class TestSheetEscapeProvenance(unittest.TestCase):
+    def test_the_way_out_is_not_a_label_guess(self):
+        # Marked `source=label` it was refused by the mechanical gate, which
+        # shut the blind loop inside a sheet it was also forbidden to touch.
+        r = wda('<XCUIElementTypeSheet type="XCUIElementTypeSheet" label="옵션" name="옵션"'
+                ' enabled="true" visible="true" x="0" y="400" width="375" height="412">'
+                + node("Button", "취소", 20, 760, 335, 44)
+                + '</XCUIElementTypeSheet>')
+        self.assertIn("source=escape", r.stdout)

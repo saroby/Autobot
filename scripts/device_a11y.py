@@ -143,9 +143,14 @@ STATE_CHANGING = (
     # Korean particles attach to the preceding word with no space — the label is
     # `Instagram으로 전환`, not `Instagram 으로 전환` — so these must NOT be
     # anchored with \s before the particle.
+    # `목록으로 전환` and `Switch to List` change the view, they do not leave the
+    # app; naming the in-app destinations is narrower than trying to recognise
+    # every brand on the other side.
     ("leaving-app", re.compile(
-        r"(?:으로|로)\s*전환(?:하기)?$|에서\s*(?:열기|보기|계속)$"
-        r"|^(?:open|view|watch|listen|continue|switch)\s+(?:in|on|with|to)\s+\S"
+        r"^(?!.*(?:목록|리스트|캘린더|달력|그리드|지도|표|카드|갤러리)\s*(?:으로|로)\s*전환)"
+        r"(?:.*(?:으로|로)\s*전환(?:하기)?$|.*에서\s*(?:열기|보기|계속)$)"
+        r"|^(?:open|view|watch|listen|continue|switch)\s+(?:in|on|with|to)\s+"
+        r"(?!list\b|calendar\b|grid\b|map\b|table\b|gallery\b|card\b)\S"
         r"|^(?:open in|open with)\b", re.I)),
     # Opening the system share sheet can send the post out of the app entirely,
     # and it replaces the target app in the foreground.
@@ -374,9 +379,12 @@ def _node_identity(els: list[dict]) -> tuple[str, list[str]]:
 # the edge — `Electronics` is 11 — so the cap is not tight.
 CHROME_LABEL_MAX = 12
 
-# A number is not chrome, it is a reading. An unread badge going 9 → 10, a page
-# indicator 12 / 80, a cart count: none of them make the screen a different
-# screen, and hashing them made it one.
+# A number is a reading, not chrome: an unread badge going 9 → 10, a page
+# indicator 12 / 80, a cart count. Hashing the value made the same screen a new
+# screen. Dropping them outright was the other error — a subway app whose line
+# tabs ARE 1/2/9 loses the only thing that distinguishes its screens. So they
+# are normalised, not discarded: the fingerprint records that a numeric chip
+# sits here, and how many, without the value.
 COUNTER_LABEL = re.compile(r"^[\d\s./,:+%-]+$|^\d[\d,.]*[KkMm만천억]?$")
 
 
@@ -405,7 +413,7 @@ def _chrome_shape(els: list[dict]) -> list[str]:
     graph or log is re-keyed.
     """
     leaves = _label_leaves(els)
-    chrome, unnamed, named = set(), 0, 0
+    chrome, unnamed, named, counters = set(), 0, 0, 0
     for index, e in enumerate(els):
         label = (e["label"] or "").strip()
         if not leaves[index] or not label or e["visible"] is False:
@@ -423,8 +431,11 @@ def _chrome_shape(els: list[dict]) -> list[str]:
             unnamed += 1
         else:
             named += 1
-        if len(label) <= CHROME_LABEL_MAX and "\n" not in label and not COUNTER_LABEL.match(label):
-            chrome.add(label)
+        if len(label) <= CHROME_LABEL_MAX and "\n" not in label:
+            if COUNTER_LABEL.match(label):
+                counters += 1
+            else:
+                chrome.add(label)
     # A genuinely sparse screen (a spinner, an empty state) is not the same
     # thing as a custom-rendered one; without a crowd of unnamed boxes there is
     # nothing here worth disambiguating.
@@ -437,6 +448,8 @@ def _chrome_shape(els: list[dict]) -> list[str]:
     # turned the fallback off on exactly the screens it exists for.
     if unnamed < 5 or not chrome or unnamed <= named:
         return []
+    if counters:
+        chrome.add(f"#x{counters}")
     return ["chrome:" + hashlib.sha1("|".join(sorted(chrome)).encode()).hexdigest()[:12]]
 
 
@@ -786,7 +799,7 @@ def candidates(els: list[dict]) -> None:
             cy = int(f["y"] + f["height"] / 2)
             print(f"INFO: tap {cx} {cy} | {e['role']} | {e['label']}")
             print(f"INFO: candidate-meta {cx} {cy} | category=navigation | effect=none"
-                  f" | behavior=sheet-escape | source=label"
+                  f" | behavior=sheet-escape | source=escape"
                   f" | state_changing=false | withheld=false")
         print(f"OK: {len(escapes)} tappable, 0 withheld")
         return

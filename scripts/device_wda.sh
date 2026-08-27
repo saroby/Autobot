@@ -1279,6 +1279,41 @@ print('%dx%d' % struct.unpack('>II', head[16:24]) if head[:8] == b'\x89PNG\r\n\x
   echo "INFO: swipe coordinates are POINTS. Prefer 'swipefrac' (fractions of this frame) over converting from the screenshot."
 }
 
+# Cumulative taps already spent on this target, from the flow log.
+_taps_spent() {
+  local flow="${1:-${CLONE_FLOW_LOG:-$CLONE_STATE_DIR/flow.jsonl}}" n
+  [[ -s "$flow" ]] || { echo 0; return 0; }
+  n="$(python3 -c '
+import json, sys
+n = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        n += json.loads(line).get("type") == "tap"
+    except ValueError:
+        pass
+print(n)' "$flow" 2>/dev/null)" || n=0
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  echo "$n"
+}
+
+# The budget is CUMULATIVE taps on someone's real account, so it has to bind
+# every path that taps — not just the mechanical drainer. The skill's own loop
+# uses low-level `tap`, so a budget enforced only in `explore` was a budget the
+# actual /autobot:copy run never met.
+_budget_allows() {
+  local budget="${CLONE_TAP_BUDGET:-25}" spent
+  spent="$(_taps_spent)"
+  if [[ "$spent" -ge "$budget" ]]; then
+    echo "ERROR: tap budget spent ($spent/$budget cumulative) — stop exploring." >&2
+    echo "ERROR:   raise CLONE_TAP_BUDGET, or clear the flow log to start a new target." >&2
+    return 1
+  fi
+  return 0
+}
+
 _actions() {
   local sid="$1" payload="$2"
   if ! _curl -X POST "$APPIUM_URL/session/$sid/actions" -H 'Content-Type: application/json' \
@@ -1591,6 +1626,7 @@ cmd_tap() {
     echo "ERROR: no such tree '$tree' — capture the screen first with 'screen'" >&2
     return 1
   fi
+  _budget_allows || return 1
   _prepare_tap "$sid" "$x" "$y" "$tree" || return $?
   to_tree="$(mktemp -t device_wda)"
   local settle_status=0
@@ -2080,32 +2116,17 @@ cmd_explore() {
   # run ends — made "누적 탭 25회" unenforceable: three runs of 20 is 60 taps on
   # someone's real account. Count what the log already spent and refuse to
   # exceed the cap, whatever `max_steps` says about THIS run.
-  local budget="${CLONE_TAP_BUDGET:-25}" spent=0
-  if [[ -s "$flow" ]]; then
-    # Parse the JSON. The writer emits `"type": "tap"` WITH a space, so a
-    # `grep -c '"type":"tap"'` counted zero on every real log — the budget was
-    # inert, and `|| echo 0` after a non-zero grep made `spent` two lines, which
-    # then broke the arithmetic below.
-    spent="$(python3 -c '
-import json, sys
-n = 0
-for line in open(sys.argv[1], encoding="utf-8"):
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        n += json.loads(line).get("type") == "tap"
-    except ValueError:
-        pass
-print(n)' "$flow" 2>/dev/null)" || spent=0
-    [[ "$spent" =~ ^[0-9]+$ ]] || spent=0
-  fi
+  local budget="${CLONE_TAP_BUDGET:-25}" spent
+  spent="$(_taps_spent "$flow")"
   if [[ "$spent" -ge "$budget" ]]; then
     echo "OK: tap budget spent ($spent/$budget cumulative in $flow) — exploration is done." >&2
     echo "INFO: raise CLONE_TAP_BUDGET, or clear the log to start a new target." >&2
     return 0
   fi
+  # A switch probe taps forward and immediately taps back, so a run allowed one
+  # more step could spend two and land at 26/25. Reserve the revert.
   local remaining=$(( budget - spent ))
+  [[ "$remaining" -ge 2 ]] || remaining=1
   if [[ "$max_steps" -gt "$remaining" ]]; then
     echo "INFO: $spent/$budget taps already spent — this run may make $remaining more" >&2
     max_steps="$remaining"

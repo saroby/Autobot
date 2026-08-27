@@ -280,7 +280,7 @@ def frontier(events: list[dict]) -> list[dict]:
                         "name": screen.get("name", key),
                         "tree": screen.get("tree", ""), "png": screen.get("png", ""),
                         "total": 0, "raw_todo": [], "behavior_total": 0,
-                        "todo": [], "todo_groups": [], "withheld": 0,
+                        "todo": [], "todo_records": [], "todo_groups": [], "withheld": 0,
                         "tree_missing": True})
             continue
         # Matched with tolerance, not equality: the same screen captured twice
@@ -339,6 +339,9 @@ def frontier(events: list[dict]) -> list[dict]:
                     "raw_todo": [(candidate["x"], candidate["y"], candidate["label"])
                                  for candidate in raw_todo_records],
                     "behavior_total": len(behavior_representatives), "todo": todo,
+                    # The candidates themselves, so a caller can ask about their
+                    # provenance without re-deriving them from the tree.
+                    "todo_records": [candidate for candidate, _tree in todo_with_tree],
                     "todo_groups": todo_groups, "tree_missing": tree_missing})
         out[-1]["withheld"] = len(withheld_with_tree)
     return out
@@ -436,9 +439,6 @@ def cmd_next_tap(path: str, tree: str) -> int:
         return 0
     if every:
         # Not "nothing left here" — "nothing left that a blind tap may take".
-        # Routing below may still cross this screen: a routing hop is an edge
-        # already tapped once and observed, which is a different risk from a
-        # first tap on a control nothing vouched for. These stay for the agent.
         print(f"INFO: {len(every)} unexplored candidate(s) here are source=label — "
               "the blind loop will never drain them; the agent must read the screen "
               "and tap them itself")
@@ -448,7 +448,13 @@ def cmd_next_tap(path: str, tree: str) -> int:
     # ever dominates, pass the target back in as a hint so hops after the first
     # only re-plan over the log's edges.
     rows = frontier(events)
-    pending = {row["key"] for row in rows if row["todo"] and row["key"] != state}
+    # Route only toward screens this loop could actually drain. Routing on the
+    # bare existence of a frontier walked to a label-only screen, spent taps
+    # from the cumulative budget getting there, and stopped on arrival for the
+    # same reason it stopped here.
+    pending = {row["key"] for row in rows
+               if row["key"] != state
+               and any(mechanically_tappable(r) for r in row["todo_records"])}
     if not pending:
         # frontier() unions candidates across every capture of one state, so a
         # feed can hold targets that only a different scroll position shows.
@@ -546,7 +552,10 @@ def mechanically_tappable(record: dict) -> bool:
     """
     if os.environ.get("CLONE_TAP_UNVOUCHED") == "1":
         return True
-    return record.get("source", "role") != "label"
+    # `escape` is the narrow whitelist that closes a sheet (취소/닫기/뒤로 and
+    # nothing else). Holding it back left the blind loop shut inside a sheet it
+    # was also forbidden to touch — the exact trap the sheet change removed.
+    return record.get("source", "role") in ("role", "escape")
 
 
 def cmd_todo(path: str, tree: str) -> int:

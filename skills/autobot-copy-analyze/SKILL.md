@@ -85,9 +85,10 @@ INFO: candidate-meta 197 85  | ... | source=role  | ...
 
 ```bash
 npm i -g appium && appium driver install xcuitest
-appium server --port 4723 &          # 다른 포트면 APPIUM_URL 로 지정
 export DEVELOPMENT_TEAM=<10자리 팀 ID>   # WDA 서명용 (없으면 session 이 거부)
 ```
+
+`session` 이 필요할 때 로컬 Appium 서버와 iOS 18+ RemoteXPC 터널을 **자동으로 띄운다** — 직접 실행할 필요는 없다. 이미 돌고 있는 서버를 쓰려면 `APPIUM_URL` 로 가리킨다.
 
 기기 쪽 준비 — **셋 다 필수**:
 
@@ -194,17 +195,20 @@ scripts/device_flow.py stats .autobot/clone/flow.jsonl                  # 커버
 
 | 조건 | 신호 | 행동 |
 |------|------|------|
-| 탭 예산 소진 | 누적 탭 25회 | 정상 종료 → Step 4 |
-| 새 화면 고갈 | `device_flow.py next` 가 `frontier empty`, 또는 직전 3회 연속 `sig` 가 이미 본 값 | 정상 종료 → Step 4 |
-| 시스템/파괴 다이얼로그 | `WARN: alert/sheet on screen` (후보 0개로 강제) | **즉시 중단**, 사용자에게 처리 요청 |
+| 탭 예산 소진 | `ERROR: tap budget spent (N/25 cumulative)` — `tap` 이 거부한다 | 정상 종료 → Step 4 |
+| 새 화면 고갈 | `device_flow.py next` 가 `frontier empty` | 정상 종료 → Step 4 |
+| 시스템 다이얼로그 | `WARN: alert/sheet on screen` (후보 0개로 강제) | **즉시 중단**, 사용자에게 처리 요청 |
+| 앱 자신의 시트 | `WARN: sheet on screen` (나가는 길만 후보로 나옴) | 중단 아님. 그 후보를 눌러 빠져나온다. 시트 안이 필요하면 사용자에게 다시 열어달라 한다 |
 | 기기 이탈·잠김 | 어떤 명령이든 `ERROR:` | **즉시 중단**, 재시도 루프 금지 |
 | 예상과 다른 화면 | `ERROR: screen changed since <tree>` | 낡은 좌표로 이어 치지 말고 **다시 `screen` 부터**. 앱 밖으로 나갔으면 사용자에게 복귀 요청 |
 | 로그인·페이월 도달 | 화면에 로그인/구독 입력 요소 | 중단하고 사용자에게 통과 요청 후 재개 |
-| 후보 0개 | `OK: 0 tappable` | 스와이프 1회 시도, 그래도 0이면 종료 |
+| 후보 0개 | `OK: 0 tappable` | 스와이프해서 화면을 움직여 본다. 그래도 0이면 종료 |
 | 역할 없는 앱 | `WARN: role-blind screen` | **중단 아님.** 라벨-리프 티어로 계속하되, 탭마다 스크린샷을 읽고 화면 종류를 판단한다 (위 role-blind 절) |
 | 로그인·페이월 화면으로 판단 | 스크린샷/라벨이 로그인·구독·결제·연령확인 | 후보가 남아 있어도 **탭하지 않고 중단**, 사용자에게 넘긴다 |
 
-`sig` 는 화면 서명(접근성 라벨 집합 해시)이다. `screen` 이 자동으로 출력하며(`scripts/device_wda.sh sig <tree.xml>` 로 재계산도 가능), 본 값을 집합으로 들고 다니며 중복 화면은 다시 캡처하지 않는다. 모달을 만나면 `candidates` 가 후보를 **0개로 강제**하므로 "허용/Allow" 같은 시스템 버튼을 실수로 탭할 수 없다. 반대로 평범한 `취소`/`Cancel`(시트 닫기)은 탈출 경로라 후보에 남는다 — 후보에 있으면 눌러서 빠져나온다.
+**`sig` 로 같은 화면인지 판단하지 않는다.** `sig` 는 라벨 집합 해시라 피드를 한 칸만 스크롤해도 바뀐다 — 같은 화면이 매번 새 화면으로 보인다. 화면 정체성은 `statekey` 이고(`nodekey` + 상호작용 상태), 커버리지·재개·흐름도가 전부 그걸 쓴다. `screen` 이 셋을 다 출력하니 **`INFO: nodekey`/`statekey` 를 보고** 중복을 판단한다. `sig` 는 "직전 캡처와 화면이 실제로 움직였나"를 눈으로 확인할 때만 쓴다.
+
+모달을 만나면 `candidates` 가 후보를 **0개로 강제**하므로 "허용/Allow" 같은 시스템 버튼을 실수로 탭할 수 없다. 앱 자신의 시트는 다르다 — `WARN: sheet on screen` 과 함께 **그 시트 안의 나가는 길만**(`취소`/`닫기`/`뒤로`) 후보로 나온다. `확인`/`완료`/`OK` 는 시트에서 닫기가 아니라 확정이라 후보가 아니다.
 
 접근성 트리를 못 받으면(`WARN: ... 접근성 트리 실패`) 스크린샷만 남는다. **이때만 사람 주도로 내려간다**: 사용자에게 핵심 화면을 순서대로 열어달라 요청하고 `scripts/device_wda.sh screen`(트리 없이 PNG 만 남는다) 또는 세션이 죽었으면 `scripts/device_capture.sh shot <udid> <out.png>`(devicectl, 트리 없음) 을 반복한다. 트리가 실패한 상태에서 같은 명령이 저절로 낫기를 기대하고 재시도하지 않는다.
 
@@ -253,6 +257,23 @@ scripts/device_flow.py stats .autobot/clone/flow.jsonl                  # 커버
      /autobot:mvp   (질문 없이 바로 빌드)
    에 .autobot/copy-analysis/brief.md 내용을 아이디어로 넘기세요.
    ```
+
+## 이 스킬이 쓰지 않는 명령, 그리고 노브
+
+드라이버에는 이 워크플로가 부르지 않는 명령이 더 있다. **왜 안 쓰는지**를 알아야 잘못 손이 가지 않는다.
+
+| 명령 | 무엇인가 | 이 스킬에서 |
+|------|---------|------------|
+| `device_wda.sh explore` | 눈 없이 프론티어를 기계적으로 소진하는 루프 | **쓰지 않는다.** 스크린샷을 못 읽으므로 `source=label` 후보를 거부한다 — 커스텀 렌더러 앱에서는 한 발도 못 뗀다. 이 스킬의 루프는 LLM 이 판단하는 `capture → candidates → 판단 → tap` 이다 |
+| `device_wda.sh step` | 탭 + 도착 화면 증거를 한 번에 남긴다 | `tap` 후 `screen` 과 같다. 어느 쪽이든 무방 |
+| `device_flow.py audit` | 탐험이 남긴 변경을 사후 감사 | 브리프 작성 전에 한 번 돌려 무엇을 건드렸는지 확인하면 좋다 |
+
+| 환경변수 | 기본 | 무엇을 바꾸나 |
+|---------|------|-------------|
+| `CLONE_TAP_BUDGET` | 25 | **누적** 탭 상한. `tap` 이 이 수를 넘으면 거부한다 — 실행 단위가 아니라 로그 전체 기준이다 |
+| `CLONE_TAP_UNVOUCHED` | (없음) | `1` 이면 기계적 루프가 `source=label` 후보도 탭한다. **이 스킬에서는 켜지 않는다** — 눈으로 확인하는 책임을 없애는 스위치다 |
+| `CLONE_PROBE_SWITCHES` | (없음) | `1` 이면 스위치를 켜봤다 되돌린다. 사용자 계정 설정을 건드리므로 **켜지 않는다** |
+| `CLONE_FLOW_LOG` | `.autobot/clone/flow.jsonl` | 탐험 로그 위치. 다른 앱을 분석하려면 이 파일을 지운다 |
 
 ## Output Artifacts
 
