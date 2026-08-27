@@ -1,6 +1,6 @@
 [project]
 name = "autobot"
-version = "0.14.0"
+version = "0.14.1"
 description = "Idea-to-ship comprehensive development plugin: product blueprinting (SSOT interviews, per-screen specs), parallel-agent build pipeline with self-improving retrospectives, deployment, and store operations (metadata, screenshots, review submission). The build pipeline's current implementation targets iOS 26+; standalone commands (ssot, screen, make, feedback, ...) work in any project."
 requires-python = ">=3.10"
 

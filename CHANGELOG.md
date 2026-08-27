@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-08-27
+
+### Fixed — Xcode 26.6 의 devicectl 이 연결된 아이폰을 "미연결"로 만들었다
+- `device_wda.sh` 가 `devicectl device info details` 를 `--omit-deprecated-fields-in-json` 과 함께 호출하는데, 이 옵션은 페이로드를 줄이는 취향일 뿐 요구사항이 아니고 모든 devicectl 에 있지도 않다 — Xcode 26.6 은 `Unknown option` 으로 거부한다. 폰이 꽂혀 있고 신뢰돼 있는데도 게이트가 "could not read structured details" 로 닫혔다(실측 2026-08-27, iPhone 14 Pro / iOS 27). 이제 플래그 없이 한 번 더 시도한다. 프로필이 읽는 필드는 플래그 없이도 전부 있다.
+- 같은 자리에서 `--json-output -` 를 쓰던 것도 고쳤다. devicectl 은 JSON 을 요청받아도 진행 텍스트를 stdout 에 섞어 쓰므로, 페이로드는 임시 파일로 받고 stdout 은 버린다.
+- 정말로 답하지 못하는 devicectl 은 여전히 게이트를 통과하지 못한다 — fallback 이 "없는 기기"를 통과시키지 않음을 테스트로 못박았다.
+
+### Fixed — 이미 승인한 권한 프롬프트를 다시 승인하라고 안내했다
+- RemoteXPC 터널 실패의 안내가 언제나 "관리자 프롬프트를 승인하거나 `sudo -v` 를 한 번 실행하라"였다. 그런데 실측 2026-08-27 회차는 승인이 성공했고 tunnel-creation 이 끝까지 돌았는데도 `No USB devices found` 를 남기고 아무것도 publish 하지 않았다 — osascript 로 띄운 root 프로세스는 로그인 세션이 없어 usbmuxd 가 장치를 하나도 보여주지 않는다(같은 열거를 셸에서 하면 폰이 보인다). 이미 끝난 단계로 조작자를 돌려보내는 오진이었다.
+- 터널 로그에 그 문장이 있으면 이제 원인을 그대로 말하고, Terminal.app 에서 직접 실행할 명령을 `--tunnel-registry-port` 까지 붙여 안내한다. 그 경우 `sudo -v`·프롬프트 승인 안내는 내지 않는다.
+
 ## [0.14.0] — 2026-08-24
 
 ### Changed — 플러그인 용도를 iOS 전용에서 종합 개발 플러그인으로 피벗 (문서만)
