@@ -3031,3 +3031,72 @@ class TestExploreRestartsWhenBoxedIn(unittest.TestCase):
         r, events, state = self._run(max_restart="0")
         self.assertEqual(state["terminated"], 0)
         self.assertNotIn("restarting the app", r.stdout)
+
+
+class TestSwipeFracConvertsFractionsToPoints(unittest.TestCase):
+    """Swipe coordinates are the one place the agent must invent numbers.
+
+    Every tap coordinate comes out of `candidates` already in points, so the
+    pixel/point distinction never arises there. A swipe does not, and reading a
+    coordinate off the screenshot means converting device pixels to points —
+    measured 2026-08-27, a sheet handle at 307pt was computed as 240pt, which
+    lands in the scrim above the sheet. Two dismiss attempts did nothing and the
+    exploration was abandoned one drag short of continuing. Fractions of the app
+    frame carry no units, so there is nothing left to convert wrong.
+    """
+
+    TREE = (
+        '<?xml version="1.0" encoding="UTF-8"?><AppiumAUT>'
+        '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App"'
+        ' enabled="true" visible="true" x="0" y="0" width="393" height="852"/>'
+        '</AppiumAUT>'
+    )
+
+    def frac(self, args: str, tree_body: str | None = None):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lib = root / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            (root / "device_a11y.py").write_text(
+                (SCRIPT.parent / "device_a11y.py").read_text(encoding="utf-8"), encoding="utf-8")
+            tree = root / "tree.xml"
+            tree.write_text(self.TREE if tree_body is None else tree_body, encoding="utf-8")
+            # Stub the real gesture: this pins the conversion, not the HTTP call.
+            return subprocess.run(
+                ["bash", "-c",
+                 f"source '{lib}'; cmd_swipe() {{ echo \"SWIPE $*\"; }}; "
+                 f"cmd_swipefrac session-1 {args} '{tree}'"],
+                capture_output=True, text=True,
+            )
+
+    def test_fractions_become_points_of_the_app_frame(self):
+        r = self.frac("0.5 0.36 0.5 0.95")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        # 0.36 * 852 = 306.7 -> 307, the handle the eyeballed conversion missed.
+        self.assertIn("SWIPE session-1 196 307 196 809", r.stdout)
+
+    def test_the_conversion_is_reported_so_it_can_be_checked(self):
+        r = self.frac("0.01 0.5 0.9 0.5")
+        self.assertIn("INFO: swipefrac 0.01,0.5 -> 0.9,0.5 of 393x852pt = 4 426 354 426", r.stderr)
+
+    def test_a_frame_with_an_origin_offset_is_respected(self):
+        offset = self.TREE.replace('x="0" y="0"', 'x="0" y="59"').replace('height="852"', 'height="793"')
+        r = self.frac("0.5 0.0 0.5 1.0", offset)
+        self.assertIn("SWIPE session-1 196 59 196 852", r.stdout)
+
+    def test_fractions_outside_the_frame_are_refused(self):
+        r = self.frac("0.5 0.36 0.5 1.4")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("fractions must be within 0..1", r.stderr)
+        self.assertNotIn("SWIPE", r.stdout)
+
+    def test_a_tree_without_an_application_frame_is_refused(self):
+        r = self.frac("0.5 0.2 0.5 0.8", '<?xml version="1.0"?><AppiumAUT/>')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("cannot read the app frame", r.stderr)
+
+    def test_missing_arguments_explain_the_unit(self):
+        r = self.frac("0.5 0.36")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Fractions of the app frame", r.stderr)

@@ -228,6 +228,15 @@ class TestDestructiveGuard(unittest.TestCase):
         r = idb([ROOT, el("구독 취소", 0, 200), el("Cancel Subscription", 0, 260)])
         self.assertIn("OK: 0 tappable, 2 withheld", r.stdout)
 
+    def test_withholds_in_app_currency_top_up(self):
+        # zeta's 마이페이지 sells pieces behind a button labelled only 충전 —
+        # a purchase none of the purchase words caught (measured 2026-08-27).
+        for label in ("충전", "피스 충전", "Top Up", "Recharge"):
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+                self.assertIn("destructive", r.stdout)
+
 
 class TestStateChangingGuard(unittest.TestCase):
     def test_threads_like_account_mutations_are_categorized_and_withheld(self):
@@ -307,6 +316,31 @@ class TestStateChangingGuard(unittest.TestCase):
         r = idb([ROOT] + [el(label, 0, 200 + 40 * i) for i, label in enumerate(labels)])
         self.assertIn(f"OK: {len(labels)} tappable, 0 withheld", r.stdout)
         self.assertNotIn("category=state-changing", r.stdout)
+
+    def test_a_control_quoting_a_price_is_withheld(self):
+        # zeta's illustration button is labelled `스냅샷 15피스` — it debits the
+        # balance on tap and carries no purchase word at all.
+        for label in ("스냅샷 15피스", "100 코인으로 열기", "Unlock for 3 credits", "₩1,500"):
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+                self.assertIn("effect=spend", r.stdout)
+
+    def test_priceless_labels_are_still_navigation(self):
+        r = idb([ROOT, el("피스 내역", 0, 200), el("포인트", 0, 260), el("3개의 답글", 0, 320)])
+        self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)
+
+    def test_share_button_named_after_what_it_shares_is_withheld(self):
+        # Korean puts the noun first, so anchoring at ^ missed the real button:
+        # zeta's profile share reads 프로필 공유 and opened the system sheet,
+        # which replaces the target app in the foreground.
+        r = idb([ROOT, el("프로필 공유", 0, 200), el("Share profile", 0, 260)])
+        self.assertIn("OK: 0 tappable, 2 withheld", r.stdout)
+        self.assertIn("effect=sharing", r.stdout)
+
+    def test_screens_about_sharing_are_still_navigation(self):
+        r = idb([ROOT, el("공유 설정", 0, 200), el("공유된 항목", 0, 260)])
+        self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
 
     def test_follow_suggestions_navigation_is_not_misclassified(self):
         r = idb([ROOT, el("팔로우 추천", 0, 200), el("Follow suggestions", 0, 260)])
@@ -402,6 +436,135 @@ class TestRowCollapsing(unittest.TestCase):
                         for part in r.stdout.splitlines() if "behavior=" in part]
         self.assertEqual(len(fingerprints), 2)
         self.assertEqual(fingerprints[0], fingerprints[1])
+
+
+def branch(kind: str, label: str, x: int, y: int, w: int, h: int,
+           children: str = "", visible: str = "true") -> str:
+    """A container node that can hold children — `node` is self-closing."""
+    return (f'<XCUIElementType{kind} type="XCUIElementType{kind}" label="{label}" name="{label}"'
+            f' enabled="true" visible="{visible}" x="{x}" y="{y}" width="{w}" height="{h}">'
+            f'{children}</XCUIElementType{kind}>')
+
+
+class TestRoleBlindFallback(unittest.TestCase):
+    """Custom renderers report every box as AXOther with no traits.
+
+    Shaped after a real zeta 3.47.0 home capture (2026-08-27): 144 elements, 60
+    of them labelled, not one reporting an actionable role — the role tier
+    returned 0 candidates including the tab bar, so exploration could not move.
+    """
+
+    def test_labelled_other_leaves_become_targets_when_no_role_is_reported(self):
+        r = wda(branch("Other", "홈 대화 만들기", 0, 760, 393, 52,
+                       node("Other", "홈", 28, 774, 48, 39)
+                       + node("Other", "대화", 124, 774, 49, 39)
+                       + node("Other", "만들기", 220, 774, 49, 39)))
+        self.assertIn("WARN: role-blind screen", r.stdout)
+        self.assertIn("INFO: tap 52 793 | AXOther | 홈", r.stdout)
+        self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)
+
+    def test_an_ancestor_that_only_inherits_its_label_is_not_a_target(self):
+        # The wrapper's label is the concatenation of its children, and its
+        # centre belongs to whichever child happens to sit there. Tapping it is
+        # never what the user sees, so only the leaves are offered.
+        r = wda(branch("Other", "홈 대화 만들기", 0, 760, 393, 52,
+                       node("Other", "홈", 28, 774, 48, 39)
+                       + node("Other", "대화", 124, 774, 49, 39)
+                       + node("Other", "만들기", 220, 774, 49, 39)))
+        self.assertNotIn("홈 대화 만들기", r.stdout.replace("WARN: role-blind screen", ""))
+
+    def test_destructive_labels_are_still_withheld(self):
+        r = wda(node("Other", "구독 결제하기", 38, 400, 299, 52))
+        self.assertIn("WARN: role-blind screen", r.stdout)
+        self.assertNotIn("INFO: tap", r.stdout)
+        self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+
+    def test_state_changing_labels_are_still_withheld(self):
+        r = wda(node("Other", "팔로우", 38, 400, 299, 52))
+        self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+
+    def test_a_system_dialog_still_suppresses_everything(self):
+        r = wda(node("Other", "허용", 100, 400) + node("Other", "홈", 28, 774, 48, 39))
+        self.assertIn("WARN: alert/sheet on screen", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_a_screen_covering_leaf_is_a_backdrop_not_a_target(self):
+        # Its centre belongs to whatever it sits behind, so tapping it is either
+        # a no-op or a surprise.
+        r = wda(node("Button", "계속", 38, 722, 299, 52) + node("Other", "배경", 0, 0, 393, 700))
+        self.assertNotIn("배경", r.stdout)
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+
+    def test_the_warning_is_only_for_screens_with_no_role_at_all(self):
+        # Leaves are always merged, but the "read the screen yourself" warning
+        # means something specific: NOTHING here was vouched for by a role.
+        r = wda(node("Button", "계속", 38, 722, 299, 52) + node("Other", "더보기", 340, 60, 40, 40))
+        self.assertNotIn("WARN: role-blind screen", r.stdout)
+        self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
+
+    def test_one_role_does_not_hide_the_rest_of_the_screen(self):
+        # zeta's search screen reports exactly one AXTextField. Treating that as
+        # "the role tier worked" left all 15 tag chips invisible and made the
+        # screen a dead end (measured 2026-08-27).
+        chips = "".join(node("Other", f"#태그{i}", 16 + 70 * i, 184, 60, 30) for i in range(4))
+        r = wda(node("TextField", "search-input", 55, 76, 280, 36) + chips)
+        self.assertIn("#태그0", r.stdout)
+        self.assertIn("#태그3", r.stdout)
+        self.assertIn("OK: 5 tappable, 0 withheld", r.stdout)
+
+    def test_scrollable_content_does_not_swallow_the_chrome_it_passes_under(self):
+        # Containment cannot tell "inside" from "behind". A feed card reaches
+        # under the translucent tab bar, and a card scrolled off the top reaches
+        # under the sticky filter chips — both contain that chrome's centre.
+        under_tabbar = wda(node("Other", "카드", 16, 580, 177, 288)
+                           + node("Other", "홈", 28, 774, 48, 39))
+        self.assertIn("INFO: tap 52 793 | AXOther | 홈", under_tabbar.stdout)
+        self.assertIn("OK: 2 tappable, 0 withheld", under_tabbar.stdout)
+
+        under_chips = wda(node("Other", "카드", 16, -14, 177, 288)
+                          + node("Other", "추천", 16, 119, 45, 28))
+        self.assertIn("INFO: tap 38 133 | AXOther | 추천", under_chips.stdout)
+
+    def test_the_inert_text_rule_still_removes_what_it_always_did(self):
+        # Journal's inner text goes at the rank filter, not at containment.
+        r = wda(node("Cell", "일기 항목", 0, 400, 375, 60)
+                + node("StaticText", "0 개의 입력 항목", 20, 415, 200, 20))
+        self.assertNotIn("0 개의 입력 항목", r.stdout)
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+
+    def test_inert_static_text_is_never_promoted(self):
+        # An empty state is candidate-less on purpose. The fallback is for a
+        # missing role vocabulary, not for a screen with nothing to tap.
+        r = wda(node("StaticText", "입력 항목 없음", 38, 460, 299, 50))
+        self.assertNotIn("WARN: role-blind screen", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_geometric_overlap_does_not_swallow_a_leaf(self):
+        # zeta's feed cards extend behind the translucent tab bar, so the row
+        # containment drop removed every tab item and left the loop with no way
+        # out of the feed. Leaves never nest, so overlap here is geometric only.
+        r = wda(node("Other", "카드 제목 설명 태그", 16, 580, 177, 288)
+                + node("Other", "홈", 28, 774, 48, 39))
+        self.assertIn("INFO: tap 52 793 | AXOther | 홈", r.stdout)
+        self.assertIn("OK: 2 tappable, 0 withheld", r.stdout)
+
+    def test_verify_accepts_a_fallback_candidate(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False, encoding="utf-8") as f:
+            f.write('<?xml version="1.0" encoding="UTF-8"?>\n<AppiumAUT>'
+                    '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App"'
+                    ' label="App" enabled="true" visible="true" x="0" y="0" width="375"'
+                    f' height="812">{node("Other", "대화", 124, 774, 49, 39)}'
+                    '</XCUIElementTypeApplication></AppiumAUT>')
+            fixture = f.name
+        try:
+            ok = subprocess.run(["python3", str(SCRIPT), "verify", fixture, "148", "793"],
+                                capture_output=True, text=True)
+            self.assertEqual(ok.returncode, 0, msg=ok.stderr)
+            miss = subprocess.run(["python3", str(SCRIPT), "verify", fixture, "10", "10"],
+                                  capture_output=True, text=True)
+            self.assertEqual(miss.returncode, 1)
+        finally:
+            Path(fixture).unlink()
 
 
 class TestKeyboardFiltering(unittest.TestCase):

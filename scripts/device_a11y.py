@@ -11,6 +11,12 @@ guards apply to both. Modes:
 
   candidates <file>   Tappable elements with tap centers. State-changing labels
                       are withheld; a system dialog suppresses the list entirely.
+                      When nothing reports an actionable role — a custom
+                      renderer draws the whole screen as AXOther — it falls back
+                      to label-leaf targets and says so with `WARN: role-blind
+                      screen`. The label guards still apply in that tier, but an
+                      unlabelled control is neither offered nor screened, so the
+                      caller has to read the screen before tapping.
   sig <file>          Screen signature (hash of the label set) — the exploration
                       loop's termination primitive.
   nodekey <file>      Coarse structural identity for screens.
@@ -34,9 +40,13 @@ from collections import Counter
 # NOTE: bare 취소/Cancel is deliberately absent — dismissing a sheet is the loop's
 # escape hatch. Only the subscription sense (구독 취소/해지) is withheld.
 DESTRUCTIVE = re.compile(
-    "삭제|제거|지우|비우기|구매|결제|구독|주문|로그아웃|로그 아웃|사인아웃|탈퇴|"
+    # 충전: an in-app currency top-up is a purchase under another name. zeta's
+    # 마이페이지 offers it as the screen's primary CTA next to a piece balance,
+    # and none of the words below matched it (measured 2026-08-27).
+    "삭제|제거|지우|비우기|구매|결제|구독|주문|충전|로그아웃|로그 아웃|사인아웃|탈퇴|"
     "초기화|재설정|복원|해지|신고|차단"
     "|delete|remove|erase|clear all|reset|buy|purchase|subscrib|checkout"
+    "|top ?up|recharge"
     "|sign ?out|log ?out|pay\\b|payment|restore|unsubscribe|cancel (account|subscription|plan)"
     "|deactivate|block|report",
     re.I,
@@ -101,10 +111,23 @@ STATE_CHANGING = (
         r"추천\s*(?:숨기기|제거|무시|안\s*함)|관심\s*없음"
         r"|(?:hide|dismiss)\s+(?:this\s+)?(?:suggestion|recommendation)"
         r"|not interested", re.I)),
+    # A control that quotes a price spends the user's money the moment it is
+    # tapped, and no purchase word appears anywhere in it — zeta's illustration
+    # button reads `스냅샷 15피스` and nothing else (measured 2026-08-27). The
+    # signal is the price itself: a number bound to a currency or an in-app
+    # token. A balance readout matches too, which costs a withheld target and
+    # nothing more.
+    ("spend", re.compile(
+        r"\d[\d,.]*\s*(?:피스|코인|크레딧|캐시|젬|다이아|포인트|골드|루비)"
+        r"|[₩$€£¥]\s*\d"
+        r"|\d[\d,.]*\s*(?:coins?|credits?|gems?|tokens?|points?|pieces?|diamonds?)\b", re.I)),
     # Opening the system share sheet can send the post out of the app entirely,
     # and it replaces the target app in the foreground.
+    # The Korean noun precedes the verb, so anchoring at ^ missed every real
+    # button: zeta labels it 프로필 공유, not 공유. Allow a preceding noun, keep
+    # the trailing anchor so 공유 설정 / 공유된 항목 (screens) stay navigation.
     ("sharing", re.compile(
-        r"^(?:공유|공유하기)$|^share(?:\s+(?:post|thread|via.*))?$", re.I)),
+        r"(?:^|\s)(?:공유|공유하기)$|^share(?:\s+(?:post|thread|profile|via.*))?$", re.I)),
     # A control whose label DESCRIBES its current on/off state is a toggle even
     # when its role is a plain button — Threads' post-notification bell reads
     # `알림이 비활성화되었습니다`. Measured 2026-08-23: exploration flipped it on
@@ -491,6 +514,29 @@ def _action_rank(e: dict) -> int:
     return 0
 
 
+def _label_leaves(els: list[dict]) -> list[bool]:
+    """Which elements own their label instead of inheriting it from below.
+
+    A custom renderer nests plain `AXOther` boxes, and every ancestor repeats the
+    concatenation of everything beneath it — measured on zeta's home screen, the
+    window's label was the whole page ("콘테스트 홈 랭킹 퀴즈 … 크리에이터"). Tapping
+    such an ancestor means tapping its centre, which is some unrelated child.
+    The innermost element carrying a label is the one the user actually sees as
+    a control, so that is the only element this tier will target.
+    """
+    inherited = [False] * len(els)
+    for e in els:
+        if not e["label"]:
+            continue
+        parent = e["parent"]
+        # Stop at the first ancestor already marked — its own ancestors were
+        # marked when that mark was set.
+        while parent is not None and 0 <= parent < len(els) and not inherited[parent]:
+            inherited[parent] = True
+            parent = els[parent]["parent"]
+    return [not flag for flag in inherited]
+
+
 def _behavior_fingerprint(els: list[dict], index: int, classification: dict) -> str:
     e = els[index]
     row = (index if e["role"] == "AXCell" and _is_data_cell(els, index)
@@ -528,6 +574,54 @@ def _candidate_meta(item: dict, withheld: bool) -> str:
     )
 
 
+def _pick(els: list[dict], bw: float, bh: float, leaves: list[bool] | None) -> dict:
+    """Collect tap targets, keyed so a control and its inner text collapse.
+
+    `leaves` selects the tier. `None` is the role tier: an element qualifies only
+    if its role or traits say it is actionable. A list (from `_label_leaves`) is
+    the role-blind tier: an element also qualifies when it is the innermost owner
+    of its label, ranked below every real role so the row-containment drop below
+    still prefers the larger, real target.
+    """
+    picked = {}
+    for index, e in enumerate(els):
+        f, w, h = e["frame"], e["frame"]["width"], e["frame"]["height"]
+        if not e["label"] or not e["enabled"] or e["role"] in CONTAINERS:
+            continue
+        if _inside_keyboard(els, index):
+            continue
+        rank = _action_rank(e)
+        if (rank == 0 and leaves is not None and leaves[index]
+                # Roles the vocabulary already knows keep their own verdict. A
+                # bare AXStaticText is inert on purpose — an empty state's "입력
+                # 항목 없음" is not a control, and promoting it here would hand the
+                # loop a dead target on every screen that has nothing to tap.
+                # Only a role the vocabulary cannot speak for gets the benefit.
+                and e["role"] not in ROLE_RANK and e["role"] not in ACTIONABLE_ROLES
+                # A leaf that covers the screen is a backdrop, not a control, and
+                # its centre belongs to whatever it sits behind. Across 39
+                # captured zeta screens the largest real target was a feed card
+                # at 16% of the frame, so this only ever catches backgrounds.
+                and not (bw and bh and w * h >= bw * bh * 0.8)):
+            rank = 1
+        if rank == 0:
+            continue
+        if w <= 0 or h <= 0 or e["visible"] is False or NOISE.search(e["label"]):
+            continue
+        cx, cy = int(f["x"] + w / 2), int(f["y"] + h / 2)
+        # Offscreen check only where visibility is not reported (idb).
+        if e["visible"] is None and (cx < 0 or cy < 0 or (bw and cx > bw) or (bh and cy > bh)):
+            continue
+        # A control and its inner text land on the same spot with the same label
+        # (verified: a WDA Button "계속" wrapping a StaticText "계속"). Collapse
+        # them into one target and keep the most actionable role.
+        key = (e["label"], cx // 12, cy // 12)
+        if key not in picked or rank > picked[key][0]:
+            picked[key] = (rank, cx, cy, e["role"], e["label"], w * h, f, index,
+                           rank == 1)
+    return picked
+
+
 def candidates(els: list[dict]) -> None:
     modal = [
         e for e in els
@@ -544,28 +638,30 @@ def candidates(els: list[dict]) -> None:
     bounds = next((e["frame"] for e in els if e["role"] == "AXApplication"), {})
     bw, bh = bounds.get("width", 0), bounds.get("height", 0)
 
-    picked = {}
-    for index, e in enumerate(els):
-        f, w, h = e["frame"], e["frame"]["width"], e["frame"]["height"]
-        if not e["label"] or not e["enabled"] or e["role"] in CONTAINERS:
-            continue
-        if _inside_keyboard(els, index):
-            continue
-        rank = _action_rank(e)
-        if rank == 0:
-            continue
-        if w <= 0 or h <= 0 or e["visible"] is False or NOISE.search(e["label"]):
-            continue
-        cx, cy = int(f["x"] + w / 2), int(f["y"] + h / 2)
-        # Offscreen check only where visibility is not reported (idb).
-        if e["visible"] is None and (cx < 0 or cy < 0 or (bw and cx > bw) or (bh and cy > bh)):
-            continue
-        # A control and its inner text land on the same spot with the same label
-        # (verified: a WDA Button "계속" wrapping a StaticText "계속"). Collapse
-        # them into one target and keep the most actionable role.
-        key = (e["label"], cx // 12, cy // 12)
-        if key not in picked or rank > picked[key][0]:
-            picked[key] = (rank, cx, cy, e["role"], e["label"], w * h, f, index)
+    # A custom-rendered app reports no roles at all, so a role-only pass finds
+    # nothing and the loop stops on a screen that is perfectly safe to explore.
+    # Measured on zeta 3.47.0: 144 elements, 60 labelled, every one of them
+    # `XCUIElementTypeOther` with no traits — 0 candidates, including the tab bar.
+    # That is the guard misfiring on missing metadata, not refusing a risk.
+    #
+    # The tier is NOT all-or-nothing per screen. Deciding it by "did the role
+    # pass find anything" made one lucky element hide the rest: zeta's search
+    # screen reports exactly one AXTextField, which counted as success and left
+    # all 15 tag chips invisible. Measured across 39 captured screens, merging
+    # the two costs nothing where roles are good (the chat room adds 0) and
+    # recovers real controls everywhere else (a `더보기` menu, three model cards,
+    # those 15 chips). So label leaves are always offered, ranked below every
+    # real role.
+    role_only = _pick(els, bw, bh, None)
+    picked = _pick(els, bw, bh, _label_leaves(els))
+    if not role_only and picked:
+        # Worth saying out loud: with no role anywhere, EVERY target here came
+        # from a label. The classification below still runs on each one, but a
+        # control with no label is neither offered nor screened, so the caller
+        # has to read the screen instead of trusting the list.
+        print("WARN: role-blind screen — no element reports an actionable role; "
+              "every target below came from a label. Weaker guard: unlabelled controls "
+              "are not offered and not screened. Read the screen before tapping.")
 
     # A list row and each line of text inside it are separate elements with
     # DIFFERENT labels, so the same-label collapse above cannot merge them —
@@ -573,10 +669,20 @@ def candidates(els: list[dict]) -> None:
     # row is what navigates, so inert text/images sitting inside a bigger
     # candidate are dropped. Actionable roles are never dropped: a button inside
     # a row (e.g. "새로운 일기") is its own target.
+    # Label leaves are exempt. This drop reads "an inert thing inside a bigger
+    # target is not its own target", and it identifies inert by `rank < 2` — a
+    # rank `_action_rank` never returns (it yields 0, 2 or 3; the Journal screen's
+    # inert text is removed by the rank-0 filter above, not here). So for role
+    # candidates this branch cannot fire, and the only thing that reaches it is a
+    # promoted leaf, which is the opposite of inert. Applying it there ate real
+    # controls purely because scrollable content passes under sticky chrome: a
+    # feed card swallowed 홈/대화/만들기/마이페이지 from behind the tab bar, and a
+    # card scrolled off the top swallowed 추천/스토리챗/비주얼 노벨. Containment
+    # cannot tell "inside" from "behind", so leaves do not answer to it.
     kept = []
     for c in sorted(picked.values(), key=lambda c: -c[5]):
-        rank, cx, cy, _role, _lab, area, _f, _index = c
-        if rank < 2 and any(
+        rank, cx, cy, _role, _lab, area, _f, _index, from_leaf = c
+        if not from_leaf and rank < 2 and any(
             area < k[5]
             and k[6]["x"] <= cx <= k[6]["x"] + k[6]["width"]
             and k[6]["y"] <= cy <= k[6]["y"] + k[6]["height"]
@@ -586,7 +692,7 @@ def candidates(els: list[dict]) -> None:
         kept.append(c)
 
     taps, withheld = [], []
-    for _, cx, cy, role, lab, _area, _f, index in sorted(kept, key=lambda c: (c[2], c[1])):
+    for _, cx, cy, role, lab, _area, _f, index, _leaf in sorted(kept, key=lambda c: (c[2], c[1])):
         classification = _classification(els[index])
         item = {"x": cx, "y": cy, "role": role, "label": lab,
                 "classification": classification,

@@ -18,7 +18,9 @@
 #   sig <tree>                        Screen signature (delegates to device_a11y.py).
 #   tap <sid> <x> <y> <tree.xml>      Tap a candidate — refuses stale/non-candidate points.
 #   type <sid> <accessibility_id> <text>  Type into a semantic text field.
-#   swipe <sid> <x1> <y1> <x2> <y2>   Swipe, settle, and log the transition.
+#   swipe <sid> <x1> <y1> <x2> <y2>   Swipe, settle, and log the transition (POINTS).
+#   swipefrac <sid> <fx1> <fy1> <fx2> <fy2> [tree]  Same, in fractions of the app
+#                                     frame — no pixel/point conversion to get wrong.
 #   quit <sid>                        End the session.
 #   stop-server                       Stop only the Appium server started by this script.
 #   doctor [<udid|name>] [<bundle_id>]  Diagnose the local real-device toolchain.
@@ -1132,6 +1134,15 @@ open(sys.argv[1], 'w', encoding='utf-8').write(json.load(sys.stdin)['value'])" "
     return 0
   fi
   python3 "$_HERE/device_a11y.py" sig "$xml" || true
+  # The tree and every command below speak POINTS; the .png is in PIXELS at the
+  # device's scale factor. An agent that reads a coordinate off the screenshot
+  # has to convert, and a missed conversion silently lands the gesture somewhere
+  # else entirely — measured 2026-08-27: a sheet handle at 307pt was computed as
+  # 240pt, which is the scrim above the sheet, so two dismiss attempts did
+  # nothing and the exploration was abandoned on a screen that was one drag from
+  # continuing. State the frame and the factor instead of leaving it to be
+  # inferred, and prefer `swipefrac`, which has no units to get wrong.
+  _report_geometry "$xml" "$png"
   local key
   key="$(_key_of "$xml" || true)"
   if [[ -n "$key" ]]; then
@@ -1140,6 +1151,80 @@ open(sys.argv[1], 'w', encoding='utf-8').write(json.load(sys.stdin)['value'])" "
       "sig=$(_sig_of "$xml")" "name=$name" "tree=$xml" "png=$png"
   fi
   echo "OK: captured $png + $xml"
+}
+
+cmd_swipefrac() {
+  local sid="${1:-}" fx1="${2:-}" fy1="${3:-}" fx2="${4:-}" fy2="${5:-}" tree="${6:-}"
+  if [[ -z "$sid" || -z "$fx1" || -z "$fy1" || -z "$fx2" || -z "$fy2" ]]; then
+    echo "ERROR: usage: device_wda.sh swipefrac <sid> <fx1> <fy1> <fx2> <fy2> [tree.xml]" >&2
+    echo "ERROR:   Fractions of the app frame, 0..1 — 0.5 0.36 0.5 0.95 drags from" >&2
+    echo "ERROR:   just over a third down the screen to near the bottom." >&2
+    return 1
+  fi
+  local frame live=""
+  if [[ -n "$tree" && -f "$tree" ]]; then
+    frame="$(_app_frame "$tree")"
+  else
+    live="$(mktemp -t device_wda)"
+    if _live_dump "$sid" "$live"; then frame="$(_app_frame "$live")"; fi
+    rm -f "$live"
+  fi
+  if [[ -z "$frame" ]]; then
+    echo "ERROR: cannot read the app frame — capture with 'screen' first, or pass its tree" >&2
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  set -- $frame
+  local x="$1" y="$2" w="$3" h="$4" pts
+  if ! pts="$(python3 -c "
+import sys
+x, y, w, h = (float(v) for v in sys.argv[1:5])
+fr = [float(v) for v in sys.argv[5:9]]
+if not all(0.0 <= f <= 1.0 for f in fr):
+    sys.exit('ERROR: fractions must be within 0..1')
+print(' '.join(str(int(round(o + s * f)))
+                for o, s, f in ((x, w, fr[0]), (y, h, fr[1]), (x, w, fr[2]), (y, h, fr[3]))))
+" "$x" "$y" "$w" "$h" "$fx1" "$fy1" "$fx2" "$fy2")"; then
+    echo "$pts" >&2
+    return 1
+  fi
+  echo "INFO: swipefrac $fx1,$fy1 -> $fx2,$fy2 of ${w}x${h}pt = $pts" >&2
+  # shellcheck disable=SC2086
+  cmd_swipe "$sid" $pts
+}
+
+# Point-space frame of the app, as `<x> <y> <w> <h>`, from a captured tree.
+_app_frame() {
+  python3 - "$1" <<'PY' 2>/dev/null
+import sys, xml.etree.ElementTree as ET
+for node in ET.parse(sys.argv[1]).getroot().iter():
+    if (node.get("type") or node.tag).endswith("Application"):
+        try:
+            print(" ".join(str(int(float(node.get(k, 0) or 0)))
+                            for k in ("x", "y", "width", "height")))
+        except ValueError:
+            pass
+        break
+PY
+}
+
+_report_geometry() {
+  local xml="$1" png="$2" frame px
+  frame="$(_app_frame "$xml")" || return 0
+  [[ -n "$frame" ]] || return 0
+  # shellcheck disable=SC2086
+  set -- $frame
+  px="$(python3 -c "
+import struct, sys
+with open(sys.argv[1], 'rb') as fh:
+    head = fh.read(33)
+print('%dx%d' % struct.unpack('>II', head[16:24]) if head[:8] == b'\x89PNG\r\n\x1a\n' else '')
+" "$png" 2>/dev/null || true)"
+  echo "INFO: bounds ${3}x${4} pt at ${1},${2}${px:+ | screenshot $px px}"
+  if [[ -n "$px" && "$3" -gt 0 ]]; then
+    echo "INFO: scale $(python3 -c "print(round(${px%%x*} / $3, 2))")x — screenshot px / this = points."
+  fi
+  echo "INFO: swipe coordinates are POINTS. Prefer 'swipefrac' (fractions of this frame) over converting from the screenshot."
 }
 
 _actions() {
@@ -2167,6 +2252,7 @@ main() {
     tap)        cmd_tap "$@" ;;
     type)       cmd_type "$@" ;;
     swipe)      cmd_swipe "$@" ;;
+    swipefrac)  cmd_swipefrac "$@" ;;
     quit)       cmd_quit "$@" ;;
     stop-server) cmd_stop_server "$@" ;;
     doctor)     cmd_doctor "$@" ;;
