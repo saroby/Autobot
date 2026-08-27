@@ -585,6 +585,7 @@ def _candidate_meta(item: dict, withheld: bool) -> str:
         f" | category={item['classification']['category']}"
         f" | effect={item['classification']['effect']}"
         f" | behavior={item['behavior']}"
+        f" | source={item['source']}"
         f" | state_changing={state_changing} | withheld={str(withheld).lower()}"
     )
 
@@ -638,13 +639,21 @@ def _pick(els: list[dict], bw: float, bh: float, leaves: list[bool] | None) -> d
 
 
 def candidates(els: list[dict]) -> None:
-    modal = [
+    # An alert, or anything speaking the system-consent vocabulary, suppresses
+    # the list outright — "Allow" must never be reachable by a blind tap.
+    hard = [
         e for e in els
-        if "alert" in e["role"].lower() or "sheet" in e["role"].lower()
-        or SYSTEM_DIALOG.match(e["label"])
+        if "alert" in e["role"].lower() or SYSTEM_DIALOG.match(e["label"])
     ]
-    if modal:
-        hit = modal[0]
+    # A SHEET is different and used to be lumped in with alerts, which
+    # contradicted the contract's own escape hatch: suppressing everything
+    # removes the plain 취소/Cancel that closes it, so the loop is stuck inside a
+    # sheet it is not allowed to touch. An app's own action sheet is ordinary UI
+    # whose dangerous entries are withheld by label like anywhere else. Keep the
+    # blind loop out of it, but leave the way out.
+    sheet = [e for e in els if "sheet" in e["role"].lower()] if not hard else []
+    if hard:
+        hit = hard[0]
         print(f"WARN: alert/sheet on screen ({hit['label'] or hit['role']}) — a system or "
               "destructive dialog is up; stop and hand back to the user")
         print("OK: 0 tappable, 0 withheld")
@@ -652,6 +661,24 @@ def candidates(els: list[dict]) -> None:
 
     bounds = next((e["frame"] for e in els if e["role"] == "AXApplication"), {})
     bw, bh = bounds.get("width", 0), bounds.get("height", 0)
+
+    if sheet:
+        escapes = [e for e in els
+                   if ESCAPE_LABEL.match((e["label"] or "").strip())
+                   and e["visible"] is not False and e["enabled"]
+                   and e["frame"]["width"] > 0 and e["frame"]["height"] > 0]
+        print(f"WARN: sheet on screen ({sheet[0]['label'] or sheet[0]['role']}) — "
+              "only the way out is offered; open it again yourself if you need what is inside")
+        for e in escapes:
+            f = e["frame"]
+            cx = int(f["x"] + f["width"] / 2)
+            cy = int(f["y"] + f["height"] / 2)
+            print(f"INFO: tap {cx} {cy} | {e['role']} | {e['label']}")
+            print(f"INFO: candidate-meta {cx} {cy} | category=navigation | effect=none"
+                  f" | behavior=sheet-escape | source=label"
+                  f" | state_changing=false | withheld=false")
+        print(f"OK: {len(escapes)} tappable, 0 withheld")
+        return
 
     # A custom-rendered app reports no roles at all, so a role-only pass finds
     # nothing and the loop stops on a screen that is perfectly safe to explore.
@@ -709,8 +736,15 @@ def candidates(els: list[dict]) -> None:
     taps, withheld = [], []
     for _, cx, cy, role, lab, _area, _f, index, _leaf in sorted(kept, key=lambda c: (c[2], c[1])):
         classification = _classification(els[index])
+        # `source` is per-candidate on purpose. The screen-level role-blind
+        # warning only fires when NOTHING reported a role, so on a mixed screen
+        # a label-derived target was indistinguishable from one a role vouched
+        # for — and the "read the screen before tapping" rule had nothing to key
+        # on. A `label` source means: this control was never classified by
+        # anything but its own words.
         item = {"x": cx, "y": cy, "role": role, "label": lab,
                 "classification": classification,
+                "source": "label" if _leaf else "role",
                 "behavior": _behavior_fingerprint(els, index, classification)}
         (withheld if classification["state_changing"] else taps).append(item)
 
@@ -752,6 +786,10 @@ def verify(els: list[dict], x: int, y: int) -> int:
     print(f"ERROR: {x},{y} is not a tap candidate of this screen — "
           "re-run `candidates` and pick from its INFO: tap lines", file=sys.stderr)
     return 1
+
+
+# The way out of a sheet. Deliberately narrow — these close, they do not commit.
+ESCAPE_LABEL = re.compile(r"^(취소|닫기|완료|확인)$|^(cancel|close|done|dismiss|ok)$", re.I)
 
 
 BACK_LABEL = re.compile(r"^(뒤로|뒤로 가기|돌아가기|닫기|취소)$|^(back|go back|close|cancel|done)$", re.I)
@@ -808,14 +846,25 @@ def back(els: list[dict]) -> None:
     print(f"OK: 1 back target")
 
 
+SEARCH_FIELD = re.compile(
+    r"검색|찾기|조회|search|find|query|lookup|filter", re.I)
+
+
 def inputs(els: list[dict]) -> None:
     """Text fields that could be typed into, with the id to type by.
 
     Exploration never typed, so every search screen was a dead end: the
     results screen behind it can only be reached through the keyboard. The
     choice of what to type belongs to the caller — this only says where.
+
+    Each field is classified `search` or `other`, and that is not cosmetic.
+    Typing commits with Return, and Return in a composer SENDS — which walks
+    straight around the `communication` guard that withholds the Send button
+    itself. A message box, a comment box and a profile field are all just
+    "the first text field on screen" to a blind probe. Only a field that says
+    it searches is safe to type into unattended.
     """
-    found = 0
+    found = safe = 0
     for e in els:
         if e["role"] not in TEXT_INPUT_ROLES or e["visible"] is False or not e["enabled"]:
             continue
@@ -824,10 +873,18 @@ def inputs(els: list[dict]) -> None:
         name = e.get("name") or ""
         if not name:
             continue
+        # The role is the strongest signal; the id and the placeholder are what
+        # a custom search box has instead of one.
+        kind = ("search" if e["role"] == "AXSearchField"
+                or SEARCH_FIELD.search(name)
+                or SEARCH_FIELD.search(e.get("label") or "")
+                or SEARCH_FIELD.search(e.get("value") or "")
+                else "other")
         found += 1
+        safe += kind == "search"
         print(f"INFO: input {name}\t{e['role']}\t{int(e['frame']['x'] + e['frame']['width'] / 2)}"
-              f"\t{int(e['frame']['y'] + e['frame']['height'] / 2)}")
-    print(f"INFO: inputs {found}")
+              f"\t{int(e['frame']['y'] + e['frame']['height'] / 2)}\t{kind}")
+    print(f"INFO: inputs {found} ({safe} search)")
 
 
 def main(argv: list[str]) -> int:

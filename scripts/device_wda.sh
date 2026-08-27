@@ -1981,9 +1981,16 @@ print(int(biggest['width']), int(biggest['height']))
 _type_for_more() {
   local sid="$1" outdir="$2" from_tree="$3" name="$4" typed_file="$5"
   local probe="${CLONE_EXPLORE_PROBE_TEXT:-a}" line field from_state to_state
+  # SEARCH FIELDS ONLY. Typing commits with Return below, and Return in a
+  # composer sends the message — which walks around the `communication` guard
+  # that withholds the Send button itself. A blind probe cannot tell a search
+  # box from a message box, so it does not get to choose: `inputs` classifies
+  # each field and anything not marked `search` is left alone.
   line="$(python3 "$_HERE/device_a11y.py" inputs "$from_tree" 2>/dev/null \
-          | sed -n 's/^INFO: input //p' | head -n 1)"
-  [[ -n "$line" ]] || return 1
+          | sed -n 's/^INFO: input //p' | awk -F'\t' '$NF == "search" { print; exit }')"
+  if [[ -z "$line" ]]; then
+    return 1
+  fi
   field="${line%%	*}"
   from_state="$(_state_of "$from_tree" 2>/dev/null || true)"
   # Once per field per state: typing the same probe into the same box again

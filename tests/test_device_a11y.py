@@ -908,3 +908,113 @@ class TestBackEscape(unittest.TestCase):
         r = wda('<XCUIElementTypeOther type="XCUIElementTypeOther" label="" name=""'
                 ' enabled="true" visible="true" x="6" y="67" width="36" height="36"/>')
         self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+
+class TestCandidateProvenance(unittest.TestCase):
+    """Which candidates were vouched for by a role, and which only by words.
+
+    The screen-level role-blind warning only fires when NOTHING reported a role,
+    so on a mixed screen a label-derived target looked exactly like one a role
+    vouched for — measured on zeta's search screen, 15 of 16 candidates came
+    from labels alone while the lone AXTextField suppressed the warning.
+    """
+
+    def test_a_role_backed_candidate_is_marked_role(self):
+        r = wda(node("Button", "계속", 38, 722, 299, 52))
+        self.assertIn("source=role", r.stdout)
+        self.assertNotIn("source=label", r.stdout)
+
+    def test_a_label_leaf_candidate_is_marked_label(self):
+        r = wda(node("Other", "홈", 28, 774, 48, 39))
+        self.assertIn("source=label", r.stdout)
+
+    def test_a_mixed_screen_marks_each_candidate_separately(self):
+        r = wda(node("TextField", "search-input", 55, 76, 280, 36)
+                + node("Other", "#태그", 16, 184, 60, 30))
+        self.assertNotIn("WARN: role-blind screen", r.stdout)
+        self.assertEqual(r.stdout.count("source=role"), 1)
+        self.assertEqual(r.stdout.count("source=label"), 1)
+
+
+class TestTypeableFields(unittest.TestCase):
+    """Typing commits with Return, and Return in a composer SENDS.
+
+    That is the `communication` guard walked around by the keyboard: the Send
+    button is withheld, but a blind probe typing into "the first text field"
+    and pressing Return sends the message anyway.
+    """
+
+    def fields(self, inner: str):
+        return wda(inner, mode="inputs")
+
+    def test_a_search_field_is_typeable(self):
+        r = self.fields(node("SearchField", "q", 10, 60, 300, 36))
+        self.assertIn("\tsearch", r.stdout)
+        self.assertIn("inputs 1 (1 search)", r.stdout)
+
+    def test_a_field_named_for_search_is_typeable(self):
+        for name in ("search-input", "검색어", "Find a plot"):
+            with self.subTest(name=name):
+                r = self.fields(node("TextField", name, 10, 60, 300, 36))
+                self.assertIn("\tsearch", r.stdout)
+
+    def test_a_message_composer_is_offered_but_not_marked_search(self):
+        # Still listed — the caller may need to know it exists — but the driver
+        # only types into fields marked `search`.
+        r = self.fields(node("TextField", "메시지 입력", 10, 700, 300, 36))
+        self.assertIn("\tother", r.stdout)
+        self.assertIn("inputs 1 (0 search)", r.stdout)
+
+    def test_a_comment_box_is_not_search(self):
+        r = self.fields(node("TextField", "댓글을 입력하세요", 10, 700, 300, 36))
+        self.assertIn("\tother", r.stdout)
+
+    def test_a_multiline_composer_is_not_typeable_at_all(self):
+        # AXTextView is outside TEXT_INPUT_ROLES, so a multi-line composer never
+        # reaches the probe. That is the safe direction, and it is why the guard
+        # above is belt-and-braces rather than the only thing standing there.
+        r = self.fields(node("TextView", "내용 입력하기", 10, 700, 300, 60))
+        self.assertIn("inputs 0 (0 search)", r.stdout)
+
+
+class TestSheetEscape(unittest.TestCase):
+    """A sheet is not an alert. Suppressing it entirely trapped the loop inside.
+
+    Lumping AXSheet in with AXAlert removed the plain 취소/Cancel that closes it,
+    which is the one thing the contract promises stays available — so the loop
+    was stuck in a sheet it was also forbidden to touch.
+    """
+
+    SHEET = ('<XCUIElementTypeSheet type="XCUIElementTypeSheet" label="옵션" name="옵션"'
+             ' enabled="true" visible="true" x="0" y="400" width="375" height="412">'
+             '{inner}</XCUIElementTypeSheet>')
+
+    def sheet(self, inner: str):
+        return wda(self.SHEET.format(inner=inner))
+
+    def test_only_the_way_out_is_offered(self):
+        r = self.sheet(node("Button", "취소", 20, 760, 335, 44)
+                       + node("Button", "사진 보관함", 20, 600, 335, 44))
+        self.assertIn("WARN: sheet on screen", r.stdout)
+        self.assertIn("| 취소", r.stdout)
+        self.assertNotIn("사진 보관함", r.stdout)
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+
+    def test_a_sheet_with_no_way_out_offers_nothing(self):
+        r = self.sheet(node("Button", "삭제", 20, 600, 335, 44))
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_an_alert_still_suppresses_everything(self):
+        r = wda('<XCUIElementTypeAlert type="XCUIElementTypeAlert" label="위치 접근"'
+                ' name="위치 접근" enabled="true" visible="true" x="0" y="300"'
+                f' width="375" height="200">{node("Button", "취소", 20, 440, 150, 44)}'
+                '</XCUIElementTypeAlert>')
+        self.assertIn("WARN: alert/sheet on screen", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+    def test_system_consent_vocabulary_wins_over_the_sheet_path(self):
+        # An ATT prompt reported as a sheet must not hand back "Allow".
+        r = self.sheet(node("Button", "Allow", 20, 600, 335, 44)
+                       + node("Button", "취소", 20, 760, 335, 44))
+        self.assertIn("WARN: alert/sheet on screen", r.stdout)
+        self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)

@@ -838,8 +838,13 @@ def cmd_map(path: str, out: str) -> int:
         records = candidate_records_of(tree) if tree else []
         points = [(r["x"], r["y"], r["label"])
                   for r in unexplored(records, events, state)]
+        # `unexplored` skips withheld records, so counting them in the
+        # denominator made a screen with 0 taps read as partly explored — the
+        # withheld ones silently landed on the "done" side. They are not
+        # explored, they are refused; the banner reports them on their own.
         todo[sig] = {"points": points, "left": len(points),
-                     "total": len(records)}
+                     "total": sum(1 for r in records if not r["withheld"]),
+                     "withheld": sum(1 for r in records if r["withheld"])}
 
     boxes, links, lanes = _layout(cards_by_sig, todo, edges, depth,
                                   out_path.resolve().parent)
@@ -872,7 +877,7 @@ def cmd_map(path: str, out: str) -> int:
     # "행동 클래스 -47/219" — the two identities do not share a scale.
     total = sum(v["total"] for v in todo.values())
     left = sum(len(v["points"]) for v in todo.values())
-    withheld = sum(r["withheld"] for r in rows.values())
+    withheld = sum(v["withheld"] for v in todo.values())
     banner = (f'화면 {len(cards_by_sig)}개 · 탭 지점 {total - left}/{total} 탐험'
               + (f' · <strong>미탐 {left}</strong> (화면 위 빈 점)'
                  if left else ' · 전수 탐험')
