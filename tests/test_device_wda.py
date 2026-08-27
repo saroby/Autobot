@@ -170,6 +170,96 @@ class TestCloneWdaDeviceGate(unittest.TestCase):
         self.assertEqual(value["osBuild"], "23F84")
         self.assertEqual(value["connectionState"], "connected")
 
+    def test_a_devicectl_without_the_json_trim_flag_still_resolves_the_device(self):
+        # Every other test here hands the details in through the fixture, so the
+        # real `xcrun` call was never exercised — and it shipped asking for
+        # `--omit-deprecated-fields-in-json`, which Xcode 26.6 rejects with
+        # "Unknown option". A connected phone then failed the gate as if it were
+        # unplugged (observed 2026-08-27, iPhone 14 Pro on iOS 27).
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            payload = root / "payload.json"
+            payload.write_text(
+                device_details_json("00008101-AAA", "heewook의 iPhone"),
+                encoding="utf-8",
+            )
+            xcrun = bin_dir / "xcrun"
+            xcrun.write_text(
+                "#!/usr/bin/env bash\n"
+                # devicectl narrates to stdout even when asked for JSON, so a
+                # caller that reads stdout as the payload gets text + JSON.
+                "echo 'Gathering device information…'\n"
+                "out=''\n"
+                "while [[ $# -gt 0 ]]; do\n"
+                "  case \"$1\" in\n"
+                "    --omit-deprecated-fields-in-json)\n"
+                "      echo \"Error: Unknown option '$1'\" >&2; exit 1 ;;\n"
+                "    --json-output) out=\"$2\"; shift 2 ;;\n"
+                "    *) shift ;;\n"
+                "  esac\n"
+                "done\n"
+                "[[ -n \"$out\" ]] || exit 1\n"
+                "cat \"$CLONE_TEST_DETAILS_PAYLOAD\" > \"$out\"\n",
+                encoding="utf-8",
+            )
+            xcrun.chmod(0o755)
+
+            fixture = root / "devices.json"
+            fixture.write_text(devicectl_json(ONE), encoding="utf-8")
+            profile = root / "device-profile.json"
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "CLONE_DEVICES_JSON": str(fixture),
+                "CLONE_DEVICE_PROFILE_FILE": str(profile),
+                "CLONE_STATE_DIR": str(root / "state"),
+                "CLONE_AUTO_OPEN_XCODE": "0",
+                "CLONE_TEST_DETAILS_PAYLOAD": str(payload),
+            }
+            env.pop("CLONE_DEVICE_DETAILS_JSON", None)
+            result = subprocess.run(
+                ["bash", str(SCRIPT), "device"],
+                capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
+            )
+            value = json.loads(profile.read_text(encoding="utf-8")) if profile.exists() else {}
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stdout.strip(), "00008101-AAA")
+        self.assertNotIn("could not read structured details", result.stderr)
+        self.assertEqual(value.get("udid"), "00008101-AAA")
+        self.assertEqual(value.get("osVersion"), "26.5.2")
+
+    def test_a_devicectl_that_really_cannot_answer_still_fails_the_gate(self):
+        # The flag fallback must not turn a genuinely absent device into a pass.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            xcrun = bin_dir / "xcrun"
+            xcrun.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            xcrun.chmod(0o755)
+            fixture = root / "devices.json"
+            fixture.write_text(devicectl_json(ONE), encoding="utf-8")
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "CLONE_DEVICES_JSON": str(fixture),
+                "CLONE_DEVICE_PROFILE_FILE": str(root / "device-profile.json"),
+                "CLONE_STATE_DIR": str(root / "state"),
+                "CLONE_AUTO_OPEN_XCODE": "0",
+            }
+            env.pop("CLONE_DEVICE_DETAILS_JSON", None)
+            result = subprocess.run(
+                ["bash", str(SCRIPT), "device"],
+                capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout.strip(), "")
+        self.assertIn("could not read structured details", result.stderr)
+
     def test_the_coredevice_identifier_selects_the_device_too(self):
         # `devicectl list devices` shows the CoreDevice UUID as its Identifier
         # column. Passing it used to select nothing, and the gate then opened
@@ -668,6 +758,58 @@ class TestSigningTeamResolution(unittest.TestCase):
         self.assertIn("tunnel-creation", osascript_args)
         self.assertIn("RemoteXPC tunnel ready for 00008101-AAA", result.stderr)
         self.assertIn("Appium did not answer", result.stderr)
+
+    def test_a_root_tunnel_that_saw_no_usb_device_names_the_real_cause(self):
+        # Observed 2026-08-27: the GUI prompt was approved, tunnel-creation ran
+        # to completion, and it still published nothing because a root process
+        # started from osascript has no login session and usbmuxd shows it zero
+        # devices — while the same enumeration from this shell listed the phone.
+        # The old advice ("approve the prompt, or run sudo -v") sent the
+        # operator back to a step that had already succeeded.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker = root / "never-ready"
+            server, thread = start_tunnel_registry(marker)
+            try:
+                env, _state, _order_log, _appium_log, _sudo_log = self._automatic_tunnel_env(
+                    root, marker, server.server_port,
+                )
+                # The elevated process is launched detached, so racing its
+                # writes against the poll loop would make this flaky. What the
+                # diagnosis actually reads is the verdict it leaves behind, so
+                # the log is seeded with exactly what tunnel-creation wrote on
+                # 2026-08-27 — note it claims success while publishing nothing.
+                tunnel_log = root / "remotexpc-tunnel.log"
+                tunnel_log.write_text(
+                    "info TunnelCreation Connecting to usbmuxd...\n"
+                    "info TunnelCreation Listing all connected devices...\n"
+                    "info TunnelCreation No USB devices found.\n"
+                    "tunnel-creation successfully ran\n",
+                    encoding="utf-8",
+                )
+                env["CLONE_TUNNEL_LOG"] = str(tunnel_log)
+                env["CLONE_TUNNEL_START_TRIES"] = "5"
+                # The shared fake appium signals readiness by touching this
+                # marker; send it somewhere unwritable so the registry stays
+                # empty and the poll really does run out.
+                env["CLONE_TEST_TUNNEL_MARKER"] = str(root / "missing" / "ready")
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "session", "00008101-AAA", "com.example.target"],
+                    capture_output=True, text=True, env=env, timeout=SUBPROCESS_TIMEOUT,
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+                server.server_close()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("saw no USB device", result.stderr)
+        self.assertIn("login session", result.stderr)
+        self.assertIn("Terminal.app", result.stderr)
+        self.assertIn(f"--tunnel-registry-port {server.server_port}", result.stderr)
+        # Authorization already succeeded — re-suggesting it is the misdiagnosis.
+        self.assertNotIn("sudo -v", result.stderr)
+        self.assertNotIn("approve the macOS administrator prompt", result.stderr)
 
     def test_registry_with_only_another_udid_never_unblocks_session(self):
         with tempfile.TemporaryDirectory() as temp:

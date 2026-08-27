@@ -138,6 +138,30 @@ _team() {
   printf '%s' "$team"
 }
 
+# Two things about `devicectl device info details` are not portable across the
+# Xcode versions this runs on, and both used to read as "no device":
+#   * `--omit-deprecated-fields-in-json` only trims the payload, and it is not
+#     on every shipped devicectl — Xcode 26.6 rejects it with "Unknown option"
+#     while a connected phone sits right there. Every field this profile reads
+#     is present without it, so the flag is a preference, not a requirement.
+#   * `--json-output -` interleaves devicectl's own progress text with the
+#     payload on stdout, so the JSON goes to a file and stdout is discarded.
+_devicectl_details() {
+  local udid="$1" tmp rc=1
+  tmp="$(mktemp -t device_wda_details)" || return 1
+  if xcrun devicectl device info details --device "$udid" \
+       --json-output "$tmp" --omit-deprecated-fields-in-json >/dev/null 2>&1 \
+     || xcrun devicectl device info details --device "$udid" \
+       --json-output "$tmp" >/dev/null 2>&1; then
+    if [[ -s "$tmp" ]]; then
+      cat "$tmp"
+      rc=0
+    fi
+  fi
+  rm -f "$tmp"
+  return "$rc"
+}
+
 _persist_device_profile() {
   local udid="$1" fallback_name="$2" details
   if [[ -n "${CLONE_DEVICE_DETAILS_JSON:-}" ]]; then
@@ -147,8 +171,7 @@ _persist_device_profile() {
     fi
     details="$(<"$CLONE_DEVICE_DETAILS_JSON")"
   else
-    if ! details="$(xcrun devicectl device info details --device "$udid" \
-          --json-output - --omit-deprecated-fields-in-json 2>/dev/null)"; then
+    if ! details="$(_devicectl_details "$udid")"; then
       echo "ERROR: could not read structured details for $udid — unlock/reconnect the iPhone and retry 'device'" >&2
       return 1
     fi
@@ -348,11 +371,34 @@ _wait_for_tunnel() {
   return 1
 }
 
+# Observed 2026-08-27: authorization succeeded, the elevated tunnel-creation ran
+# to completion, and it logged "No USB devices found" — while the same usbmuxd
+# enumeration from this shell listed the phone. A root process started from
+# osascript has no login session, so usbmuxd shows it nothing. Telling the
+# operator to approve a prompt they already approved sends them in a circle.
+_tunnel_log_says_usbmux_empty() {
+  [[ -r "$CLONE_TUNNEL_LOG" ]] || return 1
+  grep -q "No USB devices found" "$CLONE_TUNNEL_LOG" 2>/dev/null
+}
+
+_tunnel_manual_command() {
+  local udid="$1" port
+  port="$(_tunnel_registry_port || true)"
+  printf "sudo appium driver run xcuitest tunnel-creation -- --udid '%s'" "$udid"
+  [[ -n "$port" ]] && printf ' --tunnel-registry-port %s' "$port"
+  return 0
+}
+
 _tunnel_manual_help() {
   local udid="$1"
   echo "ERROR: RemoteXPC tunnel is not ready for $udid at $CLONE_TUNNEL_REGISTRY_URL." >&2
-  echo "ERROR: approve the macOS administrator prompt, or run 'sudo -v' once and retry the same skill command." >&2
-  echo "ERROR: manual fallback: sudo appium driver run xcuitest tunnel-creation -- --udid '$udid'" >&2
+  if _tunnel_log_says_usbmux_empty; then
+    echo "ERROR: the elevated tunnel process reached usbmuxd but saw no USB device — a root process started outside your login session cannot enumerate it." >&2
+    echo "ERROR: run this yourself in Terminal.app and leave it running: $(_tunnel_manual_command "$udid")" >&2
+  else
+    echo "ERROR: approve the macOS administrator prompt, or run 'sudo -v' once and retry the same skill command." >&2
+    echo "ERROR: manual fallback: $(_tunnel_manual_command "$udid")" >&2
+  fi
 }
 
 _acquire_tunnel_start_lock() {
