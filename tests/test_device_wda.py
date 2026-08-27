@@ -2204,6 +2204,45 @@ class TestFlowLogging(unittest.TestCase):
             r = self._call("/nonexistent/deep/flow.jsonl", Path(d))
         self.assertEqual(r.returncode, 0)
 
+    def test_a_standalone_tap_refuses_a_switch_even_when_probing_is_enabled(self):
+        """Only `explore` flips a switch, because only `explore` flips it back.
+
+        With CLONE_PROBE_SWITCHES=1 a switch becomes a safe candidate, so a
+        direct `tap`/`step` could reach it — and neither has the second half.
+        The reservation of two budget slots is meaningless without the revert.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d) / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            r = subprocess.run(
+                ["bash", "-c",
+                 f"source {lib}; _TAP_EFFECT=toggle; _TAP_LABEL='비공개 프로필'; "
+                 f"_perform_tap_and_settle s 1 1 /dev/null && echo TAPPED || echo REFUSED"],
+                capture_output=True, text=True,
+                env={**os.environ, "CLONE_PROBE_SWITCHES": "1",
+                     "CLONE_FLOW_LOG": str(Path(d) / "flow.jsonl"),
+                     "CLONE_STATE_DIR": str(Path(d) / "state")},
+            )
+        self.assertIn("REFUSED", r.stdout)
+        self.assertIn("only 'explore' flips one", r.stderr)
+
+    def test_the_sentinel_path_does_not_move_with_permissions(self):
+        # A lookup that changes location when a directory's writability changes
+        # can hide a marker that already exists — the one thing it must not do.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d) / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            env = {**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl",
+                   "CLONE_STATE_DIR": str(Path(d) / "state")}
+            here = subprocess.run(["bash", "-c", f"source {lib}; _flow_broken_file"],
+                                  capture_output=True, text=True, env=env).stdout
+            Path(d, "state").mkdir(exist_ok=True)
+            there = subprocess.run(["bash", "-c", f"source {lib}; _flow_broken_file"],
+                                   capture_output=True, text=True, env=env).stdout
+        self.assertEqual(here, there)
+
     def test_the_block_survives_into_the_next_process(self):
         """The skill runs `device_wda.sh tap` once per tap, as its own process.
 

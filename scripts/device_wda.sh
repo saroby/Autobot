@@ -59,26 +59,29 @@ _TAP_REVERTING=0
 # Resolved lazily: CLONE_STATE_DIR is defined further down, and under `set -u`
 # reading it up here aborted the whole script at source time.
 # A fact about ONE flow log, so it is named after that log — a fixed path leaked
-# between runs writing different logs. Beside the log when that directory is
-# usable; otherwise in the state dir under a digest of the log path, because the
-# case that sets this sentinel is often "the log's directory is unwritable", and
-# a sentinel that cannot be written is no sentinel at all.
+# between runs writing different logs. The location does NOT depend on whether
+# anything is writable: a path that moves when a directory's permissions change
+# can hide a marker that already exists, which is the one thing a sentinel must
+# never do.
 _flow_broken_file() {
-  local log dir
+  local log
   log="${CLONE_FLOW_LOG:-${CLONE_STATE_DIR:-$PWD/.autobot/clone}/flow.jsonl}"
-  dir="$(dirname "$log")"
-  if [[ -d "$dir" && -w "$dir" ]]; then
-    printf '%s.broken' "$log"
-    return 0
-  fi
   printf '%s/broken-%s' "${CLONE_STATE_DIR:-$PWD/.autobot/clone}" \
     "$(printf '%s' "$log" | shasum 2>/dev/null | cut -c1-12)"
 }
 _flow_is_broken() { [[ -f "$(_flow_broken_file)" ]]; }
+# Returns non-zero when the marker could not be created. That is not a detail to
+# swallow: if the fact cannot be recorded, the next process cannot learn it, and
+# the budget stops binding without anyone being told.
 _flow_mark_broken() {
   local f; f="$(_flow_broken_file)"
   mkdir -p "$(dirname "$f")" 2>/dev/null || true
-  : > "$f" 2>/dev/null || true
+  if : > "$f" 2>/dev/null && [[ -f "$f" ]]; then
+    return 0
+  fi
+  echo "ERROR: could not record that the log is broken ($f) — nothing can enforce" >&2
+  echo "ERROR:   the tap budget from here. Stop the run." >&2
+  return 1
 }
 
 # Probing a switch is only allowed where the revert lives. `explore` flips one
@@ -1552,7 +1555,10 @@ _flow_event() {
     # can still stop.
     echo "ERROR: could not append this tap to ${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}" >&2
     echo "ERROR:   the tap budget is counted from that log, so no further tap is allowed." >&2
-    _flow_mark_broken
+    # If even the marker cannot be written, this process is the last thing that
+    # knows — so it fails, loudly, rather than returning OK into a run whose
+    # ceiling has quietly stopped existing.
+    _flow_mark_broken || return 1
     return 0
   fi
   echo "WARN: could not append to the exploration log (${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}) — flow map and resume will be incomplete"
