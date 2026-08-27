@@ -53,8 +53,38 @@ set -euo pipefail
 # revert path inside this script may set it.
 _TAP_REVERTING=0
 # Set when a tap could not be written to the flow log; the budget is blind after
-# that, so no further tap is allowed.
-_FLOW_BROKEN=0
+# that, so no further tap is allowed. It lives in a FILE, not a variable: the
+# skill runs `device_wda.sh tap` as its own process per tap, so an in-memory
+# flag died with the process that set it and the next tap started clean.
+# Resolved lazily: CLONE_STATE_DIR is defined further down, and under `set -u`
+# reading it up here aborted the whole script at source time.
+# A fact about ONE flow log, so it is named after that log — a fixed path leaked
+# between runs writing different logs. Beside the log when that directory is
+# usable; otherwise in the state dir under a digest of the log path, because the
+# case that sets this sentinel is often "the log's directory is unwritable", and
+# a sentinel that cannot be written is no sentinel at all.
+_flow_broken_file() {
+  local log dir
+  log="${CLONE_FLOW_LOG:-${CLONE_STATE_DIR:-$PWD/.autobot/clone}/flow.jsonl}"
+  dir="$(dirname "$log")"
+  if [[ -d "$dir" && -w "$dir" ]]; then
+    printf '%s.broken' "$log"
+    return 0
+  fi
+  printf '%s/broken-%s' "${CLONE_STATE_DIR:-$PWD/.autobot/clone}" \
+    "$(printf '%s' "$log" | shasum 2>/dev/null | cut -c1-12)"
+}
+_flow_is_broken() { [[ -f "$(_flow_broken_file)" ]]; }
+_flow_mark_broken() {
+  local f; f="$(_flow_broken_file)"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || true
+  : > "$f" 2>/dev/null || true
+}
+
+# Probing a switch is only allowed where the revert lives. `explore` flips one
+# and flips it straight back; a direct `tap`/`step` has no such second half, so
+# with CLONE_PROBE_SWITCHES=1 it would leave the user's setting changed.
+_PROBE_CONTEXT=0
 
 APPIUM_URL="${APPIUM_URL:-http://127.0.0.1:4723}"
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1338,12 +1368,16 @@ _budget_allows() {
   # A revert is not exploration, it is putting something back. Refusing it on
   # a spent budget leaves the user's switch flipped — worse than the tap the
   # budget was protecting them from.
-  if [[ "${_FLOW_BROKEN:-0}" == "1" ]]; then
-    echo "ERROR: a previous tap could not be logged — the budget cannot bind. Stop." >&2
-    return 1
-  fi
+  # The revert is checked FIRST. Ordering the sentinel above it meant a toggle
+  # whose forward tap failed to log could not be flipped back — the guard
+  # stranded the very setting it exists to protect.
   if [[ "${_TAP_REVERTING:-0}" == "1" ]]; then
     return 0
+  fi
+  if _flow_is_broken; then
+    echo "ERROR: a tap could not be logged ($(_flow_broken_file)) — the budget cannot bind." >&2
+    echo "ERROR:   fix the log path and remove that file before exploring further." >&2
+    return 1
   fi
   spent="$(_taps_spent)"
   if [[ "$spent" -lt 0 ]]; then
@@ -1518,7 +1552,7 @@ _flow_event() {
     # can still stop.
     echo "ERROR: could not append this tap to ${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}" >&2
     echo "ERROR:   the tap budget is counted from that log, so no further tap is allowed." >&2
-    _FLOW_BROKEN=1
+    _flow_mark_broken
     return 0
   fi
   echo "WARN: could not append to the exploration log (${CLONE_FLOW_LOG:-.autobot/clone/flow.jsonl}) — flow map and resume will be incomplete"
@@ -1607,7 +1641,14 @@ _perform_tap_and_settle() {
   # with one left meant the revert hit the ceiling and the run ended with the
   # user's setting changed — the first version of this check did exactly that.
   local _need=1
-  [[ "${_TAP_EFFECT:-}" == toggle ]] && _need=2
+  if [[ "${_TAP_EFFECT:-}" == toggle ]]; then
+    if [[ "${_PROBE_CONTEXT:-0}" != "1" && "${_TAP_REVERTING:-0}" != "1" ]]; then
+      echo "ERROR: '$_TAP_LABEL' is a switch, and only 'explore' flips one — it is the" >&2
+      echo "ERROR:   only path that flips it back. Leave the user's setting alone." >&2
+      return 1
+    fi
+    _need=2
+  fi
   _budget_allows "$_need" || return 1
   _TAP_TO_SIG="$_TAP_PLANNED"
   _TAP_TO_KEY=""
@@ -1680,8 +1721,13 @@ _perform_tap_and_settle() {
 # had it: `tap` is what the skill's own loop uses, so a tap onto an app-switch
 # control wrote the OTHER app's state into this app's graph.
 # Returns 0 when still on target; prints the foreign bundle otherwise.
+# `strict` (the default, used by taps): an unanswerable active-app query counts
+# as "left" — the query fails exactly when the session is dying or another app
+# is in front, which is what this catches. Swipes pass `lenient`: a gesture is
+# not a deliberate hand-off, and stopping every swipe on a transport hiccup
+# would end exploration on the first blip.
 _landed_elsewhere() {
-  local sid="$1" landed expected
+  local sid="$1" mode="${2:-strict}" landed expected
   landed="$(_active_target "$sid" || true)"
   expected="$(_cached_session_bundle "$sid" || _session_target "$sid" || true)"
   if [[ -z "$expected" ]]; then
@@ -1691,6 +1737,10 @@ _landed_elsewhere() {
   # is dying or another app is in front, which are exactly the cases this
   # exists to catch — reading it as success made the check fail open.
   if [[ -z "$landed" ]]; then
+    if [[ "$mode" == lenient ]]; then
+      echo "WARN: could not read the foreground app after the gesture — continuing" >&2
+      return 0
+    fi
     printf 'unknown'
     return 1
   fi
@@ -1930,6 +1980,15 @@ cmd_swipe() {
     prev_sig="$to_sig"
   done
   [[ "$settled" == true ]] || echo "INFO: the screen was still moving after $i poll(s) — destination evidence may be mid-scroll" >&2
+  # A swipe can leave the app too — the home-indicator gesture, the top system
+  # UI, an iPad multitasking swipe. Only `tap` checked, so a swipe that landed
+  # elsewhere wrote the OTHER app's tree in as a state of the target.
+  local swipe_landed=""
+  if ! swipe_landed="$(_landed_elsewhere "$sid" lenient)"; then
+    rm -f "$before_tree" "$after_tree"
+    echo "ERROR: the swipe left the app for $swipe_landed — nothing recorded; re-activate the target" >&2
+    return 3
+  fi
   # `changed` decides whether device_flow.py demands a durable destination
   # capture, so a false positive becomes a coverage gap that can never be closed
   # and a false negative loses a screen. The label set (`sig`) answers neither
@@ -2239,6 +2298,7 @@ cmd_explore() {
     echo "INFO: $spent/$budget taps already spent — this run may make $remaining more" >&2
     max_steps="$remaining"
   fi
+  _PROBE_CONTEXT=1
   n="$(_next_auto_index "$outdir")"
   name="$(printf 'auto-%04d' "$n")"
   cmd_screen "$sid" "$outdir" "$name" || return 1

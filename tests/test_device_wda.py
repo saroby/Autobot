@@ -2204,6 +2204,44 @@ class TestFlowLogging(unittest.TestCase):
             r = self._call("/nonexistent/deep/flow.jsonl", Path(d))
         self.assertEqual(r.returncode, 0)
 
+    def test_the_block_survives_into_the_next_process(self):
+        """The skill runs `device_wda.sh tap` once per tap, as its own process.
+
+        An in-memory flag died with the process that set it, so the next tap
+        started clean and the ceiling quietly came back. The first version of
+        this test called both halves in one sourced shell and proved nothing.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d) / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            env = {**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl",
+                   "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl"}
+            first = subprocess.run(["bash", "-c", f"source {lib}; _flow_event tap from=a to=b"],
+                                   capture_output=True, text=True, env=env)
+            self.assertIn("ERROR: could not append this tap", first.stderr)
+            # A SEPARATE process, as the skill's loop actually runs it.
+            second = subprocess.run(
+                ["bash", "-c", f"source {lib}; _budget_allows && echo ALLOWED || echo REFUSED"],
+                capture_output=True, text=True, env=env)
+            self.assertIn("REFUSED", second.stdout)
+
+    def test_a_revert_is_still_allowed_after_a_logging_failure(self):
+        # Ordering the sentinel above the revert exemption stranded the very
+        # setting the guard exists to put back.
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d) / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+            broken = Path(d) / "flow.jsonl.broken"
+            broken.touch()
+            r = subprocess.run(
+                ["bash", "-c",
+                 f"source {lib}; _TAP_REVERTING=1; _budget_allows && echo ALLOWED || echo REFUSED"],
+                capture_output=True, text=True,
+                env={**os.environ, "CLONE_FLOW_LOG": str(Path(d) / "flow.jsonl")})
+        self.assertIn("ALLOWED", r.stdout)
+
     def test_an_unwritable_log_is_an_error_for_a_tap_and_blocks_the_next_one(self):
         # The cumulative budget is counted FROM this log. A tap that does not
         # reach it is a tap the ceiling cannot see, so the ceiling stops
@@ -2216,12 +2254,12 @@ class TestFlowLogging(unittest.TestCase):
             r = subprocess.run(
                 ["bash", "-c",
                  f"source {lib}; _flow_event tap from=a to=b; "
-                 f"echo BROKEN=$_FLOW_BROKEN; _budget_allows && echo ALLOWED || echo REFUSED"],
+                 f"_budget_allows && echo ALLOWED || echo REFUSED"],
                 capture_output=True, text=True,
-                env={**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl"},
+                env={**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl",
+                     "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl"},
             )
         self.assertIn("ERROR: could not append this tap", r.stderr)
-        self.assertIn("BROKEN=1", r.stdout)
         self.assertIn("REFUSED", r.stdout)
 
     def test_a_screen_event_that_cannot_be_logged_is_only_a_warning(self):
@@ -2232,12 +2270,13 @@ class TestFlowLogging(unittest.TestCase):
                            encoding="utf-8")
             r = subprocess.run(
                 ["bash", "-c", f"source {lib}; _flow_event screen node=a; "
-                               f"echo BROKEN=$_FLOW_BROKEN"],
+                               f"_flow_is_broken && echo BROKEN || echo CLEAN"],
                 capture_output=True, text=True,
-                env={**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl"},
+                env={**os.environ, "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl",
+                     "CLONE_FLOW_LOG": "/nonexistent/deep/flow.jsonl"},
             )
         self.assertIn("WARN: could not append", r.stdout)
-        self.assertIn("BROKEN=0", r.stdout)
+        self.assertIn("CLEAN", r.stdout)
 
     def test_the_revert_exemption_cannot_be_granted_from_outside(self):
         # `_TAP_REVERTING=1` lifts the budget. Inheriting it from the caller's

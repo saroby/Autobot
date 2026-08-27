@@ -198,6 +198,11 @@ def capture_gaps(events: list[dict], rows: list[dict] | None = None) -> dict[str
     for index, action in enumerate(events):
         if action.get("type") not in ("tap", "swipe"):
             continue
+        # An unstable action never settled, so there is no destination to demand
+        # evidence for — leaving it in made a transient failure an unclosable
+        # gap that blocked completeness even after the screen was re-explored.
+        if action.get("evidence") == "unstable":
+            continue
         if not changed(action):
             continue
         destination = action_destination(action)
@@ -671,7 +676,7 @@ def _edges(events: list[dict]) -> list[tuple[str, str, str, float, float]]:
     say it.
     """
     seen, out = set(), []
-    for t in taps(events):
+    for t in explored_taps(events):
         edge = (action_source(t) or "?", action_destination(t), t.get("label", "?"))
         if edge not in seen and changed(t):
             seen.add(edge)
