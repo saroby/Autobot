@@ -1149,6 +1149,9 @@ open(sys.argv[1], 'w', encoding='utf-8').write(json.load(sys.stdin)['value'])" "
   key="$(_key_of "$xml" || true)"
   if [[ -n "$key" ]]; then
     echo "INFO: nodekey $key"
+    # The skill tells the agent to judge "same screen?" by statekey, so statekey
+    # has to be on stdout. It was only ever written to the flow log.
+    echo "INFO: statekey $(_state_of "$xml" 2>/dev/null || echo '?')"
     _flow_event screen "node=$key" "statekey=$(_state_of "$xml")" \
       "sig=$(_sig_of "$xml")" "name=$name" "tree=$xml" "png=$png"
   fi
@@ -1283,19 +1286,28 @@ print('%dx%d' % struct.unpack('>II', head[16:24]) if head[:8] == b'\x89PNG\r\n\x
 _taps_spent() {
   local flow="${1:-${CLONE_FLOW_LOG:-$CLONE_STATE_DIR/flow.jsonl}}" n
   [[ -s "$flow" ]] || { echo 0; return 0; }
+  # Fail CLOSED on a log this cannot read. A skipped bad line silently lowers
+  # the count, which raises the real ceiling on someone's account — and
+  # device_flow.py rejects the same log outright, so a run that kept tapping
+  # here could not be resumed or audited anyway.
   n="$(python3 -c '
 import json, sys
 n = 0
-for line in open(sys.argv[1], encoding="utf-8"):
+for number, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
     line = line.strip()
     if not line:
         continue
     try:
         n += json.loads(line).get("type") == "tap"
     except ValueError:
-        pass
-print(n)' "$flow" 2>/dev/null)" || n=0
-  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+        sys.exit("unreadable line %d" % number)
+print(n)' "$flow" 2>/dev/null)" || n=""
+  if [[ ! "$n" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: cannot read the flow log '$flow' — the tap budget cannot be counted." >&2
+    echo "ERROR:   fix or remove it; exploring past an unreadable log is untracked." >&2
+    echo "-1"
+    return 0
+  fi
   echo "$n"
 }
 
@@ -1306,6 +1318,9 @@ print(n)' "$flow" 2>/dev/null)" || n=0
 _budget_allows() {
   local budget="${CLONE_TAP_BUDGET:-25}" spent
   spent="$(_taps_spent)"
+  if [[ "$spent" -lt 0 ]]; then
+    return 1
+  fi
   if [[ "$spent" -ge "$budget" ]]; then
     echo "ERROR: tap budget spent ($spent/$budget cumulative) — stop exploring." >&2
     echo "ERROR:   raise CLONE_TAP_BUDGET, or clear the flow log to start a new target." >&2
@@ -1538,10 +1553,16 @@ _perform_tap_and_settle() {
   local require_source="${5:-0}" tries="${CLONE_TAP_SETTLE_TRIES:-10}" i=0
   [[ "$tries" =~ ^[0-9]+$ ]] || tries=10
   [[ "$require_source" != "1" || "$tries" -gt 0 ]] || tries=1
+  # EVERY tap path lands here — `tap`, `step`, `back`, and explore's inner loop.
+  # The budget lived on `cmd_tap` alone, so `step` walked around it, and the
+  # skill's own docs said the two were interchangeable. A limit on someone's
+  # real account has to bind the action, not one spelling of it.
+  _budget_allows || return 1
   _TAP_TO_SIG="$_TAP_PLANNED"
   _TAP_TO_KEY=""
   _TAP_TO_STATE=""
   _TAP_CHANGED=false
+  _TAP_LEFT_APP=false
   rm -f "$to_tree"
   if ! _actions "$sid" "$(printf '{"actions":[{"type":"pointer","id":"finger1","parameters":{"pointerType":"touch"},"actions":[{"type":"pointerMove","duration":0,"x":%s,"y":%s},{"type":"pointerDown","button":0},{"type":"pause","duration":60},{"type":"pointerUp","button":0}]}]}' "$x" "$y")"; then
     return 1
@@ -1605,6 +1626,21 @@ _perform_tap_and_settle() {
   return 0
 }
 
+# Did the tap leave the target app? Both tap paths need this, and only `step`
+# had it: `tap` is what the skill's own loop uses, so a tap onto an app-switch
+# control wrote the OTHER app's state into this app's graph.
+# Returns 0 when still on target; prints the foreign bundle otherwise.
+_landed_elsewhere() {
+  local sid="$1" landed expected
+  landed="$(_active_target "$sid" || true)"
+  expected="$(_cached_session_bundle "$sid" || _session_target "$sid" || true)"
+  if [[ -n "$landed" && -n "$expected" && "$landed" != "$expected" ]]; then
+    printf '%s' "$landed"
+    return 1
+  fi
+  return 0
+}
+
 _record_tap_transition() {
   local x="$1" y="$2"
   shift 2
@@ -1637,6 +1673,19 @@ cmd_tap() {
     fi
     rm -f "$to_tree"
     return 1
+  fi
+  local landed=""
+  if ! landed="$(_landed_elsewhere "$sid")"; then
+    # Same reasoning as `step`: the settle loop already read the OTHER app's
+    # tree into these globals, and leaving them records a destination state of
+    # the target that does not exist.
+    _TAP_TO_KEY=""
+    _TAP_TO_STATE=""
+    _TAP_CHANGED=false
+    _record_tap_transition "$x" "$y" "left_app=$landed" "evidence=foreign-app"
+    rm -f "$to_tree"
+    echo "ERROR: '$_TAP_LABEL' left the app for $landed — re-activate the target before continuing" >&2
+    return 3
   fi
   _record_tap_transition "$x" "$y"
   rm -f "$to_tree"
@@ -1684,11 +1733,8 @@ cmd_step() {
   # and mapped to a SwiftUI view as though it were a screen of the app being
   # cloned. Record the exit as a transition, keep no screen evidence for it, and
   # return 3 so the caller can re-activate the target and carry on.
-  local landed
-  landed="$(_active_target "$sid" || true)"
-  local expected
-  expected="$(_cached_session_bundle "$sid" || _session_target "$sid" || true)"
-  if [[ -n "$landed" && -n "$expected" && "$landed" != "$expected" ]]; then
+  local landed=""
+  if ! landed="$(_landed_elsewhere "$sid")"; then
     # The settle loop already read the OTHER app's tree into these globals. Left
     # as they are, the exit records a destination state of the target that does
     # not exist: `observed_edges` would route toward it and `capture_gaps` would
@@ -1699,7 +1745,7 @@ cmd_step() {
     _TAP_CHANGED=false
     _record_tap_transition "$x" "$y" "left_app=$landed" "evidence=foreign-app"
     rm -f "$xml_tmp" "$png_tmp"
-    echo "ERROR: '$_TAP_LABEL' left the app for $landed — not recording its screen as a state of $expected" >&2
+    echo "ERROR: '$_TAP_LABEL' left the app for $landed — not recording its screen as a state of the target" >&2
     return 3
   fi
   if [[ ! -s "$xml_tmp" ]]; then
