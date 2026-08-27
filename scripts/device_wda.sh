@@ -1203,6 +1203,15 @@ cmd_back() {
     echo "ERROR: back tap at $x,$y did not settle" >&2
     return 1
   fi
+  local landed=""
+  if ! landed="$(_landed_elsewhere "$sid")"; then
+    _TAP_TO_KEY=""
+    _TAP_TO_STATE=""
+    _TAP_CHANGED=false
+    _record_tap_transition "$x" "$y" "left_app=$landed" "evidence=foreign-app" "via=back"
+    echo "ERROR: the leading nav control left the app for $landed — re-activate the target" >&2
+    return 3
+  fi
   _record_tap_transition "$x" "$y" "via=back"
   echo "OK: back tapped $x,$y"
   [[ "$_TAP_CHANGED" == true ]] || echo "INFO: screen did not change — that slot was not a back control"
@@ -1316,13 +1325,19 @@ print(n)' "$flow" 2>/dev/null)" || n=""
 # uses low-level `tap`, so a budget enforced only in `explore` was a budget the
 # actual /autobot:copy run never met.
 _budget_allows() {
-  local budget="${CLONE_TAP_BUDGET:-25}" spent
+  local need="${1:-1}" budget="${CLONE_TAP_BUDGET:-25}" spent
+  # A revert is not exploration, it is putting something back. Refusing it on
+  # a spent budget leaves the user's switch flipped — worse than the tap the
+  # budget was protecting them from.
+  if [[ "${_TAP_REVERTING:-0}" == "1" ]]; then
+    return 0
+  fi
   spent="$(_taps_spent)"
   if [[ "$spent" -lt 0 ]]; then
     return 1
   fi
-  if [[ "$spent" -ge "$budget" ]]; then
-    echo "ERROR: tap budget spent ($spent/$budget cumulative) — stop exploring." >&2
+  if [[ $(( spent + need )) -gt "$budget" ]]; then
+    echo "ERROR: tap budget spent ($spent/$budget cumulative, this action needs $need) — stop exploring." >&2
     echo "ERROR:   raise CLONE_TAP_BUDGET, or clear the flow log to start a new target." >&2
     return 1
   fi
@@ -1557,12 +1572,17 @@ _perform_tap_and_settle() {
   # The budget lived on `cmd_tap` alone, so `step` walked around it, and the
   # skill's own docs said the two were interchangeable. A limit on someone's
   # real account has to bind the action, not one spelling of it.
-  _budget_allows || return 1
+  #
+  # A toggle costs TWO: the flip and the flip back. Allowing the forward tap
+  # with one left meant the revert hit the ceiling and the run ended with the
+  # user's setting changed — the first version of this check did exactly that.
+  local _need=1
+  [[ "${_TAP_EFFECT:-}" == toggle ]] && _need=2
+  _budget_allows "$_need" || return 1
   _TAP_TO_SIG="$_TAP_PLANNED"
   _TAP_TO_KEY=""
   _TAP_TO_STATE=""
   _TAP_CHANGED=false
-  _TAP_LEFT_APP=false
   rm -f "$to_tree"
   if ! _actions "$sid" "$(printf '{"actions":[{"type":"pointer","id":"finger1","parameters":{"pointerType":"touch"},"actions":[{"type":"pointerMove","duration":0,"x":%s,"y":%s},{"type":"pointerDown","button":0},{"type":"pause","duration":60},{"type":"pointerUp","button":0}]}]}' "$x" "$y")"; then
     return 1
@@ -1662,7 +1682,6 @@ cmd_tap() {
     echo "ERROR: no such tree '$tree' — capture the screen first with 'screen'" >&2
     return 1
   fi
-  _budget_allows || return 1
   _prepare_tap "$sid" "$x" "$y" "$tree" || return $?
   to_tree="$(mktemp -t device_wda)"
   local settle_status=0
@@ -2164,6 +2183,9 @@ cmd_explore() {
   # exceed the cap, whatever `max_steps` says about THIS run.
   local budget="${CLONE_TAP_BUDGET:-25}" spent
   spent="$(_taps_spent "$flow")"
+  if [[ "$spent" -lt 0 ]]; then
+    return 1
+  fi
   if [[ "$spent" -ge "$budget" ]]; then
     echo "OK: tap budget spent ($spent/$budget cumulative in $flow) — exploration is done." >&2
     echo "INFO: raise CLONE_TAP_BUDGET, or clear the log to start a new target." >&2
@@ -2325,7 +2347,11 @@ cmd_explore() {
       local revert_state="$_TAP_FROM_STATE" revert_behavior="$_TAP_BEHAVIOR" revert_label="$_TAP_LABEL"
       n=$((n + 1))
       name="$(printf 'auto-%04d' "$n")"
-      if cmd_step "$sid" "$x" "$y" "$tree" "$outdir" "$name" "via=revert"; then
+      local revert_rc=0
+      _TAP_REVERTING=1
+      cmd_step "$sid" "$x" "$y" "$tree" "$outdir" "$name" "via=revert" || revert_rc=$?
+      _TAP_REVERTING=0
+      if [[ "$revert_rc" -eq 0 ]]; then
         if [[ -z "$revert_state" || "$_TAP_TO_STATE" != "$revert_state" ||
               "$_TAP_BEHAVIOR" != "$revert_behavior" || "$_TAP_LABEL" != "$revert_label" ]]; then
           echo "ERROR: revert did not prove that '$revert_label' returned to its original state — stopping with the device setting potentially changed" >&2

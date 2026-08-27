@@ -775,3 +775,41 @@ class TestAudit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnstableTapsAreNotExplored(FlowCase):
+    """A session dying right after a tap is the ordinary end of a real run.
+
+    The driver records that tap with `evidence=unstable`: it never settled, so
+    nobody knows where it went. Counting it as explored retired the candidate
+    permanently — the next run would not re-offer it, and coverage could reach
+    "complete" over a screen nothing ever looked at.
+    """
+
+    def unstable(self) -> dict:
+        return {"type": "tap", "from": "n1", "to": "n1", "label": "가",
+                "x": "50", "y": "120", "changed": "false", "evidence": "unstable"}
+
+    def test_the_candidate_stays_on_the_queue(self):
+        self.write([self.screen(), self.unstable()])
+        r = self.run_flow("next", str(self.log))
+        self.assertIn("| 가", r.stdout)
+
+    def test_a_settled_tap_still_retires_its_candidate(self):
+        settled = dict(self.unstable())
+        del settled["evidence"]
+        self.write([self.screen(), settled])
+        self.assertNotIn("| 가", self.run_flow("next", str(self.log)).stdout)
+
+    def test_stats_says_how_many_never_settled(self):
+        self.write([self.screen(), self.unstable()])
+        r = self.run_flow("stats", str(self.log))
+        self.assertIn("1 tap(s) never settled", r.stdout)
+        # And it is not counted as a no-op: nobody watched it do nothing.
+        self.assertNotIn("no-op taps 1", r.stdout)
+
+    def test_an_unstable_tap_still_counts_against_the_budget(self):
+        # It happened on the user's device, whatever came of it.
+        self.write([self.screen(), self.unstable()])
+        self.assertEqual(len(DEVICE_FLOW.taps(DEVICE_FLOW.load(str(self.log)))), 1)
+        self.assertEqual(len(DEVICE_FLOW.explored_taps(DEVICE_FLOW.load(str(self.log)))), 0)

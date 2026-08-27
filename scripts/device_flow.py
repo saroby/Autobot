@@ -159,7 +159,24 @@ def screen_captures(events: list[dict]) -> "OrderedDict[str, list[dict]]":
 
 
 def taps(events: list[dict]) -> list[dict]:
+    """Every tap, including the ones whose outcome was never observed.
+
+    This is the audit and budget view: a tap that happened, happened, whatever
+    came of it.
+    """
     return [e for e in events if e.get("type") == "tap"]
+
+
+def explored_taps(events: list[dict]) -> list[dict]:
+    """Taps whose destination was actually seen.
+
+    A session dying right after a tap is the ordinary end of a real-device run,
+    not an exception. The driver records that tap with `evidence=unstable` —
+    it never settled, so nobody knows where it went. Counting it as explored
+    retired the candidate permanently: the next run would not re-offer it, and
+    coverage could reach "complete" over a screen nothing ever looked at.
+    """
+    return [t for t in taps(events) if t.get("evidence") != "unstable"]
 
 
 def changed(tap: dict) -> bool:
@@ -258,7 +275,7 @@ def candidates_of(tree: str) -> list[tuple[int, int, str]]:
 def frontier(events: list[dict]) -> list[dict]:
     """Per state: raw target and normalized behavior-class coverage."""
     tapped: dict[str, list] = {}
-    for t in taps(events):
+    for t in explored_taps(events):
         tapped.setdefault(action_source(t), []).append(
             (t.get("label", "?"), int(t["x"]), int(t["y"]), t.get("behavior")))
     out = []
@@ -356,7 +373,7 @@ def unexplored(records: list[dict], events: list[dict], state: str) -> list[dict
     (38,71) across two captures of one screen.
     """
     done = [(t.get("label", "?"), int(t["x"]), int(t["y"]), t.get("behavior"))
-            for t in taps(events) if action_source(t) == state]
+            for t in explored_taps(events) if action_source(t) == state]
     done_behaviors = {str(behavior) for _lab, _x, _y, behavior in done if behavior}
     emitted: set[str] = set()
     out = []
@@ -607,8 +624,15 @@ def cmd_stats(path: str) -> int:
     behavior_total = sum(r["behavior_total"] for r in rows)
     behavior_todo = sum(len(r["todo"]) for r in rows)
     withheld = sum(r["withheld"] for r in rows)
-    dead = [t for t in taps(events) if not changed(t)]
+    # An unstable tap is not a no-op — nobody watched it. Counting it as one
+    # reported "this target changes nothing" about a target never observed.
+    dead = [t for t in explored_taps(events) if not changed(t)]
+    unstable = len(taps(events)) - len(explored_taps(events))
     gaps = capture_gaps(events, rows)
+    if unstable:
+        print(f"WARN: {unstable} tap(s) never settled (session died or the screen kept "
+              "moving) — their targets stay unexplored, and their destinations were "
+              "never seen")
     print(f"INFO: screens {len(rows)}")
     print(f"INFO: targets {total - raw_todo}/{total} explored, {raw_todo} left")
     print(f"INFO: behavior classes {behavior_total - behavior_todo}/{behavior_total} explored, "
