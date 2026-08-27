@@ -136,6 +136,17 @@ STATE_CHANGING = (
         r"\d[\d,.]*\s*(?:피스|코인|크레딧|캐시|젬|다이아|포인트|골드|루비)"
         r"|[₩$€£¥]\s*\d"
         r"|\d[\d,.]*\s*(?:coins?|credits?|gems?|tokens?|points?|pieces?|diamonds?)\b", re.I)),
+    # Leaving for another app is currently detected AFTER the tap, by noticing a
+    # foreign bundle in the foreground and re-activating the target. Detecting it
+    # first is strictly better: the exit still costs a tap, a settle, a wasted
+    # capture, and whatever the other app did on open (a deep link can act).
+    # Korean particles attach to the preceding word with no space — the label is
+    # `Instagram으로 전환`, not `Instagram 으로 전환` — so these must NOT be
+    # anchored with \s before the particle.
+    ("leaving-app", re.compile(
+        r"(?:으로|로)\s*전환(?:하기)?$|에서\s*(?:열기|보기)$"
+        r"|^(?:open in|open with|continue (?:in|with)|switch to|view in)\b"
+        r"|\bapp\s?store\b|\bsafari\b|\bbrowser\b", re.I)),
     # Opening the system share sheet can send the post out of the app entirely,
     # and it replaces the target app in the foreground.
     # The Korean noun precedes the verb, so anchoring at ^ missed every real
@@ -578,6 +589,16 @@ def _behavior_fingerprint(els: list[dict], index: int, classification: dict) -> 
     return hashlib.sha1(source.encode()).hexdigest()[:12]
 
 
+def _ancestors(els: list[dict], index: int) -> list[int]:
+    """Every ancestor index of `els[index]`, nearest first (self excluded)."""
+    out, parent, guard = [], els[index]["parent"], 0
+    while parent is not None and 0 <= parent < len(els) and guard < len(els):
+        out.append(parent)
+        parent = els[parent]["parent"]
+        guard += 1
+    return out
+
+
 def _candidate_meta(item: dict, withheld: bool) -> str:
     state_changing = str(item["classification"]["state_changing"]).lower()
     return (
@@ -663,10 +684,17 @@ def candidates(els: list[dict]) -> None:
     bw, bh = bounds.get("width", 0), bounds.get("height", 0)
 
     if sheet:
-        escapes = [e for e in els
-                   if ESCAPE_LABEL.match((e["label"] or "").strip())
-                   and e["visible"] is not False and e["enabled"]
-                   and e["frame"]["width"] > 0 and e["frame"]["height"] > 0]
+        # Descendants of THIS sheet only. Scanning the whole tree offered a
+        # 취소 that belonged to the screen behind the sheet — a coordinate under
+        # the sheet, so the tap would land on the sheet anyway, at a spot nobody
+        # chose.
+        sheet_indexes = {id(e) for e in sheet}
+        inside = [i for i, e in enumerate(els)
+                  if any(id(els[a]) in sheet_indexes for a in _ancestors(els, i))]
+        escapes = [els[i] for i in inside
+                   if ESCAPE_LABEL.match((els[i]["label"] or "").strip())
+                   and els[i]["visible"] is not False and els[i]["enabled"]
+                   and els[i]["frame"]["width"] > 0 and els[i]["frame"]["height"] > 0]
         print(f"WARN: sheet on screen ({sheet[0]['label'] or sheet[0]['role']}) — "
               "only the way out is offered; open it again yourself if you need what is inside")
         for e in escapes:
@@ -788,8 +816,10 @@ def verify(els: list[dict], x: int, y: int) -> int:
     return 1
 
 
-# The way out of a sheet. Deliberately narrow — these close, they do not commit.
-ESCAPE_LABEL = re.compile(r"^(취소|닫기|완료|확인)$|^(cancel|close|done|dismiss|ok)$", re.I)
+# The way out of a sheet, and NOTHING else. 확인/완료/OK/Done were here and had
+# to go: on a sheet those commit — a form saves, a selection applies, a purchase
+# confirms. Only words that mean "leave without doing it" belong.
+ESCAPE_LABEL = re.compile(r"^(취소|닫기|뒤로)$|^(cancel|close|dismiss|back)$", re.I)
 
 
 BACK_LABEL = re.compile(r"^(뒤로|뒤로 가기|돌아가기|닫기|취소)$|^(back|go back|close|cancel|done)$", re.I)

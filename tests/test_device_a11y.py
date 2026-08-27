@@ -1018,3 +1018,25 @@ class TestSheetEscape(unittest.TestCase):
                        + node("Button", "취소", 20, 760, 335, 44))
         self.assertIn("WARN: alert/sheet on screen", r.stdout)
         self.assertIn("OK: 0 tappable, 0 withheld", r.stdout)
+
+
+class TestLeavingTheApp(unittest.TestCase):
+    """Leaving for another app was detected only AFTER the tap.
+
+    Recovery works, but the exit still costs a tap, a settle, a wasted capture,
+    and whatever the other app did on open — a deep link can act.
+    """
+
+    def test_app_switch_labels_are_withheld(self):
+        # Korean particles attach to the preceding word with no space, so an
+        # \\s-anchored pattern matches none of these.
+        for label in ("Instagram으로 전환", "App Store에서 열기", "브라우저에서 보기",
+                      "Open in Safari", "Switch to Threads", "Continue in Chrome"):
+            with self.subTest(label=label):
+                r = idb([ROOT, el(label, 0, 200)])
+                self.assertIn("OK: 0 tappable, 1 withheld", r.stdout)
+                self.assertIn("effect=leaving-app", r.stdout)
+
+    def test_labels_that_only_look_like_a_switch_are_navigation(self):
+        r = idb([ROOT, el("전환 안내", 0, 200), el("열기", 0, 260), el("홈", 0, 320)])
+        self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)

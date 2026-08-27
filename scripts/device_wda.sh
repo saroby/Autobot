@@ -2075,6 +2075,25 @@ cmd_explore() {
   local n name tree next_out line kind x y rc steps=0 route_hops=0 stale=0
   local max_restart="${CLONE_EXPLORE_MAX_RESTART:-8}"
   local scrolls=0 scrolled=0 left=0 restarts=0
+  # The contract's budget is CUMULATIVE taps on the target, not actions per
+  # run. Starting every run at zero — and telling the operator to re-run when a
+  # run ends — made "누적 탭 25회" unenforceable: three runs of 20 is 60 taps on
+  # someone's real account. Count what the log already spent and refuse to
+  # exceed the cap, whatever `max_steps` says about THIS run.
+  local budget="${CLONE_TAP_BUDGET:-25}" spent=0
+  if [[ -s "$flow" ]]; then
+    spent="$(grep -c '"type":"tap"' "$flow" 2>/dev/null || echo 0)"
+  fi
+  if [[ "$spent" -ge "$budget" ]]; then
+    echo "OK: tap budget spent ($spent/$budget cumulative in $flow) — exploration is done." >&2
+    echo "INFO: raise CLONE_TAP_BUDGET, or clear the log to start a new target." >&2
+    return 0
+  fi
+  local remaining=$(( budget - spent ))
+  if [[ "$max_steps" -gt "$remaining" ]]; then
+    echo "INFO: $spent/$budget taps already spent — this run may make $remaining more" >&2
+    max_steps="$remaining"
+  fi
   n="$(_next_auto_index "$outdir")"
   name="$(printf 'auto-%04d' "$n")"
   cmd_screen "$sid" "$outdir" "$name" || return 1

@@ -243,6 +243,9 @@ def candidate_records_of(tree: str) -> list[dict]:
         record.setdefault("category", "state-changing" if record["withheld"] else "navigation")
         record.setdefault("effect", "unknown" if record["withheld"] else "none")
         record.setdefault("state_changing", record["withheld"])
+        # Logs written before provenance existed carry no source; treat them as
+        # role-vouched so an old run resumes exactly as it did.
+        record.setdefault("source", "role")
     return found
 
 
@@ -423,13 +426,22 @@ def cmd_next_tap(path: str, tree: str) -> int:
         return 1
     events = load(path)
     records = candidate_records_of(tree)
-    todo = unexplored(records, events, state)
+    every = unexplored(records, events, state)
+    todo = [r for r in every if mechanically_tappable(r)]
     if todo:
         record = todo[0]
         print(f"INFO: next-tap {record['x']} {record['y']} | {record['label']}")
         print("INFO: kind frontier")
         print(f"OK: {len(todo)} unexplored safe candidate(s) on this screen")
         return 0
+    if every:
+        # Not "nothing left here" — "nothing left that a blind tap may take".
+        # Routing below may still cross this screen: a routing hop is an edge
+        # already tapped once and observed, which is a different risk from a
+        # first tap on a control nothing vouched for. These stay for the agent.
+        print(f"INFO: {len(every)} unexplored candidate(s) here are source=label — "
+              "the blind loop will never drain them; the agent must read the screen "
+              "and tap them itself")
     # frontier() re-reads every capture through device_a11y, so a routing hop
     # costs one full coverage pass. Bounded (CLONE_EXPLORE_MAX_ROUTE hops per
     # navigation) and small next to a tap plus settle on a real phone. If it
@@ -515,6 +527,21 @@ def _statekey_of(tree: str) -> str:
     return ""
 
 
+def mechanically_tappable(record: dict) -> bool:
+    """May the BLIND drainer tap this, with no eyes on the screen?
+
+    `source=label` means nothing but the element's own words classified it —
+    no role vouched for it. The label guards still ran, but a control the tree
+    will not name a role for is exactly the one whose words can be wrong, and
+    the mechanical loop has no screenshot to check them against. That check is
+    the LLM's job in the skill's own capture→judge→tap loop; a drainer that
+    cannot look does not get to guess. Set CLONE_TAP_UNVOUCHED=1 to override.
+    """
+    if os.environ.get("CLONE_TAP_UNVOUCHED") == "1":
+        return True
+    return record.get("source", "role") != "label"
+
+
 def cmd_todo(path: str, tree: str) -> int:
     """Unexplored safe candidates of one capture, one `INFO: todo x y | label` per line.
 
@@ -530,9 +557,14 @@ def cmd_todo(path: str, tree: str) -> int:
         print(f"ERROR: could not derive a state key from '{tree}'", file=sys.stderr)
         return 1
     events = load(path)
-    todo = unexplored(candidate_records_of(tree), events, state)
+    every = unexplored(candidate_records_of(tree), events, state)
+    todo = [r for r in every if mechanically_tappable(r)]
     for record in todo:
         print(f"INFO: todo {record['x']} {record['y']} | {record['label']}")
+    unvouched = len(every) - len(todo)
+    if unvouched:
+        print(f"WARN: {unvouched} unexplored candidate(s) held back — source=label, "
+              "no role vouched for them; the agent must read the screen and tap those itself")
     print(f"OK: {len(todo)} unexplored safe candidate(s) on this capture")
     return 0
 
