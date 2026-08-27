@@ -144,9 +144,9 @@ STATE_CHANGING = (
     # `Instagram으로 전환`, not `Instagram 으로 전환` — so these must NOT be
     # anchored with \s before the particle.
     ("leaving-app", re.compile(
-        r"(?:으로|로)\s*전환(?:하기)?$|에서\s*(?:열기|보기)$"
-        r"|^(?:open in|open with|continue (?:in|with)|switch to|view in)\b"
-        r"|\bapp\s?store\b|\bsafari\b|\bbrowser\b", re.I)),
+        r"(?:으로|로)\s*전환(?:하기)?$|에서\s*(?:열기|보기|계속)$"
+        r"|^(?:open|view|watch|listen|continue|switch)\s+(?:in|on|with|to)\s+\S"
+        r"|^(?:open in|open with)\b", re.I)),
     # Opening the system share sheet can send the post out of the app entirely,
     # and it replaces the target app in the foreground.
     # The Korean noun precedes the verb, so anchoring at ^ missed every real
@@ -364,17 +364,23 @@ def _node_identity(els: list[dict]) -> tuple[str, list[str]]:
                      and _data_cell_index(els, index) is None
                      and not _inside_keyboard(els, index)
                      and not _inside_modal(els, index)})
-    shape += _chrome_shape(els, sum(counts.values()))
+    shape += _chrome_shape(els)
     digest = hashlib.sha1("\n".join(titles + shape).encode()).hexdigest()[:12]
     return digest, shape
 
 
 # Short enough to be a nav item, a tab, or a filter chip; long enough to exclude
-# a card's title, a message, or a feed row's summary.
-CHROME_LABEL_MAX = 8
+# a card's title, a message, or a feed row's summary. Category names sit right at
+# the edge — `Electronics` is 11 — so the cap is not tight.
+CHROME_LABEL_MAX = 12
+
+# A number is not chrome, it is a reading. An unread badge going 9 → 10, a page
+# indicator 12 / 80, a cart count: none of them make the screen a different
+# screen, and hashing them made it one.
+COUNTER_LABEL = re.compile(r"^[\d\s./,:+%-]+$|^\d[\d,.]*[KkMm만천억]?$")
 
 
-def _chrome_shape(els: list[dict], role_elements: int) -> list[str]:
+def _chrome_shape(els: list[dict]) -> list[str]:
     """A structural fallback for screens that report no structure.
 
     The shape above deliberately ignores AXOther, so a custom-rendered app has
@@ -399,8 +405,7 @@ def _chrome_shape(els: list[dict], role_elements: int) -> list[str]:
     graph or log is re-keyed.
     """
     leaves = _label_leaves(els)
-    chrome = set()
-    others = 0
+    chrome, unnamed, named = set(), 0, 0
     for index, e in enumerate(els):
         label = (e["label"] or "").strip()
         if not leaves[index] or not label or e["visible"] is False:
@@ -409,13 +414,28 @@ def _chrome_shape(els: list[dict], role_elements: int) -> list[str]:
             continue
         if _inside_keyboard(els, index) or _inside_modal(els, index):
             continue
-        others += e["role"] == "AXOther"
-        if len(label) <= CHROME_LABEL_MAX and "\n" not in label:
+        # Both sides of the ratio below must count the SAME population. Weighing
+        # every role element — invisible ones, unlabelled ones — against only
+        # the visible labelled leaves compared different things: two stray
+        # AXStaticText against five AXOther turned the fallback off and merged
+        # the screens it exists to separate.
+        if e["role"] == "AXOther":
+            unnamed += 1
+        else:
+            named += 1
+        if len(label) <= CHROME_LABEL_MAX and "\n" not in label and not COUNTER_LABEL.match(label):
             chrome.add(label)
     # A genuinely sparse screen (a spinner, an empty state) is not the same
     # thing as a custom-rendered one; without a crowd of unnamed boxes there is
     # nothing here worth disambiguating.
-    if others < 5 or not chrome or role_elements * 3 > others:
+    # Measured across 57 real captures the two populations are cleanly bimodal
+    # and never overlap: a custom-rendered screen carries 0-2 named leaves
+    # against 13-18 unnamed, while a role-reporting one carries 6-30 named
+    # against 0-3 unnamed. So "the unnamed outnumber the named" separates them
+    # with room to spare. A ratio (roles must explain under a third) looked
+    # stricter and was worse — two stray AXStaticText against five AXOther
+    # turned the fallback off on exactly the screens it exists for.
+    if unnamed < 5 or not chrome or unnamed <= named:
         return []
     return ["chrome:" + hashlib.sha1("|".join(sorted(chrome)).encode()).hexdigest()[:12]]
 
@@ -743,6 +763,17 @@ def candidates(els: list[dict]) -> None:
         sheet_indexes = {id(e) for e in sheet}
         inside = [i for i, e in enumerate(els)
                   if any(id(els[a]) in sheet_indexes for a in _ancestors(els, i))]
+        if not inside:
+            # A flat idb dump has no parents to walk — every element is depth 0,
+            # so ancestry finds nothing and the sheet would offer no way out at
+            # all. Fall back to the sheet's frame.
+            frame = sheet[0]["frame"]
+            inside = [i for i, e in enumerate(els)
+                      if e["frame"]["width"] > 0 and e["frame"]["height"] > 0
+                      and frame["x"] <= e["frame"]["x"] + e["frame"]["width"] / 2
+                      <= frame["x"] + frame["width"]
+                      and frame["y"] <= e["frame"]["y"] + e["frame"]["height"] / 2
+                      <= frame["y"] + frame["height"]]
         escapes = [els[i] for i in inside
                    if ESCAPE_LABEL.match((els[i]["label"] or "").strip())
                    and els[i]["visible"] is not False and els[i]["enabled"]

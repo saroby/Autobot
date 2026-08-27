@@ -466,7 +466,14 @@ def cmd_next_tap(path: str, tree: str) -> int:
         return 0
     # Route hops are edges already tapped from here, so they are live candidates
     # of this tree; look them up by behavior to get today's coordinates.
-    by_behavior = {record["behavior"]: record for record in records if not record["withheld"]}
+    #
+    # The same provenance gate applies. "Already tapped once" was tempting as an
+    # exemption — the transition is observed, so it is empirically safe — but it
+    # leaked the whole rule: the blind loop would walk label-sourced controls all
+    # the way across the app, spend the cumulative tap budget doing it, and
+    # arrive at screens it is equally unable to drain.
+    by_behavior = {record["behavior"]: record for record in records
+                   if not record["withheld"] and mechanically_tappable(record)}
     for target, first_behavior, hops in routes(observed_edges(events), state, pending):
         record = by_behavior.get(first_behavior)
         if record is None:
@@ -881,18 +888,9 @@ def cmd_map(path: str, out: str) -> int:
                      "total": sum(1 for r in records if not r["withheld"]),
                      "withheld": sum(1 for r in records if r["withheld"])}
 
-    # A statekey hosting many different label sets means the log predates the
-    # chrome fallback in `_node_identity`; its screens are merged and no amount
-    # of reading can unmerge them.
-    per_state: dict[str, set] = {}
-    for e in events:
-        if e.get("type") == "screen":
-            per_state.setdefault(screen_identity(e), set()).add(_first_value(e, "sig"))
-    merged = sum(1 for sigs in per_state.values() if len(sigs) > 3)
-    if merged:
-        print(f"WARN: {merged} screen(s) in this log hold more than 3 distinct label sets — "
-              "the log predates the chrome-fingerprint identity fix, so distinct screens "
-              "are recorded under one key. Re-explore for an accurate graph.", file=sys.stderr)
+    # (No "this log looks merged" heuristic here. Counting distinct label sets
+    # per statekey flags the CORRECT case too: seven scroll positions of one
+    # feed are one statekey and seven sigs by design.)
 
     boxes, links, lanes = _layout(cards_by_sig, todo, edges, depth,
                                   out_path.resolve().parent)

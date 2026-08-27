@@ -2082,7 +2082,23 @@ cmd_explore() {
   # exceed the cap, whatever `max_steps` says about THIS run.
   local budget="${CLONE_TAP_BUDGET:-25}" spent=0
   if [[ -s "$flow" ]]; then
-    spent="$(grep -c '"type":"tap"' "$flow" 2>/dev/null || echo 0)"
+    # Parse the JSON. The writer emits `"type": "tap"` WITH a space, so a
+    # `grep -c '"type":"tap"'` counted zero on every real log — the budget was
+    # inert, and `|| echo 0` after a non-zero grep made `spent` two lines, which
+    # then broke the arithmetic below.
+    spent="$(python3 -c '
+import json, sys
+n = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        n += json.loads(line).get("type") == "tap"
+    except ValueError:
+        pass
+print(n)' "$flow" 2>/dev/null)" || spent=0
+    [[ "$spent" =~ ^[0-9]+$ ]] || spent=0
   fi
   if [[ "$spent" -ge "$budget" ]]; then
     echo "OK: tap budget spent ($spent/$budget cumulative in $flow) — exploration is done." >&2

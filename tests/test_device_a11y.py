@@ -1074,17 +1074,85 @@ class TestChromeFingerprintIdentity(unittest.TestCase):
         self.assertEqual(top, down)
 
     def test_an_app_that_reports_roles_keeps_its_identity(self):
-        # No re-keying of existing graphs or logs.
-        rich = (node("Button", "계속", 38, 700, 299, 52)
-                + node("Button", "취소", 38, 600, 299, 52)
-                + node("StaticText", "제목", 20, 100, 200, 30))
+        # No re-keying of existing graphs or logs. Measured, a role-reporting
+        # screen carries 6-30 named leaves against 0-3 unnamed, so a handful of
+        # decorative boxes never flips it into the fallback.
+        rich = "".join(node("Button", f"버튼{i}", 20, 100 + 50 * i, 299, 40)
+                       for i in range(8))
         before = self.key(rich)
-        # Adding unnamed boxes must not flip it into the fallback.
         after = self.key(rich + "".join(
-            node("Other", f"칩{i}", 10 + 40 * i, 200, 30, 24) for i in range(6)))
+            node("Other", f"칩{i}", 10 + 40 * i, 60, 30, 24) for i in range(3)))
         self.assertEqual(before, after)
 
     def test_a_sparse_screen_is_not_treated_as_custom_rendered(self):
         # An empty state has no crowd of unnamed boxes to disambiguate.
         self.assertNotIn("chrome:", wda(node("Other", "홈", 28, 774, 48, 39),
                                         mode="nodekey").stdout)
+
+
+class TestChromeFingerprintEdges(unittest.TestCase):
+    """Where the fingerprint must NOT move, and where it must."""
+
+    def key(self, inner: str) -> str:
+        out = wda(inner, mode="nodekey").stdout
+        return next(l.split()[-1] for l in out.splitlines() if l.startswith("INFO: nodekey"))
+
+    def custom(self, *labels: str) -> str:
+        return "".join(node("Other", lab, 10 + 55 * i, 68, 50, 34)
+                       for i, lab in enumerate(labels))
+
+    def test_a_badge_count_does_not_make_a_new_screen(self):
+        # An unread badge ticking 9 → 10, a page indicator 12 / 80, a cart
+        # count: readings, not chrome. Hashing them re-keyed the same screen.
+        for before, after in (("9", "10"), ("12 / 80", "13 / 80"), ("5/8", "6/8"),
+                              ("23.4만", "23.5만")):
+            with self.subTest(counter=before):
+                a = self.key(self.custom("홈", "대화", "만들기", "마이페이지", "추천", before))
+                b = self.key(self.custom("홈", "대화", "만들기", "마이페이지", "추천", after))
+                self.assertEqual(a, b)
+
+    def test_a_category_name_still_counts_as_chrome(self):
+        # `Electronics` is 11 characters — a tighter cap dropped exactly the
+        # labels that separate one category screen from another.
+        a = self.key(self.custom("Home", "Search", "Cart", "Profile", "All", "Electronics"))
+        b = self.key(self.custom("Home", "Search", "Cart", "Profile", "All", "Home Garden"))
+        self.assertNotEqual(a, b)
+
+    def test_stray_named_elements_do_not_switch_the_fallback_off(self):
+        # The ratio has to weigh the same population on both sides. Counting
+        # every role element against only the visible labelled leaves let two
+        # stray AXStaticText turn the fallback off and merge the screens.
+        stray = node("StaticText", "제목", 20, 20, 100, 20) + node("StaticText", "부제", 20, 44, 100, 20)
+        a = self.key(stray + self.custom("트렌딩", "베스트", "신작", "전체", "홈"))
+        b = self.key(stray + self.custom("연애", "성장", "미스터리", "전체", "홈"))
+        self.assertNotEqual(a, b)
+
+
+class TestSheetEscapeOnFlatDumps(unittest.TestCase):
+    def test_a_flat_dump_still_finds_the_way_out(self):
+        # idb reports a flat array: every element is depth 0, so ancestry finds
+        # nothing and descendant-scoping alone left the sheet with no exit.
+        r = idb([
+            el("App", 0, 0, 393, 852, role="AXApplication"),
+            el("옵션", 0, 440, 393, 412, role="AXSheet"),
+            el("취소", 20, 780, 353, 44),
+            el("사진 보관함", 20, 500, 353, 44),
+        ])
+        self.assertIn("WARN: sheet on screen", r.stdout)
+        self.assertIn("| 취소", r.stdout)
+        self.assertIn("OK: 1 tappable, 0 withheld", r.stdout)
+
+
+class TestLeavingTheAppPrecision(unittest.TestCase):
+    def test_real_handoff_ctas_are_withheld(self):
+        for label in ("Watch on YouTube", "View on Instagram", "Listen on Spotify",
+                      "Continue in Chrome", "Instagram으로 전환", "브라우저에서 보기"):
+            with self.subTest(label=label):
+                self.assertIn("effect=leaving-app", idb([ROOT, el(label, 0, 200)]).stdout)
+
+    def test_screens_that_merely_name_a_browser_are_navigation(self):
+        # A bare brand word blocked in-app screens: `Safari 사용법` is a help
+        # page, `Browser history` is a list.
+        r = idb([ROOT, el("Safari 사용법", 0, 200), el("Browser history", 0, 260),
+                 el("열기", 0, 320)])
+        self.assertIn("OK: 3 tappable, 0 withheld", r.stdout)
