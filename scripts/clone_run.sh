@@ -29,6 +29,38 @@ usage() {
   echo "       clone_run.sh codegen | functional | polish [screen] | verify | install [RootView]" >&2
   echo "       codegen redoes views.json + router + views from flow.jsonl — no device" >&2
   echo "       polish takes a measurement stem or a view name to do just that screen" >&2
+  echo "       polish --changed redoes only screens that failed or whose inputs moved" >&2
+}
+
+# Which screens still need looking at. A full pixel pass renders and compares
+# every screen every time, and that is most of the wall clock of a fix/re-verify
+# loop — the loop the whole pixel stage exists to run. A screen that passed and
+# whose view and measurement have not been touched since has nothing new to say.
+_changed_only() {
+  local sources="$1" pairs="$2" stem view verdict source_file kept=0 skipped=0
+  while read -r stem view; do
+    [[ -n "$stem" ]] || continue
+    verdict="$CLONE_ROOT/compare/$stem.verdict"
+    # Never verified, or verified and failed: it needs doing.
+    if [[ ! -f "$verdict" ]] || [[ "$(cat "$verdict" 2>/dev/null)" != "pass" ]]; then
+      echo "$stem $view"; kept=$((kept + 1)); continue
+    fi
+    # The measurement is an input too — a re-observe invalidates a pass.
+    if [[ "$CLONE_ROOT/screens/$stem.json" -nt "$verdict" ]]; then
+      echo "$stem $view"; kept=$((kept + 1)); continue
+    fi
+    # Locating the view's source is best-effort, and "cannot tell" means redo:
+    # skipping a screen whose code may have changed reports it as verified when
+    # it was only unexamined.
+    source_file="$(grep -rlE "struct[[:space:]]+$view[[:space:]]*:" \
+      --include='*.swift' "$sources" 2>/dev/null | head -2)"
+    if [[ -z "$source_file" ]] || [[ "$(grep -c . <<<"$source_file")" -ne 1 ]] \
+       || [[ "$source_file" -nt "$verdict" ]]; then
+      echo "$stem $view"; kept=$((kept + 1)); continue
+    fi
+    skipped=$((skipped + 1))
+  done <<<"$pairs"
+  echo "INFO: --changed — $kept screen(s) to check, $skipped unchanged since their last pass" >&2
 }
 
 _flow_lines() {
@@ -422,6 +454,18 @@ cmd_functional() {
 # of that round's apparent improvement.
 _compare_one() {
   local stem="$1" mask_assets="" status=0
+  local extra=()
+  # Volatile-by-nature pixels — a clock, an unread badge, a feed that reorders —
+  # are noise that drowns the signal. Declared once per clone, not per run.
+  [[ -f "$CLONE_ROOT/exclusions.json" ]] && extra+=(--exclusions "$CLONE_ROOT/exclusions.json")
+  # Alignment first, then measurement. A screen that is right but sits a few
+  # points low differs in almost every pixel, and the score would describe the
+  # offset instead of the screen. The offset found is reported, so a systematic
+  # inset error stays visible rather than being silently absorbed.
+  extra+=(--align "${CLONE_ALIGN_PX:-6}")
+  # Every run appends, passing or failing: a log of successes cannot show a
+  # regression, which is the one thing it is for.
+  extra+=(--score-log "$CLONE_ROOT/scores.jsonl" --label "$stem")
   # The bound that turns the visual score from advisory into a gate. 0.30 is a
   # gross-failure floor, not a similarity target: with system chrome and capture
   # crops already masked and a 24/765 per-pixel tolerance absorbing
@@ -438,14 +482,14 @@ _compare_one() {
       --measure "$CLONE_ROOT/screens/$stem.json" \
       --heatmap "$CLONE_ROOT/compare/$stem-heatmap.png" \
       --mask-system-chrome --mask-assets "$mask_assets" \
-      --max-mismatch "$max_mismatch" || status=1
+      "${extra[@]}" --max-mismatch "$max_mismatch" || status=1
   else
     python3 "$_HERE/device_compare.py" \
       "$CLONE_ROOT/raw/$stem.png" "$CLONE_ROOT/compare/$stem-rendered.png" \
       "$CLONE_ROOT/compare/$stem-compare.png" \
       --measure "$CLONE_ROOT/screens/$stem.json" \
       --heatmap "$CLONE_ROOT/compare/$stem-heatmap.png" \
-      --mask-system-chrome --max-mismatch "$max_mismatch" || status=1
+      --mask-system-chrome "${extra[@]}" --max-mismatch "$max_mismatch" || status=1
   fi
   printf '%s' "$status" > "$compare_status/$stem"
 }
@@ -460,7 +504,14 @@ cmd_polish() {
   unpaired="$(sed -n 's/^UNPAIRED //p' <<<"$plan")"
   local pairs
   pairs="$(sed -n 's/^PAIR //p' <<<"$plan")"
-  if [[ -n "$only" ]]; then
+  if [[ "$only" == "--changed" ]]; then
+    # Unpaired states stay reported: they are unverifiable, not unchanged.
+    pairs="$(_changed_only "$sources" "$pairs")"
+    if [[ -z "$pairs" && -z "$unpaired" ]]; then
+      echo "OK: nothing to re-check — every screen passed and none of their inputs moved"
+      return 0
+    fi
+  elif [[ -n "$only" ]]; then
     unpaired=""
     pairs="$(awk -v want="$only" '$1 == want || $2 == want' <<<"$pairs")"
     if [[ -z "$pairs" ]]; then
@@ -468,14 +519,21 @@ cmd_polish() {
       return 1
     fi
   fi
-  if [[ -z "$pairs" ]]; then
+  # With --changed an empty set means "nothing moved", not "nothing is mapped" —
+  # and unpaired states below still have to be reported as unverifiable.
+  if [[ -z "$pairs" && "$only" != "--changed" ]]; then
     echo "ERROR: no screen has both a measurement in $CLONE_ROOT/screens and a view in $views" >&2
     return 1
   fi
   local stem view rendered failures=0 checked=0 unchecked=0
   local workers="${CLONE_COMPARE_WORKERS:-4}"
-  local compare_status
+  local compare_status pre_status screen_failures
   compare_status="$(mktemp -d -t clone_compare)"
+  # Everything that can condemn a screen before its comparison runs. Kept per
+  # screen so the verdict written at the end is about that screen and not about
+  # the run: `--changed` reads these, and a verdict that says "pass" because
+  # some other screen was the one that failed would skip real work.
+  pre_status="$(mktemp -d -t clone_prestatus)"
   if [[ -n "$unpaired" ]]; then
     unchecked="$(grep -c . <<<"$unpaired")"
     echo "ERROR: $unchecked state(s) in $views have no measurement in $CLONE_ROOT/screens and cannot be verified:" >&2
@@ -486,25 +544,27 @@ cmd_polish() {
   while read -r stem view; do
     [[ -n "$stem" ]] || continue
     checked=$((checked + 1))
+    screen_failures=0
     rendered="$CLONE_ROOT/compare/$stem-rendered.png"
     echo "INFO: verify $stem ($view)"
     if ! bash "$_HERE/device_render.sh" "$sources" "$view" "$simulator" "$rendered"; then
       echo "ERROR: $view did not render — fix the compiler diagnostics above" >&2
       failures=$((failures + 1))
+      printf '1' > "$pre_status/$stem"
       continue
     fi
     if [[ -f "${rendered%.png}.tree.json" ]]; then
       if ! python3 "$_HERE/clone_structural_diff.py" \
             "$CLONE_ROOT/screens/$stem.json" "${rendered%.png}.tree.json"; then
         echo "ERROR: $stem is missing elements — that is the top-priority difference" >&2
-        failures=$((failures + 1))
+        screen_failures=$((screen_failures + 1))
       fi
     elif command -v axe >/dev/null 2>&1; then
       # AXe is here and still produced no tree, so this screen was never checked
       # for the dominant failure (missing elements). Reporting it as passing is
       # exactly the hidden-coverage the skill forbids.
       echo "ERROR: no rendered accessibility tree for $stem — the structural check did not run" >&2
-      failures=$((failures + 1))
+      screen_failures=$((screen_failures + 1))
     else
       echo "WARN: AXe is not installed — no screen can be checked for missing elements" >&2
     fi
@@ -515,8 +575,10 @@ cmd_polish() {
     # or the screen silently reverted to flat replay.
     if ! python3 "$_HERE/clone_structure_audit.py" "$CLONE_ROOT" "$stem" "$view"; then
       echo "ERROR: $stem lost declared repeat structure — see above" >&2
-      failures=$((failures + 1))
+      screen_failures=$((screen_failures + 1))
     fi
+    failures=$((failures + screen_failures))
+    printf '%s' "$screen_failures" > "$pre_status/$stem"
     # The comparison needs no simulator, so it runs alongside the next render
     # instead of after it — it was about half the wall time of a polish run.
     while [[ "$(jobs -rp | grep -c .)" -ge "$workers" ]]; do sleep 0.2; done
@@ -528,7 +590,21 @@ cmd_polish() {
     [[ -f "$code" ]] || continue
     [[ "$(cat "$code")" == "0" ]] || failures=$((failures + 1))
   done
-  rm -rf "$compare_status"
+  # One verdict per screen checked in this run, combining everything that could
+  # condemn it. This is what `--changed` reads next time; a screen with no
+  # verdict is treated as unverified, which is the safe direction.
+  local pre compare_code verdict_stem
+  for pre in "$pre_status"/*; do
+    [[ -f "$pre" ]] || continue
+    verdict_stem="$(basename "$pre")"
+    compare_code="$(cat "$compare_status/$verdict_stem" 2>/dev/null || echo 1)"
+    if [[ "$(cat "$pre")" == "0" && "$compare_code" == "0" ]]; then
+      printf 'pass' > "$CLONE_ROOT/compare/$verdict_stem.verdict"
+    else
+      printf 'fail' > "$CLONE_ROOT/compare/$verdict_stem.verdict"
+    fi
+  done
+  rm -rf "$compare_status" "$pre_status"
   if [[ "$failures" -gt 0 ]]; then
     echo "ERROR: $failures problem(s) failed verification across $((checked + unchecked)) mapped screen(s) — $checked checked, $unchecked unverifiable — fix missing elements and structure first, then re-run" >&2
     return 1

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import shutil
 import subprocess
 import tempfile
@@ -516,6 +517,101 @@ class TestJoin(CloneRunCase):
         self.assertIn("INFO: verify 02-focused (SearchFocusedView)", r.stdout)
 
 
+class TestChangedOnly(CloneRunCase):
+    """`polish --changed` skips work, so every way it can skip wrongly matters.
+
+    A full pixel pass renders and compares every screen every time, and that is
+    most of the wall clock of the fix/re-verify loop the stage exists to run.
+    But a screen skipped because of a stale or missing verdict is a screen
+    reported as verified when it was only unexamined — the coverage hiding rule
+    6 forbids. Every case here is one direction of that trade.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_views({"state-a": "HomeView", "state-b": "DetailView"})
+        self.write_sources("HomeView", "DetailView")
+        self.write_measurement("01-home")
+        self.write_measurement("02-detail")
+        self.write_flow([
+            {"type": "screen", "node": "n1", "statekey": "state-a", "name": "01-home",
+             "tree": "t", "png": "p"},
+            {"type": "screen", "node": "n2", "statekey": "state-b", "name": "02-detail",
+             "tree": "t", "png": "p"},
+        ])
+
+    def pass_everything(self):
+        """Mark both screens as having passed, later than all of their inputs."""
+        compare = self.root / "compare"
+        compare.mkdir(exist_ok=True)
+        for stem in ("01-home", "02-detail"):
+            verdict = compare / f"{stem}.verdict"
+            verdict.write_text("pass", encoding="utf-8")
+            os.utime(verdict, (time.time() + 10, time.time() + 10))
+
+    def test_without_verdicts_every_screen_is_checked(self):
+        # No verdict means never verified, which is not the same as unchanged.
+        r = self.run_clone("polish", "--changed")
+        self.assertIn("INFO: verify 01-home (HomeView)", r.stdout)
+        self.assertIn("INFO: verify 02-detail (DetailView)", r.stdout)
+        self.assertIn("2 screen(s) to check", r.stderr)
+
+    def test_screens_that_passed_and_did_not_move_are_skipped(self):
+        self.pass_everything()
+        r = self.run_clone("polish", "--changed")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("nothing to re-check", r.stdout)
+        self.assertNotIn("INFO: verify", r.stdout)
+
+    def test_a_failed_verdict_is_rechecked(self):
+        self.pass_everything()
+        (self.root / "compare" / "02-detail.verdict").write_text("fail", encoding="utf-8")
+        r = self.run_clone("polish", "--changed")
+        self.assertNotIn("INFO: verify 01-home", r.stdout)
+        self.assertIn("INFO: verify 02-detail (DetailView)", r.stdout)
+
+    def test_touching_the_view_source_invalidates_the_pass(self):
+        self.pass_everything()
+        source = self.root / "Sources" / "HomeView.swift"
+        os.utime(source, (time.time() + 60, time.time() + 60))
+        r = self.run_clone("polish", "--changed")
+        self.assertIn("INFO: verify 01-home (HomeView)", r.stdout)
+        self.assertNotIn("INFO: verify 02-detail", r.stdout)
+
+    def test_re_observing_a_screen_invalidates_the_pass(self):
+        # The measurement is an input too: a fresh capture of the same screen
+        # can move every frame the reproduction was written against.
+        self.pass_everything()
+        measurement = self.root / "screens" / "02-detail.json"
+        os.utime(measurement, (time.time() + 60, time.time() + 60))
+        r = self.run_clone("polish", "--changed")
+        self.assertIn("INFO: verify 02-detail (DetailView)", r.stdout)
+        self.assertNotIn("INFO: verify 01-home", r.stdout)
+
+    def test_an_unlocatable_view_source_is_rechecked_not_skipped(self):
+        """Cannot tell means redo. Skipping here would report it as verified."""
+        self.pass_everything()
+        # Two files define HomeView, so which one to date-check is ambiguous.
+        (self.root / "Sources" / "HomeView-copy.swift").write_text(
+            "struct HomeView: View { var body: some View { EmptyView() } }\n",
+            encoding="utf-8")
+        r = self.run_clone("polish", "--changed")
+        self.assertIn("INFO: verify 01-home (HomeView)", r.stdout)
+
+    def test_a_state_without_a_measurement_is_still_reported(self):
+        """Unpaired is unverifiable, not unchanged — --changed must not bury it."""
+        self.write_views({"state-a": "HomeView", "state-b": "DetailView"})
+        (self.root / "screens" / "02-detail.json").unlink()
+        (self.root / "compare").mkdir(exist_ok=True)
+        verdict = self.root / "compare" / "01-home.verdict"
+        verdict.write_text("pass", encoding="utf-8")
+        os.utime(verdict, (time.time() + 10, time.time() + 10))
+        r = self.run_clone("polish", "--changed")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("have no measurement", r.stderr)
+        self.assertIn("DetailView", r.stderr)
+
+
 class TestPhaseOrder(CloneRunCase):
     """Functional before pixels.
 
@@ -632,8 +728,18 @@ class TestStructureGateIsWired(unittest.TestCase):
 
     def test_a_failed_audit_counts_toward_verification_failure(self):
         start = self.polish.index("clone_structure_audit.py")
-        # The nearest `failures=$((failures + 1))` after the call is the branch
-        # that must fire when the audit exits non-zero — not just printed and
-        # discarded, which would leave `polish` reporting success anyway.
-        branch = self.polish[start:start + 300]
-        self.assertIn("failures=$((failures + 1))", branch)
+        # The branch after the call must charge the screen, not just print and
+        # discard, which would leave `polish` reporting success anyway. The
+        # count is per screen because the same tally decides that screen's
+        # verdict; it is added to the run total immediately after.
+        branch = self.polish[start:start + 400]
+        self.assertIn("screen_failures=$((screen_failures + 1))", branch)
+        self.assertIn("failures=$((failures + screen_failures))", branch)
+
+    def test_a_failed_audit_makes_the_screen_verdict_fail(self):
+        # `polish --changed` skips screens whose verdict says pass. A structure
+        # failure that did not reach the verdict would be skipped on the next
+        # run and never looked at again.
+        self.assertIn('printf \'%s\' "$screen_failures" > "$pre_status/$stem"', self.polish)
+        self.assertIn('printf \'fail\' > "$CLONE_ROOT/compare/$verdict_stem.verdict"',
+                      self.polish)

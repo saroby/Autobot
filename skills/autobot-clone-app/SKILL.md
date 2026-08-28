@@ -340,10 +340,21 @@ scripts/clone_run.sh functional
 ```bash
 scripts/clone_run.sh polish              # 뷰가 있는 화면 전부
 scripts/clone_run.sh polish auto-0001    # 한 화면만 (측정 stem 또는 뷰 이름)
+scripts/clone_run.sh polish --changed    # 통과했고 입력도 안 움직인 화면은 건너뛴다
 ```
+
+**전 화면 재검증이 루프의 가장 큰 비용이다.** 고치고 다시 재는 루프가 픽셀 단계의 존재 이유인데, 매번 28개 화면을 전부 렌더하고 대조하면 그 루프의 대부분이 이미 통과한 화면을 다시 확인하는 데 쓰인다(공개 벤치마크 실측: 무인 세션의 40~50%가 검증에 소모됐다 — `docs/clone-ecosystem-research.md`). `polish --changed` 는 `compare/<stem>.verdict` 가 `pass` 이고 그 화면의 뷰 소스와 측정 JSON 이 그 뒤로 바뀌지 않은 화면만 건너뛴다. **판단이 안 서면 건너뛰지 않는다** — 뷰 소스 파일을 특정하지 못하면 다시 검증한다. 검증하지 않은 것을 통과로 세는 것이 이 스킬이 금지하는 커버리지 은폐이기 때문이다(규칙 6). 매핑됐지만 측정이 없는 상태는 `--changed` 에서도 그대로 실패로 보고된다 — 그것은 "안 바뀐" 게 아니라 "검증 불가"다.
 
 **시각 점수는 게이트다 — 조언이 아니다.** `polish` 는 `--max-mismatch`(기본 `0.30`, `CLONE_MAX_MISMATCH` 로 조정)로 대조를 돌리고, 마스킹 후 mismatch 가 그 값을 넘으면 그 화면은 **실패**한다. 2026-08-24 이전에는 이 점수가 `advisory` 라 출력만 되고 버려졌고, 그래서 원본과 닮지 않은 화면도 `polish` 가 통과시켰다 — 수렴 루프가 시작조차 하지 않았다. 기본값 `0.30` 은 **총체적 실패의 하한이지 유사도 목표가 아니다**: 시스템 크롬과 캡처 crop 을 이미 제외하고 픽셀당 24/765 허용치가 안티에일리어싱을 흡수한 뒤에도 남은 픽셀의 3분의 1이 다르다면 그것은 잡음이 아니라 콘텐츠가 없거나 엉뚱한 자리에 있는 것이다. 실제 회차의 분포가 쌓이기 전이라 일부러 느슨하게 뒀다 — **조이는 것은 측정한 뒤에 하고, 조일 때 그 측정을 남긴다.**
 마스킹으로 비교할 픽셀이 하나도 남지 않은 화면도 **실패**다. 아무것도 비교하지 않은 것은 통과가 아니라 미검증이고, 그것을 통과로 세는 것이 이 스킬이 금지하는 커버리지 은폐다(규칙 6).
+
+**세 숫자를 함께 읽는다 — 셋은 서로 다른 것에 대해 틀린다.** `mismatch` 는 몇 픽셀이 다른지를 말하고, **몇 pt 밀렸을 뿐인 올바른 화면을 망가진 화면이라고 말한다**(거의 모든 픽셀이 다르므로). `mae` 는 얼마나 다른지를 말해 팔레트가 흘러간 것을 잡는다. `ssim`(8x8 luma 창의 평균, 마스크에 닿은 창은 통째로 제외)은 **같은 구조가 같은 자리에 있는지**를 말한다 — 안티에일리어싱과 폰트 힌팅을 견디고, 콘텐츠가 사라지거나 엉뚱한 자리에 있을 때 떨어진다. 게이트는 여전히 `mismatch` 하나에만 걸려 있다(분포가 쌓이기 전에 SSIM 한도를 지어내면 그것은 측정이 아니라 추측이다). `ssim` 은 지금은 **읽는 숫자**이고, 회차가 쌓이면 조일 자리다.
+
+**정렬은 측정보다 먼저 한다.** `polish` 는 `--align`(기본 6px, `CLONE_ALIGN_PX`)로 재현본을 원본에 가장 잘 겹치는 평행이동을 찾아 옮긴 뒤에 잰다. 몇 px 내려앉았을 뿐인 올바른 화면을 정렬 없이 재면 점수는 화면이 아니라 그 어긋남을 묘사한다. **찾아낸 offset 자체가 발견이다** — 0 이 아니면 어떤 inset·safe area 값이 체계적으로 틀렸다는 뜻이고, 로그가 그 값을 말한다. 회전·확대는 찾지 않는다: 그건 진짜 차이이고 보이는 채로 남아야 한다.
+
+**본성상 변덕스러운 픽셀은 선언해서 뺀다.** `.autobot/clone/exclusions.json` 에 `{"regions":[{"x":..,"y":..,"width":..,"height":..,"reason":".."}]}` 를 쓰면 `polish` 가 자동으로 읽는다. 시계·안 읽은 배지·순서가 바뀌는 피드처럼 매번 달라지는 영역이 여기 간다 — 빼지 않으면 그 잡음이 신호를 덮는다. **각 영역에 `reason` 을 적는다**: 로그가 이유를 그대로 되읽어주므로, 근거 없는 제외는 읽는 사람에게 드러난다. 파일을 못 읽으면 조용히 넘어가지 않고 `WARN` 한다 — 아무것도 제외하지 않은 채 제외한 척하는 점수가 제외 없는 점수보다 나쁘다.
+
+**점수는 매 회차 `.autobot/clone/scores.jsonl` 에 쌓인다.** 통과·실패 양쪽 다 기록한다 — 성공만 남는 로그는 퇴행을 보여줄 수 없고, 퇴행을 보여주는 것이 이 로그의 유일한 용도다. 한 줄에 `label`·`mismatch`·`meanAbsoluteError`·`ssim`·`regionScore`·`assetCoverage`·`alignment`·`passed` 가 들어간다. **어떤 화면이 나빠졌는지는 기억이 아니라 이 파일에서 읽는다.**
 
 **점수를 두 겹으로 읽는다.** 캡처 crop 은 대조 대상인 바로 그 원본에서 잘렸으므로 그 영역의 mismatch 는 구조적으로 0 이다. `polish` 는 crop 을 제외하고 재며(`--mask-assets`), 로그가 제외 면적을 먼저 말한다 — 그 비율이 크면 점수는 "재현이 좋다"가 아니라 "crop 을 제자리에 놓았다"에 가깝다.
 
@@ -385,7 +396,7 @@ scripts/clone_run.sh polish auto-0001    # 한 화면만 (측정 stem 또는 뷰
    ```
 3. 사용자에게 연다(`open .autobot/clone/compare/`)
 
-`device_compare.py`는 같은 픽셀 크기로 렌더된 경우에 한해 전체 및 측정 요소별 mismatch/평균 오차와 high·medium·low 차이, 결정적 heatmap을 출력한다. `--mask x,y,w,h`와 `--mask-system-chrome`은 애니메이션·시각 자산 같은 advisory 지표만 제외하며, 나란히 붙인 원본 증거는 가리지 않는다. 크기가 다르면 region metric과 heatmap을 건너뛰고 side-by-side만 만든다. 이 지표는 통과 판정의 단독 근거가 아니다. **대조 이미지와 요소 표/동작 계약의 사람 검토를 함께 통과해야 한다.**
+`device_compare.py`는 같은 픽셀 크기로 렌더된 경우에 한해 전체 및 측정 요소별 mismatch/평균 오차와 high·medium·low 차이, 8x8 창 평균 SSIM, 그리고 결정적 heatmap을 출력한다. 요소별 점수는 **측정이 이미 요소와 정확한 프레임을 짝지어 두었으므로** 블록을 찾는 OCR 추측 없이 구성적으로 매칭된다 — `region score` 는 측정된 요소 프레임 중 낮은 차이로 재현된 비율이다. `--mask x,y,w,h`와 `--mask-system-chrome`은 애니메이션·시각 자산 같은 advisory 지표만 제외하며, 나란히 붙인 원본 증거는 가리지 않는다. 크기가 다르면 region metric과 heatmap을 건너뛰고 side-by-side만 만든다. 이 지표는 통과 판정의 단독 근거가 아니다. **대조 이미지와 요소 표/동작 계약의 사람 검토를 함께 통과해야 한다.**
 
 4. **누락부터 센다.** 이 작업의 지배적 실패는 색이나 간격이 아니라 **요소가 통째로 빠지는 것**이다 — screenshot-to-code 연구(DCGen, arXiv 2406.16386)가 분류한 실패 1,699건 중 누락 85.3%, 배치 오류 12.7%, 왜곡 2.6%였다. 세기는 기계가 먼저 한다: AXe 가 설치돼 있으면 `device_render.sh` 가 렌더된 접근성 트리를 `<out>.tree.json` 으로 남기므로,
    ```bash
@@ -449,6 +460,9 @@ scripts/clone_run.sh install [RootView]     # 기본 RootView = ObservedFlowRoot
 | 연구용 자산과 출처 | `.autobot/clone/assets/*`, `assets/manifest.json` | 연구용 clone 빌드·감사 |
 | 대조 이미지 | `.autobot/clone/compare/*.png` | Step 6 검증 |
 | 렌더 접근성 트리 (AXe 설치 시) | `.autobot/clone/compare/*-rendered.tree.json` | Step 6 구조 diff (`clone_structural_diff.py`) |
+| 화면별 점수 이력 (통과·실패 모두) | `.autobot/clone/scores.jsonl` | 퇴행 탐지 · 조일 한도의 근거 |
+| 화면별 최근 판정 | `.autobot/clone/compare/*.verdict` | `polish --changed` 가 읽는 유일한 근거 |
+| 변덕스러운 영역 선언 (사람 소유) | `.autobot/clone/exclusions.json` | 시계·배지·재정렬 피드를 점수에서 제외 |
 | 측정·렌더 캐시 | `.autobot/clone/.postprocess-cache.json`, `render-cache/` | 반복 실행 가속 |
 | clone Xcode 작업공간 | `.autobot/clone/project/CloneWorkspace.xcodeproj` | Xcode/CoreDevice 준비 및 이후 구현 빌드 |
 | 대상 앱 바인딩(bundle ID · 기기가 보고한 이름) | `.autobot/clone/target.json` | Step 6c 표시 이름 · 감사 |
@@ -468,6 +482,9 @@ scripts/clone_run.sh install [RootView]     # 기본 RootView = ObservedFlowRoot
 8. **연구용 자산은 provenance를 남긴다** — `assets/manifest.json` 없이 원본 자산을 생성본에 넣지 않는다. 연구용 기본값과 기술적으로 접근 가능한 출처를 혼동하지 않는다.
 9. **진행을 사람에게 묻지 않는다** — 재현 대상·화면 매핑·추가 탐험 여부는 모두 자율 기본값이 있다(Step 2a·2c·5). 사람을 부르는 경우는 둘뿐이다: 기술 게이트 실패(중지), 그리고 `CLONE_ASK_FOR_DATA=1` 로 명시적으로 켠 데이터 요청. 중간에 묻는 것은 자율성만 깨는 게 아니라 실기기 세션이 만료될 시간을 벌어 준다.
 10. **구조 추출이 조용히 flat replay 로 되돌아간 화면을 통과시키지 않는다** (Step 6b-4b) — `clone_structure_audit.py` 가 `structure/<NN>.json` 의 선언된 반복 그룹마다 생성된 `.swift` 에서 컴포넌트로 뽑혔는지 본다. 선언된 그룹이 하나라도 추출되지 않았으면 그 화면은 `polish` 에서 **실패**다 — 요소가 다 있고 픽셀이 닮았어도, 사람이 편집할 수 없는 코드는 재현이 아니다. 이 게이트는 추출된 컴포넌트의 내용·이름·반복 감지 자체의 정확성은 보지 않는다 — 선언과 추출의 일치만 본다. 손으로 가져간 화면(생성 마커 제거)은 면제다.
+
+11. **점수를 통과시키려고 원본을 화면에 붙이지 않는다** — 점수가 게이트가 되는 순간, 캡처를 통째로 `Image` 로 까는 것이 그 게이트를 넘는 가장 싼 길이 된다. crop 은 **자산 슬롯**(아이콘·일러스트·로고)에 들어가는 것이지 레이아웃의 대체물이 아니다. `polish` 는 crop 이 화면의 60%(`--max-asset-coverage`)를 넘게 덮으면 그 화면을 **실패**시킨다 — 그건 스스로 그리는 재현이 아니라 원본의 사진이다. 게이트를 걸지 않은 진단 실행에서는 같은 사실을 `WARN` 으로만 말한다. 이 규칙은 규칙 2(자산 provenance)와 다른 축이다: 규칙 2는 자산을 **어디서 얻었는가**를 묻고, 이 규칙은 자산이 **무엇을 대신하고 있는가**를 묻는다.
+
 
 ## Preconditions
 
