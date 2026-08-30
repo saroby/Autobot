@@ -76,6 +76,19 @@ CONTAINERS = {
 # Decoration that is exposed as an element but navigates nowhere.
 NOISE = re.compile("스크롤 막대|scroll bar|페이지 컨트롤|page control", re.I)
 
+# An ad creative is not the app's UI. Tapping one leaves the app (the loop's
+# `left the app for <bundle>` dead end) and bills an advertiser for a click no
+# human made. Two markers, measured on a live AdMob banner: the Google Mobile
+# Ads SDK publishes its creative through a synthetic hierarchy whose root is
+# named `virtual_root` with hex-named nodes beneath it, and every ad — SDK or
+# web-rendered — carries the mandated disclosure badge. The badge is anchored so
+# an app's own "광고 제거" purchase row is not mistaken for one.
+AD_ROOT_NAME = "virtual_root"
+AD_BADGE = re.compile(
+    r"^\s*(광고|스폰서|스폰서드|ad|ads|advert|advertisement|sponsored|adchoices)\s*$",
+    re.I,
+)
+
 # When one label sits at one spot under several roles, tap the real control.
 ROLE_RANK = {"AXButton": 3, "AXCell": 3, "AXLink": 3, "AXSwitch": 2, "AXStaticText": 1}
 
@@ -684,6 +697,36 @@ def _ancestors(els: list[dict], index: int) -> list[int]:
     return out
 
 
+def _ad_nodes(els: list[dict], bw: float, bh: float) -> list[bool]:
+    """Which elements belong to an ad creative rather than to the app.
+
+    Roots are the SDK's own `virtual_root`, plus — for creatives that expose no
+    such marker (a web-rendered banner arrives as a plain WebView) — the
+    outermost ancestor of a disclosure badge that is still smaller than the
+    screen. Stopping below screen size matters: a badge whose ancestors run all
+    the way to the window would otherwise mark the entire page as an ad and
+    leave the loop with nothing to tap.
+    """
+    roots = {i for i, e in enumerate(els) if e["label"] == AD_ROOT_NAME}
+    screen = bw * bh
+    for index, e in enumerate(els):
+        if not AD_BADGE.match(e["label"]):
+            continue
+        root = index
+        for ancestor in _ancestors(els, index):
+            f = els[ancestor]["frame"]
+            if screen and f["width"] * f["height"] >= screen * 0.8:
+                break
+            root = ancestor
+        roots.add(root)
+    if not roots:
+        return [False] * len(els)
+    return [
+        index in roots or any(a in roots for a in _ancestors(els, index))
+        for index in range(len(els))
+    ]
+
+
 def _candidate_meta(item: dict, withheld: bool) -> str:
     state_changing = str(item["classification"]["state_changing"]).lower()
     return (
@@ -696,7 +739,8 @@ def _candidate_meta(item: dict, withheld: bool) -> str:
     )
 
 
-def _pick(els: list[dict], bw: float, bh: float, leaves: list[bool] | None) -> dict:
+def _pick(els: list[dict], bw: float, bh: float, leaves: list[bool] | None,
+          ads: list[bool]) -> dict:
     """Collect tap targets, keyed so a control and its inner text collapse.
 
     `leaves` selects the tier. `None` is the role tier: an element qualifies only
@@ -710,7 +754,7 @@ def _pick(els: list[dict], bw: float, bh: float, leaves: list[bool] | None) -> d
         f, w, h = e["frame"], e["frame"]["width"], e["frame"]["height"]
         if not e["label"] or not e["enabled"] or e["role"] in CONTAINERS:
             continue
-        if _inside_keyboard(els, index):
+        if _inside_keyboard(els, index) or ads[index]:
             continue
         rank = _action_rank(e)
         if (rank == 0 and leaves is not None and leaves[index]
@@ -818,8 +862,12 @@ def candidates(els: list[dict]) -> None:
     # recovers real controls everywhere else (a `더보기` menu, three model cards,
     # those 15 chips). So label leaves are always offered, ranked below every
     # real role.
-    role_only = _pick(els, bw, bh, None)
-    picked = _pick(els, bw, bh, _label_leaves(els))
+    ads = _ad_nodes(els, bw, bh)
+    role_only = _pick(els, bw, bh, None, ads)
+    picked = _pick(els, bw, bh, _label_leaves(els), ads)
+    if any(ads):
+        print(f"WARN: {sum(ads)} element(s) belong to an ad creative and are not "
+              "offered — tapping one leaves the app and bills a false click")
     if not role_only and picked:
         # Worth saying out loud: with no role anywhere, EVERY target here came
         # from a label. The classification below still runs on each one, but a

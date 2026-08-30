@@ -316,8 +316,24 @@ def check_runtime_smoke(proj: Path, app: str, state: dict) -> list[dict]:
 def check_metadata_readiness(proj: Path, app: str, state: dict) -> list[dict]:
     """Gate 5→6 — App Store / TestFlight metadata is ready before archive.
 
-    Skipped on the /autobot:mvp path (no ASC) so local builds aren't blocked;
-    hard-required on the /autobot:testflight path (ascConfigured=true).
+    Not-ready is DEGRADED, never a hard fail, for the same reason as
+    ``visual_judge`` and ``peer_review_acceptable``: gate 5→6 is soft=False, so a
+    hard fail marks Phase 5 failed and increments retryCount, and a retry cannot
+    help — ``/autobot:mvp`` does not produce store screenshots or the privacy
+    questionnaire at all (that is ``/autobot:app-review``). The old wording said
+    this was "skipped on the /autobot:mvp path (no ASC)", but the only signal
+    available is ``environment.ascConfigured``, which describes the MACHINE (an
+    ASC key exists on disk), not the RUN. So on any developer machine that has
+    ever configured ASC, a purely local ``/autobot:mvp`` build was failed by a
+    shipping gate it was never asked to satisfy — and, worse, the resulting
+    gate56Status=failed dragged ``functionalVerification.badge`` to UNVERIFIED
+    even when every functional flow had passed. Measured 2026-08-29: 12/12 flows
+    green, badge UNVERIFIED, sole failing check = this one.
+
+    DEGRADED still blocks shipping. ``check_functional_verification_passed``
+    refuses any non-'passed' gate 5→6 on the upload paths, and
+    ``pipeline.sh preflight-ship`` re-runs this gate fresh before archiving, so
+    an actually-unready listing cannot reach App Store Connect.
     """
     from metadata_validator import evaluate
 
@@ -352,7 +368,10 @@ def check_metadata_readiness(proj: Path, app: str, state: dict) -> list[dict]:
         )]
     return [_ok(
         "metadata_readiness", False,
-        f"metadata not ready for upload: {result.get('reason', 'unknown')}",
+        f"metadata not ready for upload: {result.get('reason', 'unknown')}. "
+        "DEGRADED (not shippable) — generate the listing with /autobot:meta and "
+        "the screenshots with /autobot:app-review.",
+        skipped=True, degraded=True,
     )]
 
 

@@ -1201,3 +1201,50 @@ class TestSheetEscapeProvenance(unittest.TestCase):
                 + node("Button", "취소", 20, 760, 335, 44)
                 + '</XCUIElementTypeSheet>')
         self.assertIn("source=escape", r.stdout)
+
+
+class TestAdCreativeIsNotATapTarget(unittest.TestCase):
+    """An ad banner is somebody else's UI inside the app's window.
+
+    Shaped after a live AdMob banner captured 2026-08-29: the Google Mobile Ads
+    SDK reports the creative under a container labelled `virtual_root`, with the
+    mandated disclosure badge as a plain StaticText beside the promoted title.
+    Tapping any of it hands the loop to the App Store and bills a false click.
+    """
+
+    BANNER = (
+        '<XCUIElementTypeOther type="XCUIElementTypeOther" label="virtual_root"'
+        ' name="virtual_root" enabled="true" visible="true"'
+        ' x="0" y="700" width="375" height="90">'
+        + node("Button", "다운로드", 250, 730, 100, 40)
+        + node("StaticText", "광고", 20, 715, 21, 14)
+        + '</XCUIElementTypeOther>'
+    )
+
+    def test_the_creative_is_not_offered(self):
+        out = wda(node("Button", "설정", 20, 100) + self.BANNER).stdout
+        self.assertIn("INFO: tap", out)
+        self.assertIn("설정", out)
+        self.assertNotIn("다운로드", out)
+        self.assertIn("belong to an ad creative", out)
+
+    def test_a_badge_marks_a_creative_with_no_sdk_root(self):
+        # A web-rendered creative exposes no `virtual_root`; the disclosure
+        # badge is the only marker, and its container is the banner.
+        out = wda(
+            node("Button", "설정", 20, 100)
+            + '<XCUIElementTypeWebView type="XCUIElementTypeWebView" label="" name=""'
+            ' enabled="true" visible="true" x="0" y="700" width="375" height="90">'
+            + node("Button", "지금 예약하기", 250, 730, 100, 40)
+            + node("StaticText", "Sponsored", 20, 715, 60, 14)
+            + '</XCUIElementTypeWebView>'
+        ).stdout
+        self.assertIn("설정", out)
+        self.assertNotIn("지금 예약하기", out)
+
+    def test_the_app_s_own_ad_removal_row_survives(self):
+        # `광고 제거` is the app's purchase row, not a disclosure badge. Anchoring
+        # the badge pattern is what keeps a whole settings screen from vanishing.
+        out = wda(node("Button", "광고 제거, ￦7,700", 20, 300, 335, 60)).stdout
+        self.assertIn("광고 제거", out)
+        self.assertNotIn("belong to an ad creative", out)

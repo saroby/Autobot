@@ -81,11 +81,27 @@ def _load_fastlane_metadata(project_root: Path) -> dict | None:
     locale_dir = base / locale
 
     def _read(name: str) -> str:
-        p = locale_dir / name
-        try:
-            return p.read_text(encoding="utf-8").strip() if p.is_file() else ""
-        except OSError:
-            return ""
+        """Read one fastlane metadata field.
+
+        The files are `<field>.txt` — that is fastlane's own convention and what
+        this plugin's own `write-metadata.sh` produces. Reading them without the
+        extension made every generated field come back empty, so a correctly
+        generated `fastlane/metadata/` always failed `metadata_readiness`
+        (measured: a 2,469-byte `ko/description.txt` read as "").
+
+        Locale-scoped fields live under `<base>/<locale>/`; the catalog fields
+        (`primary_category`, `secondary_category`, `copyright`) live at
+        `<base>/`. Try the locale first, then the root, so one accessor serves
+        both without the caller having to know which is which.
+        """
+        for directory in (locale_dir, base):
+            p = directory / f"{name}.txt"
+            try:
+                if p.is_file():
+                    return p.read_text(encoding="utf-8").strip()
+            except OSError:
+                return ""
+        return ""
 
     screenshots_dir = locale_dir / "screenshots"
     screenshots: dict[str, list[str]] = {}

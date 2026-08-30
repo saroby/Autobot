@@ -28,7 +28,12 @@ set -euo pipefail
 APP_NAME=""
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 ATTEMPT=1
-TIMEOUT_SECS=180
+# 180s was under the real cost of the review it is asked to do: measured
+# 2026-08-29 on a 10-model architecture, the first attempt was killed at 180s
+# and the identical prompt returned PASS at 540s. A too-short default does not
+# fail loudly — it records `verdict=skipped`, so every build silently ships
+# unreviewed. Bound it generously; codex exits on its own when done.
+TIMEOUT_SECS=600
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -317,23 +322,29 @@ elif command -v timeout >/dev/null 2>&1; then
 else
   TIMEOUT_BIN=""
 fi
+# `-c mcp_servers={}` disables the reviewer's MCP servers for this run. A review
+# needs nothing but the local files, and inheriting the operator's MCP config is
+# how this call deadlocks: with `approval_policy = never` an MCP tool call that
+# wants approval can never get it, and codex spins until the timeout. Measured
+# 2026-08-29: two Phase 5 attempts burned 10 and 15 minutes and produced no
+# output ("MCP tool call requires approval, but approval policy is never");
+# the same prompt with MCP disabled completed and returned a verdict.
+CODEX_ARGS=(
+  exec
+  --skip-git-repo-check
+  -C "$PROJECT_DIR"
+  -c "mcp_servers={}"
+  --output-schema "$SCHEMA_FILE"
+  --output-last-message "$OUT_FILE"
+  --sandbox read-only
+  -
+)
 if [[ -n "$TIMEOUT_BIN" ]]; then
-  "$TIMEOUT_BIN" --kill-after=10 "$TIMEOUT_SECS" codex exec \
-    --skip-git-repo-check \
-    -C "$PROJECT_DIR" \
-    --output-schema "$SCHEMA_FILE" \
-    --output-last-message "$OUT_FILE" \
-    --sandbox read-only \
-    - < "$PROMPT_FILE" >/dev/null 2>&1
+  "$TIMEOUT_BIN" --kill-after=10 "$TIMEOUT_SECS" codex "${CODEX_ARGS[@]}" \
+    < "$PROMPT_FILE" >/dev/null 2>&1
 else
   echo "WARN: no GNU timeout binary (install coreutils for gtimeout); running codex without OS-level timeout" >&2
-  codex exec \
-    --skip-git-repo-check \
-    -C "$PROJECT_DIR" \
-    --output-schema "$SCHEMA_FILE" \
-    --output-last-message "$OUT_FILE" \
-    --sandbox read-only \
-    - < "$PROMPT_FILE" >/dev/null 2>&1
+  codex "${CODEX_ARGS[@]}" < "$PROMPT_FILE" >/dev/null 2>&1
 fi
 codex_rc=$?
 set -e

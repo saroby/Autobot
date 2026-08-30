@@ -376,10 +376,20 @@ class TestMetadataReadinessMapping(_TempProject):
         self.assertTrue(r["passed"])
         self.assertFalse(r.get("skipped", False))
 
-    def test_failed_is_hard_fail(self):
+    def test_failed_is_degraded_not_a_hard_fail(self):
+        # Was a hard fail. `ascConfigured` describes the MACHINE (an ASC key is
+        # on disk), not the RUN, so a purely local /autobot:mvp build on any
+        # developer machine that ever configured ASC was failed by a shipping
+        # gate it cannot satisfy — /autobot:mvp produces no store screenshots
+        # and no privacy questionnaire at all. Worse, gate56Status=failed then
+        # dragged functionalVerification.badge to UNVERIFIED even with every
+        # functional flow green (measured 2026-08-29: 12/12 flows, badge
+        # UNVERIFIED, this the sole failing check). DEGRADED still blocks
+        # shipping via check_functional_verification_passed + preflight-ship.
         r = self._run({"status": "failed", "reason": "age rating config missing"}, asc=True)
         self.assertFalse(r["passed"])
-        self.assertFalse(r.get("skipped", False))
+        self.assertTrue(r.get("skipped"))
+        self.assertTrue(r.get("degraded"))
         self.assertIn("age rating", r["message"])
 
     def test_env_killswitch_skip_is_degraded(self):
@@ -455,6 +465,53 @@ class TestModelsChecksumMatches(_TempProject):
         r = check_models_checksum_matches(self.proj, APP, {})[0]
         self.assertFalse(r["passed"])
         self.assertIn("MISMATCH", r["message"])
+
+
+class TestFastlaneMetadataFilenames(unittest.TestCase):
+    """`fastlane/metadata/` fields are `<field>.txt` — read them that way.
+
+    The reader looked for extensionless `<field>`, so every field this plugin's
+    own `write-metadata.sh` produces came back empty and a correctly generated
+    listing always failed `metadata_readiness`. Measured 2026-08-29 on a real
+    build: `ko/description.txt` held 2,469 bytes and the validator read "".
+    """
+
+    def _project(self) -> Path:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        locale = root / "fastlane" / "metadata" / "ko"
+        locale.mkdir(parents=True)
+        for field, value in (
+            ("name", "눈치"),
+            ("subtitle", "지금 사도 되나"),
+            ("description", "본문"),
+            ("keywords", "공포지수,투자심리"),
+            ("support_url", "https://example.com/support"),
+        ):
+            (locale / f"{field}.txt").write_text(value, encoding="utf-8")
+        # Catalog fields live at the metadata ROOT, not under the locale.
+        (root / "fastlane" / "metadata" / "primary_category.txt").write_text(
+            "FINANCE", encoding="utf-8")
+        return root
+
+    def test_locale_fields_are_read(self):
+        payload = metadata_validator._load_fastlane_metadata(self._project())
+        self.assertEqual(payload["locale"], "ko")
+        self.assertEqual(payload["name"], "눈치")
+        self.assertEqual(payload["description"], "본문")
+        self.assertEqual(payload["keywords"], "공포지수,투자심리")
+        self.assertEqual(payload["support_url"], "https://example.com/support")
+
+    def test_catalog_fields_fall_back_to_the_metadata_root(self):
+        payload = metadata_validator._load_fastlane_metadata(self._project())
+        self.assertEqual(payload["category"], "FINANCE")
+
+    def test_genuinely_absent_fields_stay_empty(self):
+        # The fix must not paper over real gaps: screenshots and the privacy
+        # questionnaire are produced by /autobot:app-review, not by this reader.
+        payload = metadata_validator._load_fastlane_metadata(self._project())
+        self.assertEqual(payload["screenshots"], {})
+        self.assertEqual(payload["privacy_questionnaire"], "")
 
 
 if __name__ == "__main__":

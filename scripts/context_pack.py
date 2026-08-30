@@ -86,6 +86,46 @@ def _required_inputs(spec: dict, agent: str, app_name: str, project_root: Path) 
     return inputs
 
 
+def _named_file_contract(agent: str, state: dict) -> list[str]:
+    """Exact filenames a gate demands, for agents whose gate checks names.
+
+    OUTPUT CONTRACT lists directories, which is enough for every agent whose
+    gate only counts files. The design-system gate is different: it requires
+    five specific filenames each declaring `public struct <Module><Name>`,
+    because ui-builder imports those exact symbols. That contract lived only in
+    the gate, so an agent that picked its own sensible names (DSCard, DSStates)
+    failed Gate 3→4 and burned the phase's single retry. Read it from the
+    gate's own tuple so the two cannot drift apart.
+    """
+    if agent != "design-system":
+        return []
+    try:
+        from gate_checks.design import _DS_COMPONENTS
+    except ImportError:
+        return []
+    module = state.get("designSystemModule") or f"{state.get('appName') or ''}DS"
+    out = [
+        f"  Gate 3->4 requires these EXACT files under"
+        f" Packages/{module}/Sources/{module}/Components/,",
+        "  each declaring the named public struct (ui-builder imports these symbols):",
+    ]
+    out += [f"    - {name}.swift  →  public struct {module}{name}" for name in _DS_COMPONENTS]
+    out.append("  Other components may use any name.")
+    # `no_legacy_theme_refs` bans `Theme.` in Views/ because a deleted legacy
+    # Theme.swift used to live there; a grep cannot tell that apart from a NEW
+    # token type someone just named `Theme`. Naming the tokens up front is
+    # cheaper and safer than loosening the ban.
+    out += [
+        "",
+        f"  Name the token types {module}Color / {module}Font / {module}Spacing /"
+        f" {module}Radius.",
+        "  Do NOT name a token type `Theme` — Gate 4→5 (`no_legacy_theme_refs`)"
+        " bans `Theme.` in Views/",
+        "  as a deleted legacy API and cannot tell your new type apart from it.",
+    ]
+    return out
+
+
 def build(
     project_root: Path,
     spec: dict,
@@ -120,6 +160,11 @@ def build(
             lines.append(f"  - {entry['path']:<60} [sha={entry['sha']} {entry['size']:>6}B]")
     else:
         lines.append("  (none)")
+    named = _named_file_contract(agent, state)
+    if named:
+        lines.append("")
+        lines.append("NAMED FILE CONTRACT")
+        lines.extend(named)
     if prompt_tail:
         lines.append("")
         lines.append("PROMPT TAIL")

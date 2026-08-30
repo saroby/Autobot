@@ -33,7 +33,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="${SCRIPT_DIR}/runtime.py"
 
-USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|preflight-ship|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|error-signature|build-checkpoint|app-review-controller|doctor|design-spec|sandbox|build-lock> [options]"
+USAGE="Usage: pipeline.sh <schema|init-build|record-environment|set-flag|start-phase|advance-phase|fail-phase|run-gate|append-log|preflight-ship|env-snapshot|write-run-summary|grade-learnings|input-hash|freeze-contracts|context-pack|error-signature|build-checkpoint|app-review-controller|doctor|design-spec|sandbox|build-lock> [options]"
 
 if [[ -z "$MODE" ]]; then
   echo "$USAGE" >&2
@@ -63,6 +63,10 @@ EOF
     ;;
   fail-phase)         exec python3 "$RUNTIME" fail-phase         --project-dir "$PROJECT_DIR" "$@" ;;
   run-gate)           exec python3 "$RUNTIME" run-gate           --project-dir "$PROJECT_DIR" "$@" ;;
+  # The peer-review bridge and the orchestrator both document
+  # `pipeline.sh append-log` for audit entries, but the verb was never wired
+  # through, so those calls died on the usage string.
+  append-log)         exec python3 "$RUNTIME" append-log         --project-dir "$PROJECT_DIR" "$@" ;;
   preflight-ship)
     # Runtime shipping block (anti-laundering): archive/upload entry points
     # call this to re-prove gate 5->6 FRESH before producing a shippable
