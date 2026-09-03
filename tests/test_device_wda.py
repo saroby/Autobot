@@ -2227,6 +2227,43 @@ class TestFlowLogging(unittest.TestCase):
         self.assertIn("REFUSED", r.stdout)
         self.assertIn("only 'explore' flips one", r.stderr)
 
+    def test_moving_the_state_dir_isolates_the_log_and_its_sentinel_together(self):
+        """/autobot:copy and /autobot:clone both drive this script.
+
+        On the default path they share one flow.jsonl, so they share the
+        cumulative tap budget too — a clone run that spent 20 leaves copy with
+        five. The isolation knob is CLONE_STATE_DIR, and it has to carry the
+        block marker with the log: separating them (CLONE_FLOW_LOG alone) leaves
+        the marker in the other skill's folder, where clearing one target's
+        state means finding a file named after a hash.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            lib = Path(d) / "wda_lib.sh"
+            lib.write_text(SCRIPT.read_text(encoding="utf-8").replace('main "$@"\n', ""),
+                           encoding="utf-8")
+
+            def state_of(state_dir):
+                env = {k: v for k, v in os.environ.items() if k != "CLONE_FLOW_LOG"}
+                env["CLONE_STATE_DIR"] = str(state_dir)
+                out = subprocess.run(
+                    ["bash", "-c",
+                     f"source {lib}; echo \"${{CLONE_FLOW_LOG:-$CLONE_STATE_DIR/flow.jsonl}}\"; "
+                     f"_flow_broken_file"],
+                    capture_output=True, text=True, env=env).stdout.split()
+                return out[0], out[1]
+
+            copy_log, copy_marker = state_of(Path(d) / "copy-analysis")
+            clone_log, clone_marker = state_of(Path(d) / "clone")
+
+        self.assertNotEqual(copy_log, clone_log)
+        self.assertNotEqual(copy_marker, clone_marker)
+        # Both live in the moved directory, so one `rm -f <dir>/flow.jsonl
+        # <dir>/broken-*` is the whole reset for that caller.
+        for path in (copy_log, copy_marker):
+            self.assertEqual(str(Path(d) / "copy-analysis"), str(Path(path).parent))
+        for path in (clone_log, clone_marker):
+            self.assertEqual(str(Path(d) / "clone"), str(Path(path).parent))
+
     def test_the_sentinel_path_does_not_move_with_permissions(self):
         # A lookup that changes location when a directory's writability changes
         # can hide a marker that already exists — the one thing it must not do.

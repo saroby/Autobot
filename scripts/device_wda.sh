@@ -59,10 +59,15 @@ _TAP_REVERTING=0
 # Resolved lazily: CLONE_STATE_DIR is defined further down, and under `set -u`
 # reading it up here aborted the whole script at source time.
 # A fact about ONE flow log, so it is named after that log — a fixed path leaked
-# between runs writing different logs. The location does NOT depend on whether
-# anything is writable: a path that moves when a directory's permissions change
-# can hide a marker that already exists, which is the one thing a sentinel must
-# never do.
+# between runs writing different logs. The marker lives under CLONE_STATE_DIR
+# and NOT beside the log, because the reason a log cannot be written is usually
+# that its own directory cannot be written: putting the marker there means the
+# block cannot be recorded in exactly the case that needs it (three tests in
+# TestFlowLogging pin this). Isolating one caller's exploration state is done by
+# moving CLONE_STATE_DIR, which carries the log and this marker together.
+# The location does NOT depend on whether anything is writable: a path that
+# moves when a directory's permissions change can hide a marker that already
+# exists, which is the one thing a sentinel must never do.
 _flow_broken_file() {
   local log
   log="${CLONE_FLOW_LOG:-${CLONE_STATE_DIR:-$PWD/.autobot/clone}/flow.jsonl}"
@@ -2598,7 +2603,7 @@ main() {
     doctor)     cmd_doctor "$@" ;;
     tunnel-status) cmd_tunnel_status "$@" ;;
     tunnel-start)  _ensure_tunnel "${1:-}" ;;
-    *) echo "ERROR: unknown subcommand '${sub:-}'. Use: device | session | screen | step | explore | candidates | sig | tap | type | swipe | quit | stop-server | doctor | tunnel-status | tunnel-start" >&2; return 1 ;;
+    *) echo "ERROR: unknown subcommand '${sub:-}'. Use: device | session | screen | step | explore | candidates | sig | tap | type | swipe | swipefrac | back | quit | stop-server | doctor | tunnel-status | tunnel-start" >&2; return 1 ;;
   esac
 }
 

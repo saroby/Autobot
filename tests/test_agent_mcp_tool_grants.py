@@ -12,6 +12,13 @@ Claude Code grants subagent MCP access only when each tool is listed by its full
 `tools:` entirely inherits all tools. So: for any agent that DECLARES a `tools:`
 allowlist, every `mcp__…` tool referenced in its body must appear in that list.
 stdlib-only, no PyYAML.
+
+Slash commands have the same failure mode through `allowed-tools:` and were NOT
+covered here, which is how /autobot:copy shipped with a Step 1 built entirely on
+mcp-appstore and an allowlist that granted none of it — the same bug as the
+Stitch one, one directory over. Commands are checked below too, but only in the
+grant direction: a command delegates its procedure to a skill, so its own body
+legitimately names no tool while the skill it loads calls several.
 """
 
 from __future__ import annotations
@@ -67,6 +74,100 @@ def _granted_mcp_tools(tools_value: str) -> set[str]:
 def _referenced_mcp_tools(body: str) -> set[str]:
     # Code-span references (`mcp__x__y`) and bare ones alike — strip backticks.
     return set(_MCP_TOOL_RE.findall(body))
+
+
+def _allowed_tools_list(fm: str) -> list[str] | None:
+    """Values of a YAML block-sequence `allowed-tools:` key, or None if absent.
+
+    Commands spell the allowlist as a block sequence, not the comma-separated
+    scalar agents use:
+
+        allowed-tools:
+          - Bash
+          - mcp__mcp-appstore__search_app
+    """
+    lines = fm.splitlines()
+    for i, raw in enumerate(lines):
+        if not re.match(r"^\s*allowed-tools:\s*$", raw):
+            continue
+        items = []
+        for follow in lines[i + 1:]:
+            m = re.match(r"^\s*-\s*(\S.*?)\s*$", follow)
+            if not m:
+                break
+            items.append(m.group(1))
+        return items
+    return None
+
+
+# The mcp-appstore tools `skills/autobot-copy-analyze/SKILL.md` Step 1 calls by
+# name. /autobot:copy cannot reach any of them unless commands/copy.md grants
+# them, and Step 1 is where every review, keyword and similar-app signal in the
+# brief comes from — without it the skill silently falls back to device captures
+# alone and the Hook & Retention section loses its evidence.
+_COPY_APPSTORE_TOOLS = {
+    "mcp__mcp-appstore__search_app",
+    "mcp__mcp-appstore__get_app_details",
+    "mcp__mcp-appstore__fetch_reviews",
+    "mcp__mcp-appstore__analyze_reviews",
+    "mcp__mcp-appstore__get_similar_apps",
+    "mcp__mcp-appstore__analyze_top_keywords",
+    "mcp__mcp-appstore__get_keyword_scores",
+}
+
+
+class TestCommandMCPToolGrants(unittest.TestCase):
+    def test_referenced_mcp_tools_are_granted(self):
+        files = sorted(glob.glob(str(PLUGIN_DIR / "commands/*.md")))
+        self.assertGreater(len(files), 0, "no command markdown discovered")
+
+        offenders: dict[str, set[str]] = {}
+        for f in files:
+            text = Path(f).read_text(encoding="utf-8")
+            fm, body = _split_frontmatter(text)
+            if fm is None:
+                continue
+            allowed = _allowed_tools_list(fm)
+            if allowed is None:
+                # No allowlist → inherits all tools. Nothing to enforce.
+                continue
+            referenced = _referenced_mcp_tools(body)
+            if not referenced:
+                continue
+            granted = {t for t in allowed if t.startswith("mcp__")}
+            missing = referenced - granted
+            if missing:
+                offenders[Path(f).relative_to(PLUGIN_DIR).as_posix()] = missing
+
+        self.assertEqual(
+            offenders,
+            {},
+            "command body references MCP tools its `allowed-tools:` does not grant — "
+            "the command can never call them:\n"
+            + "\n".join(f"  {k}: {sorted(v)}" for k, v in offenders.items()),
+        )
+
+    def test_copy_command_grants_the_appstore_tools_its_skill_calls(self):
+        fm, _ = _split_frontmatter(
+            (PLUGIN_DIR / "commands" / "copy.md").read_text(encoding="utf-8"))
+        self.assertIsNotNone(fm)
+        granted = set(_allowed_tools_list(fm) or [])
+        self.assertEqual(set(), _COPY_APPSTORE_TOOLS - granted)
+
+    def test_the_copy_skill_still_calls_those_appstore_tools(self):
+        """Guard the other end: if Step 1 drops a tool, the grant list is stale.
+
+        A hardcoded expectation is only worth having while the thing it mirrors
+        still exists — otherwise it quietly protects a call nobody makes.
+        """
+        skill = (PLUGIN_DIR / "skills" / "autobot-copy-analyze" / "SKILL.md").read_text(
+            encoding="utf-8")
+        missing = {t for t in _COPY_APPSTORE_TOOLS
+                   if t.rsplit("__", 1)[1] not in skill}
+        self.assertEqual(
+            set(), missing,
+            "commands/copy.md grants mcp-appstore tools the skill no longer names: "
+            f"{sorted(missing)}")
 
 
 class TestAgentMCPToolGrants(unittest.TestCase):
