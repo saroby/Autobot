@@ -9,11 +9,13 @@ ServiceProtocols.swift type contract their whole prompt depends on.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from conftest import import_runtime_modules
+from conftest import SCRIPTS_DIR, import_runtime_modules
 
 import_runtime_modules()
 
@@ -76,6 +78,38 @@ class TestContextPackRequiredInputs(unittest.TestCase):
         )
         self.assertNotIn("HIGH-IMPACT LEARNINGS", result["text"])
         self.assertNotIn("REFERENCE INDEX", result["text"])
+
+    def test_pack_keeps_every_input_without_padding_or_digest_noise(self):
+        inputs = context_pack._required_inputs(self.spec, "ui-builder", self.app, self.proj)
+        result = context_pack.build(
+            self.proj, self.spec, {"appName": self.app}, phase="4", agent="ui-builder",
+        )
+        for item in inputs:
+            self.assertIn(f"  - {item['path']}\n", result["text"] + "\n")
+        self.assertNotIn("[sha=", result["text"])
+
+    def test_small_budget_warns_without_truncating_contracts(self):
+        tail = "Previous failure: missing import"
+        result = context_pack.build(
+            self.proj, self.spec, {"appName": self.app}, phase="4", agent="ui-builder",
+            prompt_tail=tail, budget=1,
+        )
+        self.assertTrue(result["over_budget"])
+        self.assertIn("OUTPUT CONTRACT", result["text"])
+        self.assertIn(f"{self.app}/Models/ServiceProtocols.swift", result["text"])
+        self.assertIn(tail, result["text"])
+
+    def test_oversize_json_cli_keeps_stdout_parseable(self):
+        (self.proj / ".autobot" / "build-state.json").write_text(json.dumps({"appName": self.app}))
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "context_pack.py"),
+             "--project-dir", str(self.proj), "--phase", "4", "--agent", "ui-builder",
+             "--format", "json", "--budget", "1"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["over_budget"])
+        self.assertIn("WARN:", result.stderr)
 
 
 class TestTransitiveUpstream(unittest.TestCase):

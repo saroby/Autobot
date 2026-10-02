@@ -1,6 +1,6 @@
 ---
 name: autobot-blueprint
-description: Use when working with `ssot/*.md` product blueprints as a machine-mergeable contract — authoring items with evidence labels, validating that every item declares who owns it, merging a fresh round of findings into a document a person has already edited, or reporting what a round changed. Owns the item format (`## <ID> <제목>` heading, `근거:` ownership label, optional images and notes), the ownership rules deciding what a re-run may overwrite, and the `scripts/blueprint_merge.py check` validator. It exists to guarantee one property — a re-run never destroys what a person wrote. Does NOT observe a target service; the observation layer that would fill these documents from a live app or website is not built yet, so today the input is authored by a person or produced by another tool. Triggers on ssot 문서 검증, blueprint check, 청사진 병합, 근거 라벨.
+description: "Validate or merge ssot/*.md blueprint items while preserving human edits."
 ---
 
 # Autobot Blueprint — 사람이 고치는 문서를 기계가 안전하게 갱신한다

@@ -9,11 +9,13 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from conftest import read_prompt
+
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
 
 def _read(*parts: str) -> str:
-    return (PLUGIN_DIR / Path(*parts)).read_text(encoding="utf-8")
+    return read_prompt(PLUGIN_DIR / Path(*parts))
 
 
 class TestPhase2AppIconResumePath(unittest.TestCase):

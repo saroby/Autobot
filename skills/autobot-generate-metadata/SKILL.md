@@ -1,7 +1,7 @@
 ---
 name: autobot-generate-metadata
 user-invocable: false
-description: Use when generating or updating the `fastlane/metadata/` folder for an iOS app — App Store name, subtitle, description, keywords, promotional text, release notes, copyright, and categories. The LLM drafts each field from app context (architecture.md / build-state.json / build-report.md) and pipes the result as JSON to `write-metadata.sh`, which validates ASC character limits and writes each field atomically. Also use when refreshing metadata for an existing app, drafting localized variants, or troubleshooting "metadata too long" / "invalid metadata" errors before `autobot-upload-metadata`.
+description: "Generate or revise localized fastlane/metadata text and validate ASC character limits."
 ---
 
 # Fastlane Metadata Generator

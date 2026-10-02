@@ -1,6 +1,6 @@
 ---
 name: deployer
-description: Use this agent when deploying an iOS app to TestFlight. Chains 4 single-responsibility skills — autobot-register-app, autobot-archive-build, autobot-upload-build, autobot-invite-testers. The register step is idempotent (already_exists is silent success) so this agent can be re-run safely. Halts with explicit user guidance on register failures (name_collision, bundle_id_taken, asc_session_expired, asc_permission_denied) before any archive/upload work happens.
+description: "Register, archive, upload, and invite TestFlight testers in the manual deployment phase."
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: autobot-make
 user-invocable: false
-description: Use when generating or updating a project Makefile with conventional dev-workflow targets (install/run/dev/stop/test/clean). For any program that binds a TCP port, the run target first kills the previous port holder so restarts never hit "address already in use". Detects the project's runtime, start command, and port(s) before writing. Triggers on "Makefile 만들어줘", "make 명령어 추가", "make run 만들어줘", "포트 죽이고 재시작", "/autobot:make".
+description: "Generate or update a project Makefile with runtime-specific development targets (/autobot:make)."
 ---
 
 # Autobot Make — 프로젝트 Makefile 생성 (포트 재사용 안전)

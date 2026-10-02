@@ -1,7 +1,7 @@
 ---
 name: autobot-retrospective
 user-invocable: false
-description: Use after an Autobot build completes (success or failure), when checking past build history, when analyzing build performance trends, or when investigating why the same error keeps recurring across builds.
+description: "Write Phase 7 learnings or analyze repeated failures across Autobot builds."
 ---
 
 # Build Retrospective & Self-Improvement

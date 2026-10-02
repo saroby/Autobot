@@ -1,7 +1,7 @@
 ---
 name: autobot-app-icon
 user-invocable: false
-description: Use during Autobot Phase 2/3 when generating a production app icon with codex-util:imagegen or applying the generated 1024x1024 PNG into an iOS AppIcon asset catalog.
+description: "Generate or apply an iOS app icon during Autobot Phase 2/3."
 ---
 
 # App Icon Generation

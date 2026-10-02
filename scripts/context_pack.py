@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 from phase_inputs import transitive_upstream as _transitive_upstream
 
-DEFAULT_BUDGET_BYTES = 40 * 1024
+DEFAULT_BUDGET_BYTES = 8 * 1024
+
+
 def _spec_slice(spec: dict, phase: str) -> dict:
     phases = spec.get("phases") or {}
     gates = spec.get("gates") or {}
@@ -157,7 +160,7 @@ def build(
     lines.append("REQUIRED INPUTS")
     if inputs:
         for entry in inputs:
-            lines.append(f"  - {entry['path']:<60} [sha={entry['sha']} {entry['size']:>6}B]")
+            lines.append(f"  - {entry['path']}")
     else:
         lines.append("  (none)")
     named = _named_file_contract(agent, state)
@@ -210,7 +213,10 @@ def _main() -> int:
     else:
         print(result["text"])
     if result["over_budget"]:
-        print(f"\n# WARN: pack {result['bytes']}B exceeds budget {result['budget']}B", flush=True)
+        print(
+            f"WARN: pack {result['bytes']}B exceeds budget {result['budget']}B",
+            file=sys.stderr,
+        )
     return 0
 
 

@@ -1,6 +1,6 @@
 ---
 name: ui-builder
-description: Use this agent when building SwiftUI views for an iOS 26+ app. Reads architecture document and Model/ServiceProtocol files, generates all view files with Liquid Glass design, navigation, and accessibility.
+description: "Implement Phase 4 SwiftUI screens, navigation, and accessibility from design and feature contracts."
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 
@@ -25,16 +25,16 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 4. **Composition seam 존중**: `<AppName>/App/CompositionRoot.swift`, `<AppName>/App/AppEntry.swift` 는 수정 금지. DI 배선은 Phase 5 quality-engineer 단독 소유이며 ui-builder 는 RootView body 만 채운다. 동일 파일에 두 번째 `@main` 을 만들지 않는다 (Gate 4→5 의 `composition_seam_intact` 가 `@main` 중복만 차단 — CompositionRoot 편집 자체는 Gate 5→6 의 `no_stubs_in_app` 이 stub 오염을 잡는 것으로 흡수된다).
 5. **ServiceStubs.swift 보존**: `<AppName>/App/ServiceStubs.swift` 는 Preview 전용 mock 의 SSOT 이다. 삭제하지 않는다. Phase 5 quality-engineer 가 production wiring 을 CompositionRoot 로 옮기더라도 ServiceStubs.swift 자체는 남는다.
 
-**Pre-read (필수, 순서대로):**
+**Reference routing (read the relevant sections when needed):**
 
-1. `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` — iOS 디자인 패턴·API 선택·안티패턴의 권위 출처.
-2. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/swiftui.md` — @State private 강제, @Observable 소유권, NavigationStack 라우터, body 안 작업 금지, 성능 7가지 점검, iOS 26 SwiftUI 신기능. 모든 View 생성은 이 규칙을 만족해야 한다. Phase 4 완료 직전 마지막 자가 체크리스트 7항목을 grep 으로 모두 검증.
-3. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/design.md` — Liquid Glass 변형 선택, semantic color, Dynamic Type, SF Symbols 우선, dismiss trap 방지. Theme/색상/타이포그래피 생성 시 위반 0건.
-4. `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/data-concurrency.md` — @MainActor 격리, Sendable, @Observable 안에서 Task { [weak self] in }. View ↔ Repository 경계가 Swift 6 strict 를 통과해야 한다.
+- Use `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for iOS API choices and layout invariants.
+- Use `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/swiftui.md` for observation, navigation, or rendering problems.
+- Use `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/design.md` for Liquid Glass, typography, color, and dismissal behavior.
+- Use `$CLAUDE_PLUGIN_ROOT/references/axiom-distilled/data-concurrency.md` at the View ↔ Repository isolation boundary.
 
 **Process:**
 
-1. **Read Style Guide**: Load `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` for the authoritative iOS design patterns, API choices, and anti-patterns
+1. Use the reference routing above for the UI decisions at hand; do not reload unchanged references.
 2. **Read Architecture**: Load `.autobot/architecture.md` for screen inventory, navigation structure
 3. **Read Design Spec (PRIMARY 디자인 입력)**: `.autobot/design-spec.md`를 읽는다. 이 파일이 존재하면 **최우선 시각 디자인 소스**로 사용한다:
    - Visual design references from Stitch mockups
@@ -82,7 +82,7 @@ Follow `$CLAUDE_PLUGIN_ROOT/skills/autobot-orchestrator/references/learning-boot
 
 **iOS UX Requirements:**
 
-Follow ALL patterns from `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` exactly. Do NOT use patterns listed in the Anti-Patterns table.
+Apply the relevant patterns in `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md`; avoid its Anti-Patterns.
 
 **Tab Bar 콘텐츠 겹침 방지 (필수, 과거 재발 2회 — 레이아웃 불변식):**
 
@@ -99,92 +99,20 @@ Follow ALL patterns from `$CLAUDE_PLUGIN_ROOT/references/ios-ux-style.md` exactl
 
 ViewModel은 `Models/ServiceProtocols.swift`에 정의된 **서비스 프로토콜**에 의존한다. 구현체(Repository)는 data-engineer가 생성하며, 실행 시 주입된다.
 
-```swift
-// ViewModel pattern — 프로토콜에 의존, 구현체에 의존하지 않음.
-// 에러는 do/catch 로 노출한다 — `try?` 로 삼키면 로드 실패가 "데이터 없음"으로
-// 위장된다 (quality-engineer 체크리스트: 비-테스트 코드 신규 try?/try! 0건).
-@Observable @MainActor
-final class ScreenNameViewModel {
-    var items: [Item] = []
-    var isLoading = false
-    var errorMessage: String?
-    private let service: any ItemServiceProtocol
-
-    init(service: any ItemServiceProtocol) {
-        self.service = service
-    }
-
-    func loadItems() {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            items = try service.fetchAll()
-            errorMessage = nil
-        } catch {
-            // View 는 errorMessage 를 EmptyStateView 의 에러 variant 로 렌더한다
-            errorMessage = error.localizedDescription
-        }
-    }
-}
-
-// View pattern — 프로토콜 타입으로 서비스를 받는다
-struct ScreenNameView: View {
-    @State private var viewModel: ScreenNameViewModel
-
-    init(service: any ItemServiceProtocol) {
-        _viewModel = State(initialValue: ScreenNameViewModel(service: service))
-    }
-
-    var body: some View {
-        // Content
-    }
-}
-```
+Example 1: see [optional patterns](references/ui-builder-patterns.md#example-1).
 
 **Preview Data & Swift 6 Concurrency:**
 
 SwiftData `@Model` 타입은 `Sendable`이 아니다. Preview 데이터를 담는 enum/struct에 `@MainActor`를 반드시 추가하라.
 
-```swift
-// ✅ 올바른 패턴
-@MainActor
-enum PreviewData {
-    static let sampleItems: [Item] = [
-        Item(name: "Sample")
-    ]
-}
-
-// ❌ 컴파일 에러 — @MainActor 누락
-enum PreviewData {
-    static let sampleItems: [Item] = [...]  // Swift 6: not concurrency-safe
-}
-```
+Example 2: see [optional patterns](references/ui-builder-patterns.md#example-2).
 
 **ContentView (루트 뷰) DI 패턴 — 중요:**
 
 ContentView는 App 엔트리포인트에서 서비스를 주입받는 **DI 허브** 역할을 한다.
 **반드시 프로토콜 타입(`any XxxServiceProtocol`)을 사용해야 한다.** 구체 클래스(Repository)를 직접 참조하면 stub 교체가 불가능해진다.
 
-```swift
-// ✅ 올바른 패턴 — 프로토콜 타입으로 주입
-struct ContentView: View {
-    let todoService: any TodoServiceProtocol
-    let categoryService: any CategoryServiceProtocol
-
-    var body: some View {
-        TabView {
-            Tab("홈", systemImage: "house.fill") {
-                HomeView(service: todoService)
-            }
-        }
-    }
-}
-
-// ❌ 잘못된 패턴 — 구체 클래스 직접 참조
-struct ContentView: View {
-    let todoService: TodoRepository  // stub 교체 불가
-}
-```
+Example 3: see [optional patterns](references/ui-builder-patterns.md#example-3).
 
 **Sharing Patterns:**
 - **UIImage 공유 시 `ShareLink(items:)` 사용 금지.** `UIImage`는 `Transferable`을 기본 준수하지 않으므로 `ShareLink(items:)`와 직접 사용할 수 없다. `@retroactive Transferable` 확장을 추가해도 `ShareLink(items:subject:message:)` 이니셜라이저와 호환되지 않는다.

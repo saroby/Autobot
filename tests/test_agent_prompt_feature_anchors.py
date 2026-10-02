@@ -7,6 +7,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from conftest import read_prompt
+
 AGENTS = Path(__file__).resolve().parent.parent / "agents"
 PLUGIN_DIR = AGENTS.parent
 
@@ -54,7 +56,7 @@ class TestPlanningDepthPromptContracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.architect = (AGENTS / "architect.md").read_text(encoding="utf-8")
-        cls.data_engineer = (AGENTS / "data-engineer.md").read_text(encoding="utf-8")
+        cls.data_engineer = read_prompt(AGENTS / "data-engineer.md")
         refs = PLUGIN_DIR / "skills" / "autobot-orchestrator" / "references"
         cls.template = (refs / "architecture-template.md").read_text(encoding="utf-8")
         cls.patterns = (refs / "planning-patterns.md").read_text(encoding="utf-8")

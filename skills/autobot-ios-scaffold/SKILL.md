@@ -1,7 +1,7 @@
 ---
 name: autobot-ios-scaffold
 user-invocable: false
-description: Use when creating a new Xcode project from scratch, setting up iOS 26+ project structure, configuring targets and schemes, or when the Autobot build pipeline needs project scaffolding (Phase 3). Also use when xcodegen or pbxproj generation fails, or when troubleshooting scaffold issues.
+description: "Create or repair the Autobot Phase 3 Xcode project, targets, and schemes."
 ---
 
 # iOS Project Scaffolding

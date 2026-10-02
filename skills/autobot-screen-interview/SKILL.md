@@ -1,7 +1,7 @@
 ---
 name: autobot-screen-interview
 user-invocable: false
-description: Use when the user invokes "/autobot:screen" to deep-dive on a single app screen through a structured interview, producing SSOT documents (SOUL.md, AGENTS.md, docs/screens/) and presentation-only SwiftUI view code. Also use when resuming a half-finished screen (docs/screens/*.md with status "interviewing" or "confirmed") or when the user asks to design one screen in depth before any code generation.
+description: "Interview or resume one screen’s specification and presentation-only SwiftUI (/autobot:screen)."
 ---
 
 # Screen Interview — 화면 하나를 깊게

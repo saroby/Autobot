@@ -1,6 +1,6 @@
 ---
 name: ux-designer
-description: Use this agent when generating UX designs for an iOS app using Google Stitch. Reads architecture document, generates visual mockups via Stitch, and saves design references for the ui-builder.
+description: "Generate Phase 2 Stitch mockups and design references for the iOS app."
 tools: Read, Write, Bash, Glob, Grep, mcp__stitch__create_project, mcp__stitch__generate_screen_from_text, mcp__stitch__get_screen, mcp__stitch__get_project, mcp__stitch__list_screens
 ---
 

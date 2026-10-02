@@ -1,7 +1,7 @@
 ---
 name: autobot-plan-preview
 user-invocable: false
-description: Use during Autobot Phase 2.5 (or when the user invokes "/autobot:plan") to assemble the static plan-preview HTML, inject a multi-modal critique of the generated mockups, and open the result in the browser for user review before code generation begins.
+description: "Render and critique the Phase 2.5 plan-preview HTML (/autobot:plan)."
 ---
 
 # Plan Preview (Phase 2.5)

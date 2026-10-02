@@ -13,9 +13,9 @@ import json
 import re
 import unittest
 
-from conftest import PLUGIN_DIR
+from conftest import PLUGIN_DIR, read_prompt
 
-SKILL = (PLUGIN_DIR / "skills/autobot-app-review/SKILL.md").read_text(encoding="utf-8")
+SKILL = read_prompt(PLUGIN_DIR / "skills/autobot-app-review/SKILL.md")
 META_CMD = (PLUGIN_DIR / "commands/meta.md").read_text(encoding="utf-8")
 REVIEW_CMD = (PLUGIN_DIR / "commands/app-review.md").read_text(encoding="utf-8")
 DEPLOYER = (PLUGIN_DIR / "agents/deployer.md").read_text(encoding="utf-8")

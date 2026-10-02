@@ -40,6 +40,13 @@ def import_runtime_modules():
         sys.path.insert(0, str(SCRIPTS_DIR))
 
 
+def read_prompt(path: Path) -> str:
+    """Validate prose contracts in the entry plus its routed references."""
+    import_runtime_modules()
+    from prompt_resources import read_bundle
+    return read_bundle(path)
+
+
 def _scoped_env(project_dir: Path, extra: dict | None = None) -> dict:
     """Return an env that pins CLAUDE_PROJECT_DIR/AUTOBOT_* to the temp project.
 

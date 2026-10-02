@@ -14,6 +14,8 @@
 > 파이프라인 규격의 편집 단위는 `spec/parts/*.json`이고, 실행 호환 번들은 `spec/pipeline.json`입니다. `skills/autobot-orchestrator/SKILL.md`와 README는 이 스펙을 설명하는 문서입니다.
 > 상태 전이, Gate 실행/기록, Phase lifecycle 로그의 유일한 엔진은 `scripts/pipeline.sh` + `runtime.py`입니다.
 
+스킬 본문은 현재 작업을 선택하는 라우터로 사용하고, 상세 절차는 해당 단계에 도달했을 때 읽습니다. [하네스 경량화와 검증 범위](docs/harness-optimization.md)를 참고하세요.
+
 ## 빠른 시작
 
 ### 1. 설치

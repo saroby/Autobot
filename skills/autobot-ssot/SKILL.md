@@ -1,7 +1,7 @@
 ---
 name: autobot-ssot
 user-invocable: false
-description: Use when the user invokes "/autobot:ssot" to interview the whole product (vision, users, features, domain, principles) and crystallize the decisions into a reusable blueprint — SOUL.md/AGENTS.md at the root plus an `ssot/` folder of systematic markdown managed as a git submodule (its own repository), so the product can be rebuilt from the blueprint later. Also use when resuming a half-finished blueprint (ssot/ present with status "interviewing"/"confirmed") or updating an already-wired ssot submodule.
+description: "Interview, resume, or update the product blueprint and its ssot submodule (/autobot:ssot)."
 ---
 
 # SSOT — 제품의 정수를 청사진으로

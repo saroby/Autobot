@@ -1,7 +1,7 @@
 ---
 name: autobot-register-app
 user-invocable: false
-description: Use when registering a new iOS app on App Store Connect (creating the App ID on Apple Developer Portal + app record on ASC) via `fastlane produce`. Auto-called by `/autobot:testflight` (deployer agent Step 1) as the first step before archive, AND can be invoked standalone for pre-flight bundle-ID/name validation. Bundle-ID re-runs are idempotent for the same team; app-name collisions surface as explicit failures so the caller can rename instead of silently continuing. AUTH IS DIFFERENT from every other deploy step — app creation goes through Apple's private API, so it needs an Apple ID web session (`fastlane spaceauth`, ~30-day TTL), NOT the ASC API key. Also use when troubleshooting "The bundle identifier is not available", "App Name you entered is already being used", "Unauthorized Access" / session expiry (`asc_session_expired`), or when an app needs to exist on ASC before the first TestFlight upload.
+description: "Register an iOS app on ASC or diagnose name/bundle collisions; requires an Apple ID web session."
 ---
 
 # iOS App Registration (App Store Connect)

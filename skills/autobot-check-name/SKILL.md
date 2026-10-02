@@ -1,7 +1,7 @@
 ---
 name: autobot-check-name
 user-invocable: false
-description: Use when checking whether an app title is already registered/taken in a specific country's App Store BEFORE registering it on App Store Connect — a pre-flight guard against `autobot-register-app`'s `name_collision`. Queries the PUBLIC iTunes Search API per country (no auth, no dependency beyond curl+python3), so it needs no ASC session or API key. Supports multiple countries in one call (`--country kr,us,jp`). A "taken" verdict is reliable; a "clear" verdict is best-effort (the Search API sees only LIVE apps, not ASC-reserved-but-unpublished names, and only the top ~200 hits per term) — the authoritative registrability verdict is still register-app's `name_collision`. Also use when troubleshooting "The App Name you entered is already being used" before retrying registration with a new name, or when scouting whether a name is free across several territories.
+description: "Check an app title against public App Store listings before ASC registration."
 ---
 
 # App Title Availability Check (per country)

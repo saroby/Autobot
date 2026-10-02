@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from conftest import read_prompt
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "clone_skill_sync.py"
@@ -66,6 +68,32 @@ class CloneSkillSyncTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("clone skill drift", result.stderr)
 
+    def test_sync_copies_routed_resources_even_if_entry_matches(self):
+        contents = "[Observe](references/observe.md)\n"
+        self.source.write_text(contents)
+        ref = self.source.parent / "references" / "observe.md"
+        ref.parent.mkdir()
+        ref.write_text("observation contract\n")
+        installed = self.install("1.2.3", contents)
+        self.assertNotEqual(0, self.run_sync("check").returncode)
+        synced = self.run_sync("sync")
+        self.assertEqual(0, synced.returncode, synced.stderr)
+        self.assertEqual(ref.read_text(), (installed.parent / "references" / "observe.md").read_text())
+        self.assertEqual(0, self.run_sync("check").returncode)
+
+    def test_sync_checks_runtime_references_inside_routed_docs(self):
+        self.source.write_text("[Observe](references/observe.md)\n")
+        ref = self.source.parent / "references" / "observe.md"
+        ref.parent.mkdir()
+        ref.write_text("run scripts/device_wda.sh\n")
+        self.add_script(self.repo, "device_wda.sh", "runtime\n")
+        installed = self.install("1.2.3")
+        result = self.run_sync("sync")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("installed-missing:device_wda.sh", result.stderr)
+        self.assertEqual("installed skill\n", installed.read_text())
+        self.assertFalse((installed.parent / "references" / "observe.md").exists())
+
     def test_sync_is_atomic_and_check_then_passes(self):
         target = self.install("1.2.3")
         synced = self.run_sync("sync")
@@ -111,9 +139,7 @@ class CloneSkillSyncTests(unittest.TestCase):
 
 class CloneSkillContractTests(unittest.TestCase):
     def test_clone_defaults_to_research_only_without_ownership_gate(self):
-        skill = (ROOT / "skills" / "autobot-clone-app" / "SKILL.md").read_text(
-            encoding="utf-8"
-        )
+        skill = read_prompt(ROOT / "skills" / "autobot-clone-app" / "SKILL.md")
         command = (ROOT / "commands" / "clone.md").read_text(encoding="utf-8")
 
         for text in (skill, command):
@@ -131,9 +157,7 @@ class CloneSkillContractTests(unittest.TestCase):
             self.assertNotIn(removed, command)
 
     def test_remote_xpc_auto_start_contract_matches_command_surface(self):
-        skill = (ROOT / "skills" / "autobot-clone-app" / "SKILL.md").read_text(
-            encoding="utf-8"
-        )
+        skill = read_prompt(ROOT / "skills" / "autobot-clone-app" / "SKILL.md")
         command = (ROOT / "commands" / "clone.md").read_text(encoding="utf-8")
 
         for text in (skill, command):

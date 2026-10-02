@@ -1,7 +1,7 @@
 ---
 name: autobot-setup
 user-invocable: false
-description: Use when other Autobot skills need user-wide defaults (bundle ID prefix, Apple Team ID, company name, deployment target, tester emails, git remote prefix). Read/write via scripts/config.sh. Also use when /autobot:setup needs to (re)initialize the global config at ~/.autobot/config.json.
+description: "Read or update user-wide Autobot defaults and initialize ~/.autobot/config.json (/autobot:setup)."
 ---
 
 # Autobot Setup — Global Config

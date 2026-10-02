@@ -19,6 +19,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from prompt_resources import documents
+
 
 DEFAULT_CACHE_ROOT = (
     Path.home() / ".codex" / "plugins" / "cache" / "saroby-marketplace" / "autobot"
@@ -62,7 +64,7 @@ def installed_versions(cache_root: Path) -> list[str]:
 
 def referenced_scripts(skill: Path) -> list[str]:
     """Return the script contract named by the skill prose, deterministically."""
-    text = skill.read_text(encoding="utf-8")
+    text = "\n".join(path.read_text(encoding="utf-8") for path in documents(skill))
     return sorted(set(re.findall(r"scripts/([A-Za-z0-9_.-]+)", text)))
 
 
@@ -103,16 +105,27 @@ def check(repo: Path, cache_root: Path) -> int:
         )
         return 1
     source_hash, target_hash = digest(source), digest(target)
-    if source_hash != target_hash:
+    drift = documentation_drift(source, target)
+    if drift:
         print(
             f"ERROR: clone skill drift for Autobot {version}: repo={source_hash[:12]} "
-            f"installed={target_hash[:12]}. Run clone_skill_sync.py sync after reviewing "
+            f"installed={target_hash[:12]}, files={', '.join(drift)}. "
+            "Run clone_skill_sync.py sync after reviewing "
             "the repository changes.",
             file=sys.stderr,
         )
         return 1
     print(f"OK: clone skill {version} matches installed plugin ({source_hash[:12]})")
     return 0
+
+
+def documentation_drift(source: Path, target: Path) -> list[str]:
+    return [
+        str(path.relative_to(source.parent))
+        for path in documents(source)
+        if not (installed := target.parent / path.relative_to(source.parent)).is_file()
+        or digest(path) != digest(installed)
+    ]
 
 
 def atomic_copy(source: Path, target: Path) -> None:
@@ -152,9 +165,13 @@ def sync(repo: Path, cache_root: Path) -> int:
             file=sys.stderr,
         )
         return 1
-    if digest(source) == digest(target):
+    if not documentation_drift(source, target):
         print(f"OK: clone skill {version} already synchronized")
         return 0
+    # Publish the entry last so it cannot route to resources not yet copied.
+    bundle = documents(source)
+    for resource in bundle[1:]:
+        atomic_copy(resource, target.parent / resource.relative_to(source.parent))
     atomic_copy(source, target)
     print(f"OK: synchronized clone skill {version} -> {target}")
     return 0

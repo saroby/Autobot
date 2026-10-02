@@ -1,7 +1,7 @@
 ---
 name: autobot-ux-design
 user-invocable: false
-description: Use when generating UX mockup designs for an iOS app using Stitch MCP, extracting design tokens from generated screens, or creating design specifications for SwiftUI implementation. Also use when the Autobot build pipeline needs visual UI mockups before coding begins (Phase 2), or when Stitch integration fails and fallback design decisions are needed.
+description: "Create Phase 2 Stitch mockups and design specs, including the unavailable-tool fallback."
 ---
 
 # UX Design with Google Stitch

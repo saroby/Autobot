@@ -1,7 +1,8 @@
 # Integration Wiring Patterns
 
-App 엔트리포인트에서 Stub을 실제 Repository로 교체하는 패턴.
-아키텍처 복잡도에 따라 3가지 패턴을 제공한다.
+`App/CompositionRoot.swift`에서 Stub을 실제 Repository로 교체한다.
+아래 App 예제는 의존성 조립을 설명하는 참고 코드다. 현재 scaffold에서는
+container/service 조립을 CompositionRoot에 적용하고 기존 App 엔트리와 단일 `@main`을 유지한다.
 
 ## First-Launch Seeding (`seedPolicy=="seeded"` 일 때만)
 
@@ -198,14 +199,14 @@ struct MyApp: App {
 교체 후 다음을 확인한다:
 
 ```bash
-# 1. Stub 참조가 App 엔트리포인트에 없는지
-! grep -qi "Stub" <AppName>/App/<AppName>App.swift
+# 1. Stub 참조가 production composition에 없는지
+! grep -qi "Stub" <AppName>/App/CompositionRoot.swift
 
 # 2. 실제 Repository/Service가 사용되는지
-grep -qi "Repository\|Service(" <AppName>/App/<AppName>App.swift
+grep -qi "Repository\|Service(" <AppName>/App/CompositionRoot.swift
 
 # 3. ModelContainer가 직접 생성되는지
-grep -qi "ModelContainer" <AppName>/App/<AppName>App.swift
+grep -qi "ModelContainer" <AppName>/App/CompositionRoot.swift
 
 # 4. ServiceStubs.swift가 여전히 존재하는지 (삭제하면 Preview 에러)
 test -f <AppName>/App/ServiceStubs.swift

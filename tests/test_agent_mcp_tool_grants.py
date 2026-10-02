@@ -28,6 +28,8 @@ import re
 import unittest
 from pathlib import Path
 
+from conftest import read_prompt
+
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
 # Full MCP tool identifier: mcp__<server>__<tool> (at least one char each side).
@@ -160,8 +162,7 @@ class TestCommandMCPToolGrants(unittest.TestCase):
         A hardcoded expectation is only worth having while the thing it mirrors
         still exists — otherwise it quietly protects a call nobody makes.
         """
-        skill = (PLUGIN_DIR / "skills" / "autobot-copy-analyze" / "SKILL.md").read_text(
-            encoding="utf-8")
+        skill = read_prompt(PLUGIN_DIR / "skills" / "autobot-copy-analyze" / "SKILL.md")
         missing = {t for t in _COPY_APPSTORE_TOOLS
                    if t.rsplit("__", 1)[1] not in skill}
         self.assertEqual(
