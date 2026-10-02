@@ -1,6 +1,6 @@
 ---
 name: ssot
-description: "제품 전체를 인터뷰로 끌어내 정수가 되는 결정을 ssot/ 폴더에 체계적 마크다운으로 남기고, 그 폴더를 별도 git repository(submodule)로 승격해 언제든 코드를 재빌드할 수 있는 청사진으로 관리합니다. SOUL.md·AGENTS.md·CLAUDE.md 도 함께 생성·병합합니다. 어떤 프로젝트에서나 쓰는 독립 명령입니다."
+description: "제품 전체를 인터뷰로 끌어내 정수가 되는 결정을 ssot/ 폴더에 체계적 마크다운으로 남기고, 그 폴더를 별도 git repository(submodule)로 승격해 언제든 코드를 재빌드할 수 있는 청사진으로 관리합니다. SOUL.md·AGENTS.md 도 함께 생성·병합합니다 (CLAUDE.md 는 만들지 않습니다). 어떤 프로젝트에서나 쓰는 독립 명령입니다."
 argument-hint: "<제품 한 줄 설명> (예: '지하철 30초 동안 오늘 할 일 하나만 보여주는 앱'). 생략 시 인터뷰 첫 질문으로 시작"
 allowed-tools:
   - Read
@@ -20,7 +20,7 @@ allowed-tools:
 > 인터뷰 절차·SSOT 병합·submodule 배선의 SSOT 는 **`autobot-ssot` 스킬**이 소유한다.
 
 - **입력** — 제품 한 줄 설명 (생략 시 인터뷰 첫 질문으로 확정)
-- **결과물** — `ssot/*.md` (제품 청사진, 주 산출물) + `SOUL.md`/`AGENTS.md`/`CLAUDE.md` 생성·병합 + `ssot/` 를 **git submodule(별도 repo)** 로 승격 (git 없으면 init 먼저)
+- **결과물** — `ssot/*.md` (제품 청사진, 주 산출물) + `SOUL.md`/`AGENTS.md` 생성·병합 (CLAUDE.md 는 만들지 않는다) + `ssot/` 를 **git submodule(별도 repo)** 로 승격 (git 없으면 init 먼저)
 
 `/autobot:screen` 이 화면 하나를 깊게 판다면, 이 명령은 **제품 전체**를 판다. 둘은 상보적이다: `ssot/` = 제품 청사진(재빌드마다 재사용), `docs/screens/` = 화면별 spec.
 

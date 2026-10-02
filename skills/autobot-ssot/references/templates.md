@@ -128,7 +128,7 @@ status 전이: `interviewing`(R1–R5 진행 중) → `confirmed`(R6 승인) →
 
 # 루트 SSOT — `ssot/` 를 가리키는 얇은 문서
 
-`ssot/` 가 정본이다. 루트 3종은 그 위에 얹히는 증류본·포인터다. 중복을 최소화한다.
+`ssot/` 가 정본이다. 루트 2종은 그 위에 얹히는 증류본·포인터다. 중복을 최소화한다.
 
 ## SOUL.md — 제품 정체성 (증류본)
 
@@ -154,7 +154,7 @@ status 전이: `interviewing`(R1–R5 진행 중) → `confirmed`(R6 승인) →
 ```markdown
 # AGENTS
 
-이 프로젝트에서 작업하는 모든 에이전트의 규칙. CLAUDE.md 는 이 파일을 참조한다.
+이 프로젝트에서 작업하는 모든 에이전트의 규칙.
 
 ## SSOT 지도
 | 문서 | 소유 |
@@ -169,13 +169,4 @@ status 전이: `interviewing`(R1–R5 진행 중) → `confirmed`(R6 승인) →
 2. 청사진과 코드가 어긋나면 `ssot/` 를 진실로 본다 (청사진이 틀렸으면 청사진부터 고친다).
 3. 제품 수준 결정이 바뀌면 `/autobot:ssot` 로 청사진을 갱신한다 — 청사진 밖에서 몰래 결정하지 않는다.
 4. 화면 코드는 `/autobot:screen` 인터뷰로 시작 — spec 없는 화면 코드 금지.
-```
-
-## CLAUDE.md — Claude Code 전용
-
-```markdown
-@AGENTS.md
-
-# Claude Code 전용
-<빌드·프리뷰 커맨드, 권한, Claude Code 에만 해당하는 지침. AGENTS.md 와 중복 금지 — 없으면 이 섹션 생략>
 ```

@@ -62,7 +62,7 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 /autobot:screen 홈 피드
 ```
 
-파이프라인과 무관하게 **아무 앱 프로젝트에서나** 화면 하나를 5라운드 인터뷰(존재 이유 → 콘텐츠 위계 → 인터랙션 → 상태 → 룩앤필)로 깊게 기획합니다. 산출물: `docs/screens/<slug>.md` 화면 spec + SOUL.md/AGENTS.md/CLAUDE.md 생성·병합 + presentation-only SwiftUI 뷰 (상태별 `#Preview`). 라운드마다 spec 에 즉시 기록되어 세션이 끊겨도 재개됩니다.
+파이프라인과 무관하게 **아무 앱 프로젝트에서나** 화면 하나를 5라운드 인터뷰(존재 이유 → 콘텐츠 위계 → 인터랙션 → 상태 → 룩앤필)로 깊게 기획합니다. 산출물: `docs/screens/<slug>.md` 화면 spec + SOUL.md/AGENTS.md 생성·병합 (CLAUDE.md 는 만들지 않음) + presentation-only SwiftUI 뷰 (상태별 `#Preview`). 라운드마다 spec 에 즉시 기록되어 세션이 끊겨도 재개됩니다.
 
 ## 빌드 파이프라인
 

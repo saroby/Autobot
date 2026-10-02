@@ -1,7 +1,7 @@
 ---
 name: autobot-ssot
 user-invocable: false
-description: Use when the user invokes "/autobot:ssot" to interview the whole product (vision, users, features, domain, principles) and crystallize the decisions into a reusable blueprint — SOUL.md/AGENTS.md/CLAUDE.md at the root plus an `ssot/` folder of systematic markdown managed as a git submodule (its own repository), so the product can be rebuilt from the blueprint later. Also use when resuming a half-finished blueprint (ssot/ present with status "interviewing"/"confirmed") or updating an already-wired ssot submodule.
+description: Use when the user invokes "/autobot:ssot" to interview the whole product (vision, users, features, domain, principles) and crystallize the decisions into a reusable blueprint — SOUL.md/AGENTS.md at the root plus an `ssot/` folder of systematic markdown managed as a git submodule (its own repository), so the product can be rebuilt from the blueprint later. Also use when resuming a half-finished blueprint (ssot/ present with status "interviewing"/"confirmed") or updating an already-wired ssot submodule.
 ---
 
 # SSOT — 제품의 정수를 청사진으로
@@ -17,8 +17,9 @@ description: Use when the user invokes "/autobot:ssot" to interview the whole pr
 | 제품 청사진 | `ssot/*.md` | **주 산출물.** 라운드마다 갱신, 재빌드의 정본 | 이어서 재개 (status 참조) |
 | SOUL.md | 프로젝트 루트 | 제품 정체성 요약 — `ssot/product.md` 를 가리키는 증류본 | 비파괴 병합 |
 | AGENTS.md | 프로젝트 루트 | 에이전트 작업 규칙 정본 — SSOT 지도에 `ssot/` 등록 | 비파괴 병합 |
-| CLAUDE.md | 프로젝트 루트 | `@AGENTS.md` 참조 + Claude Code 전용 지침만 | 참조 줄만 보장 |
 | git submodule | `.gitmodules` + `ssot` gitlink | `ssot/` 를 별도 repo 로 승격 | UPDATE 모드로 재개 |
+
+**CLAUDE.md 는 만들지 않는다.** 새로 생성하지 않고, 이미 있어도 수정·병합하지 않는다 — 이 스킬의 산출물 계약 밖이다.
 
 `ssot/` 파일 세트는 **상한**이지 고정 스캐폴드가 아니다 (템플릿은 `references/templates.md`). 내용이 나온 것만 만든다 — 빈 파일·빈 헤딩 금지.
 
@@ -104,7 +105,7 @@ git rev-parse --is-inside-work-tree 2>/dev/null   # git 여부
 git submodule status ssot 2>/dev/null             # 이미 submodule?
 grep -q 'path = ssot' .gitmodules 2>/dev/null && echo SUBMODULE
 test -f ssot/.git && echo SUBMODULE_FILE          # ssot/.git 이 파일이면 submodule
-ls ssot/README.md SOUL.md AGENTS.md CLAUDE.md 2>/dev/null
+ls ssot/README.md SOUL.md AGENTS.md 2>/dev/null
 ls .autobot/architecture.md 2>/dev/null           # Autobot 컨텍스트(있으면 답을 미리 채움)
 ```
 
@@ -163,15 +164,15 @@ ls .autobot/architecture.md 2>/dev/null           # Autobot 컨텍스트(있으�
 ### R6 — 확정
 `ssot/` 전체(+ `README.md` 의 재빌드 안내)를 최종 스냅샷으로 보여주고 승인받는다. 수정 요청은 해당 라운드 결정을 고치되, 상류 결정(R1 차별화·R2 MVP 경계)이 바뀌면 의존 하류(기능·도메인)를 함께 점검해 갱신하거나 유지 이유를 `decisions.md` 에 남긴다. 승인되면 `README.md` status 를 `confirmed` 로 바꾸고 SSOT 병합 + submodule 배선으로 진행한다.
 
-## SSOT 병합 (SOUL/AGENTS/CLAUDE)
+## SSOT 병합 (SOUL/AGENTS)
 
-순서: `ssot/*.md` (완성) → SOUL.md → AGENTS.md → CLAUDE.md. 템플릿은 `references/templates.md`.
+순서: `ssot/*.md` (완성) → SOUL.md → AGENTS.md. 템플릿은 `references/templates.md`.
 
 **병합 규칙 (기존 파일이 있을 때):**
 - 기존 섹션·문장을 임의 삭제·재작성하지 않는다. 이번 인터뷰에서 **드러난 것만** 추가한다.
 - SOUL.md: `ssot/product.md`·`ssot/principles.md` 의 **증류본**. 세부는 `ssot/` 에 두고 SOUL 은 요약 + "정본은 ssot/" 포인터.
 - AGENTS.md: SSOT 지도에 두 소유를 **명시**한다 — `ssot/` = 제품 청사진(재빌드마다 재사용), `docs/screens/` = 화면별 spec. `/autobot:screen` 과 헤딩을 다투지 않게 한다.
-- CLAUDE.md: 첫 줄 `@AGENTS.md` 참조 없으면 추가. AGENTS.md 와 중복 금지.
+- CLAUDE.md: **만들지도, 고치지도 않는다.** 없으면 그대로 두고, 있으면 건드리지 않는다.
 - 충돌하면 덮어쓰지 말고 사용자에게 어느 쪽이 맞는지 확인.
 
 ## git submodule 배선 (핵심 — 실패 지점 집중)
@@ -190,7 +191,7 @@ repo 이름은 프로젝트에서 유도한다 (기존 `origin` 또는 디렉토
 
 - 진입 상태 (A 신규 / B 재개 / C 업데이트) 와 무엇을 했는지
 - 제품 한 문장 정의 + 차별화
-- 생성·변경 파일: `ssot/*.md` 목록 + SSOT 4종 상태(생성/병합/유지)
+- 생성·변경 파일: `ssot/*.md` 목록 + SOUL.md·AGENTS.md 상태(생성/병합/유지)
 - submodule 상태: 원격 URL, 부모 커밋 여부, `git submodule status ssot` 결과
 - `decisions.md` 에 쌓인 미결/재검토 항목
 - 재빌드 안내 한 줄: "다른 프로젝트에서 `git submodule add <url> ssot` 로 이 청사진을 재사용할 수 있다."

@@ -1,7 +1,7 @@
 ---
 name: autobot-screen-interview
 user-invocable: false
-description: Use when the user invokes "/autobot:screen" to deep-dive on a single app screen through a structured interview, producing SSOT documents (SOUL.md, AGENTS.md, CLAUDE.md, docs/screens/) and presentation-only SwiftUI view code. Also use when resuming a half-finished screen (docs/screens/*.md with status "interviewing" or "confirmed") or when the user asks to design one screen in depth before any code generation.
+description: Use when the user invokes "/autobot:screen" to deep-dive on a single app screen through a structured interview, producing SSOT documents (SOUL.md, AGENTS.md, docs/screens/) and presentation-only SwiftUI view code. Also use when resuming a half-finished screen (docs/screens/*.md with status "interviewing" or "confirmed") or when the user asks to design one screen in depth before any code generation.
 ---
 
 # Screen Interview — 화면 하나를 깊게
@@ -15,9 +15,10 @@ description: Use when the user invokes "/autobot:screen" to deep-dive on a singl
 | 화면 spec | `docs/screens/<slug>.md` | **인터뷰의 주 산출물.** 라운드마다 갱신 | 이어서 재개 (status 참조) |
 | SOUL.md | 프로젝트 루트 | 제품 정체성 — 왜 존재, 누구의 어떤 순간, 감정 목표, 하지 않을 것 | 비파괴 병합 |
 | AGENTS.md | 프로젝트 루트 | 에이전트 작업 규칙의 **정본** — 구조, 컨벤션, SSOT 지도 | 비파괴 병합 |
-| CLAUDE.md | 프로젝트 루트 | `@AGENTS.md` 참조 + Claude Code 전용 지침만 (내용 중복 금지) | 참조 줄만 보장 |
 | SwiftUI 뷰 | 기존 Views 패턴 위치 (없으면 `Views/<ScreenName>View.swift`) | presentation-only, 상태별 `#Preview` | diff 요약 확인 후 교체 |
 | Xcode 스캐폴드 | `<App>.xcodeproj` (+ `project.yml`, `App/<App>App.swift`) | **프리뷰 캔버스 구동용 최소 프로젝트** — 없을 때만 생성 | 유지 (xcodegen 재생성만) |
+
+**CLAUDE.md 는 만들지 않는다.** 새로 생성하지 않고, 이미 있어도 수정·병합하지 않는다 — 이 스킬의 산출물 계약 밖이다.
 
 슬러그는 kebab-case 영문 (예: 홈 피드 → `home-feed`, 뷰는 `HomeFeedView.swift`). 문서 템플릿은 `references/templates.md` 참조.
 
@@ -38,7 +39,7 @@ description: Use when the user invokes "/autobot:screen" to deep-dive on a singl
 ```bash
 # 프로젝트 유형과 기존 산출물 파악
 ls *.xcodeproj Package.swift 2>/dev/null          # Xcode/SPM 여부
-ls SOUL.md AGENTS.md CLAUDE.md 2>/dev/null        # 기존 SSOT
+ls SOUL.md AGENTS.md 2>/dev/null        # 기존 SSOT
 ls docs/screens/*.md 2>/dev/null                  # 기존 화면 spec (재개 후보 포함)
 ls .autobot/architecture.md .autobot/design-spec.md 2>/dev/null  # Autobot 컨텍스트
 ```
@@ -107,13 +108,13 @@ default 외 상태를 화면 유형에 맞게 **제안하고** 고르게 한다 
 
 ## SSOT 생성·병합
 
-순서: `docs/screens/<slug>.md` (이미 완성) → SOUL.md → AGENTS.md → CLAUDE.md. 템플릿과 섹션 구조는 `references/templates.md`.
+순서: `docs/screens/<slug>.md` (이미 완성) → SOUL.md → AGENTS.md. 템플릿과 섹션 구조는 `references/templates.md`.
 
 **병합 규칙 (기존 파일이 있을 때):**
 - 기존 섹션·문장을 임의로 삭제·재작성하지 않는다. 이번 인터뷰에서 **드러난 것만** 해당 섹션에 추가한다.
 - SOUL.md: R1/R5 에서 제품 수준 통찰이 나왔을 때만 갱신 (화면 세부사항은 넣지 않는다 — 그건 spec 소유).
 - AGENTS.md: "화면 작업 전 `docs/screens/<slug>.md` 를 먼저 읽는다" 규칙과 SSOT 지도가 없으면 추가. 이번 화면을 화면 목록에 등록.
-- CLAUDE.md: 첫 줄 `@AGENTS.md` 참조가 없으면 추가. AGENTS.md 와 내용 중복 금지 — Claude Code 전용 지침(권한, 빌드 커맨드 등)만 거주.
+- CLAUDE.md: **만들지도, 고치지도 않는다.** 없으면 그대로 두고, 있으면 건드리지 않는다.
 - 기존 내용과 이번 결정이 **충돌**하면 덮어쓰지 말고 사용자에게 어느 쪽이 맞는지 확인한다.
 
 ## SwiftUI 뷰 생성 — presentation-only 계약
@@ -169,7 +170,7 @@ swift build 2>&1 | tail -5
 
 - **Xcode 가 열려 있고 캔버스에 프리뷰가 떠 있는 상태**로 보고 시작 — 확인할 `#Preview` 이름 목록을 첫 항목으로
 - 화면 한 문장 정의 + 훅
-- 생성·변경 파일 목록 (SSOT 4종 상태: 생성/병합/유지)
+- 생성·변경 파일 목록 (SOUL.md·AGENTS.md·화면 spec 상태: 생성/병합/유지)
 - 뷰 파일 경로 + 프리뷰 상태 목록 + 컴파일 확인 결과
 - "미결/후속" 에 쌓인 항목 (다음 `/autobot:screen` 후보)
 

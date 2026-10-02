@@ -86,7 +86,7 @@ status 전이: `interviewing`(R1–R5 진행 중, 라운드마다 갱신) → `c
 ```markdown
 # AGENTS
 
-이 프로젝트에서 작업하는 모든 에이전트의 규칙. CLAUDE.md 는 이 파일을 참조한다.
+이 프로젝트에서 작업하는 모든 에이전트의 규칙.
 
 ## SSOT 지도
 | 문서 | 소유 |
@@ -107,15 +107,6 @@ status 전이: `interviewing`(R1–R5 진행 중, 라운드마다 갱신) → `c
 | 화면 | spec | 뷰 | 상태 |
 |------|------|-----|------|
 | <이름> | docs/screens/<slug>.md | <경로> | interviewing/confirmed/built |
-```
-
-## CLAUDE.md — Claude Code 전용
-
-```markdown
-@AGENTS.md
-
-# Claude Code 전용
-<빌드·프리뷰 커맨드, 권한, Claude Code 에만 해당하는 지침. AGENTS.md 와 중복 금지 — 없으면 이 섹션 생략>
 ```
 
 ## SwiftUI 뷰 스켈레톤

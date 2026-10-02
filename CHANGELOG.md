@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Changed — `/autobot:ssot`·`/autobot:screen` 이 CLAUDE.md 를 만들지 않는다
+- 두 스킬은 루트에 `SOUL.md`·`AGENTS.md` 만 생성·병합한다. `CLAUDE.md`(`@AGENTS.md` 참조 줄 보장) 단계와 템플릿을 제거했고, 이미 있는 `CLAUDE.md` 도 수정하지 않는다. Step 0 스캔·최종 보고·`commands/ssot.md`·`commands/screen.md`·README 안내도 같이 맞췄다.
+
 ### Fixed — 역할을 안 알려주는 앱 앞에서 탐험이 첫 화면에 갇혔다
 - `device_a11y.py` 의 탭 후보 추출은 요소의 role/trait 가 actionable 이어야 후보를 냈다. 커스텀 렌더러로 만든 앱은 화면 전체를 trait 없는 `XCUIElementTypeOther` 로 내보내므로 후보가 **구조적으로 0개**가 된다 — 실측 2026-08-27, zeta 3.47.0 홈 화면은 요소 144개·라벨 60개인데 `0 tappable, 0 withheld` 였고 하단 탭바조차 빠져서 `/autobot:copy` 가 홈 한 장만 찍고 끝났다. 위험해서 막은 게 아니라 메타데이터가 없어서 막힌, 안전장치의 오탐이다.
 - 역할 티어가 아무것도 못 내면 이제 **라벨-리프 티어**로 자동 전환한다. `WARN: role-blind screen` 을 먼저 출력하고, 자기 라벨을 소유한 최말단 요소만 후보로 낸다. 자식들의 라벨을 이어 붙여 갖는 조상 컨테이너(`홈 대화 만들기 마이페이지`)는 중심점이 사용자가 보는 컨트롤이 아니므로 제외된다.
