@@ -81,9 +81,9 @@ git -C ssot push -u origin HEAD
 ```
 URL 은 이 bare 경로.
 
-## 4. 푸시 성공을 검증한다 (가드 — mv/rm 전 필수)
+## 4. 푸시 성공을 검증한다 (부모 연결 전 필수)
 
-**부분 푸시면 재-clone 이 불완전해지고, 이미 원본을 옮긴 뒤라 유실된다. 검증 통과 전에는 5단계로 넘어가지 않는다.**
+**원격에서 같은 커밋을 가져올 수 있어야 부모 gitlink 를 공유할 수 있다. 검증 통과 전에는 5단계로 넘어가지 않는다.**
 
 ```bash
 # 로컬 HEAD 와 원격 HEAD 가 같은 커밋을 가리키는지 확인
@@ -97,14 +97,21 @@ REMOTE=$(git -C ssot ls-remote origin HEAD | cut -f1)
 
 푸시 검증(`PUSH_OK`) 후에만.
 
+**기존 `ssot/` 저장소를 그대로 연결한다.** 원본을 옮기거나 재-clone·삭제하지 않는다. 기존 `ssot.tmp` 와 미커밋·untracked 파일도 그대로 보존된다.
+
 ```bash
-URL=$(git -C ssot remote get-url origin)
-mv ssot ssot.tmp                    # 원본을 옆으로 (원격에 동일 내용이 이미 있음)
-git submodule add "$URL" ssot       # 원격에서 fresh clone → ssot/ 재생성
-rm -rf ssot.tmp                     # 확인 후 원본 제거
-git submodule status ssot           # 정상 배선 확인 (커밋 해시 + ssot 출력)
+(
+  set -e                           # 실패하면 후속 단계 없이 중단 (호출 셸 옵션은 유지)
+  URL=$(git -C ssot remote get-url origin)
+  git submodule add "$URL" ssot     # 기존 저장소를 등록 — clone 하지 않는다
+  git submodule absorbgitdirs ssot  # .git 디렉토리를 부모로 옮기고 .git 참조 파일 생성
+  git submodule status ssot         # 정상 배선 확인 (커밋 해시 + ssot 출력)
+)
 ```
-`submodule add` 가 "already exists in the index" 로 실패하면 상태 C 를 놓친 것 → UPDATE 절차로 전환.
+
+- **로컬 bare 옵션도 같은 절차**: 기존 저장소를 등록하므로 `file` transport 를 열 필요가 없다. 전역 Git 설정을 바꾸지 않는다.
+- 실패해도 원본 `ssot/` 는 남는다. `submodule add` 가 "already exists in the index" 로 실패하면 진입 상태를 재확인한다 — 실제 submodule 이면 UPDATE 로, 일반 파일이 부모 인덱스에 잡힌 상태면 원인을 보고하고 중단한다. 인덱스를 임의로 지우지 않는다.
+- `submodule add` 는 성공하고 `absorbgitdirs` 만 실패했다면 원본·인덱스를 보존한 채 원인을 해결하고 `git submodule absorbgitdirs ssot` 부터 재개한다.
 
 ## 6. 부모 커밋 (권장 — 보고에 명시)
 

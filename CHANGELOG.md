@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed — SSOT 연결 시 원본 보존·Phase 완료 JSON 출력
+- SSOT 를 옮겨 재-clone 하던 절차를 기존 저장소 등록·`absorbgitdirs` 로 교체했다. 기존 `ssot.tmp`·미커밋·untracked 파일을 보존하고 실패 즉시 중단한다. 로컬 bare 옵션도 Git transport 설정 변경 없이 연결된다.
+- `advance-phase --format json` 은 상태 문구를 `messages`, 종료 코드를 `returnCode` 에 담아 JSON 하나만 출력한다. Gate 없는 Phase·전이 거절도 같은 형식이며, 하위 함수의 경고는 stderr 로 보낸다.
+
 ### Changed — `/autobot:ssot`·`/autobot:screen` 이 CLAUDE.md 를 만들지 않는다
 - 두 스킬은 루트에 `SOUL.md`·`AGENTS.md` 만 생성·병합한다. `CLAUDE.md`(`@AGENTS.md` 참조 줄 보장) 단계와 템플릿을 제거했고, 이미 있는 `CLAUDE.md` 도 수정하지 않는다. Step 0 스캔·최종 보고·`commands/ssot.md`·`commands/screen.md`·README 안내도 같이 맞췄다.
 

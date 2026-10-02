@@ -27,6 +27,8 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import sys
+from contextlib import nullcontext, redirect_stdout
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,9 +71,12 @@ class AdvanceResult:
 
 def render_advance_result(result: AdvanceResult, *, output_format: str = "text") -> None:
     """CLI-side rendering of an AdvanceResult."""
-    if output_format == "json" and result.gate_json is not None:
-        print(json.dumps(result.gate_json, ensure_ascii=False, indent=2))
-    elif result.gate_text:
+    if output_format == "json":
+        payload = dict(result.gate_json or {})
+        payload.update(returnCode=result.return_code, messages=result.messages)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if result.gate_text:
         print(result.gate_text)
     for message in result.messages:
         print(message)
@@ -79,12 +84,15 @@ def render_advance_result(result: AdvanceResult, *, output_format: str = "text")
 
 def advance_phase(args: argparse.Namespace) -> int:
     """CLI entrypoint — runs the core logic and renders + returns its result."""
-    result = _advance_phase_core(args)
-    if result.return_code == 0:
-        # Lease heartbeat: a long build must not outlive its build.lock lease.
-        import build_lock
-        build_lock.renew_from_state(Path(args.project_dir).resolve())
-    render_advance_result(result, output_format=getattr(args, "format", "text"))
+    output_format = getattr(args, "format", "text")
+    # Schema warnings and other helper diagnostics must not corrupt JSON stdout.
+    with redirect_stdout(sys.stderr) if output_format == "json" else nullcontext():
+        result = _advance_phase_core(args)
+        if result.return_code == 0:
+            # Lease heartbeat: a long build must not outlive its build.lock lease.
+            import build_lock
+            build_lock.renew_from_state(Path(args.project_dir).resolve())
+    render_advance_result(result, output_format=output_format)
     return result.return_code
 
 

@@ -181,7 +181,7 @@ ls .autobot/architecture.md 2>/dev/null           # Autobot 컨텍스트(있으�
 
 - **git 없으면** 부모에서 `git init` 먼저 (사용자가 명시 요청한 동작).
 - **원격 위치는 AskUserQuestion 으로 확정** — GitHub repo 생성(추천, 프로젝트 간 재사용 가능) / 로컬 bare repo / 지금은 건너뛰기. **GitHub repo 생성은 외부로 나가는 동작이라 실행 전 확인**을 받는다.
-- 레시피: `ssot/` 내용 완성 → `ssot` 안에서 `git init`·commit → 원격 생성·**푸시 성공 검증** → 부모에서 `mv ssot ssot.tmp && git submodule add <url> ssot && rm -rf ssot.tmp`. **푸시 성공을 확인하기 전에는 `mv`·`rm` 하지 않는다** (부분 푸시 시 재-clone 이 불완전 → 원본 유실).
+- 레시피: `ssot/` 내용 완성 → `ssot` 안에서 `git init`·commit → 원격 생성·**푸시 성공 검증** → 기존 저장소를 `git submodule add <url> ssot`·`git submodule absorbgitdirs ssot` 로 연결. **원본의 이동·재-clone·삭제 없이**, 각 단계가 성공했을 때만 다음 단계로 진행한다. 로컬 bare 옵션도 기존 저장소를 등록하므로 `file` transport 설정 변경 없이 동작한다. 정확한 실행 블록·실패 재개는 참조 문서만 따른다.
 - **멱등성**: repo 이름 충돌(`gh repo create` 실패)은 이 플러그인의 register-app 패턴대로 already_exists → 기존 원격 재사용(조용한 성공, 에러 아님). 상태 C(이미 submodule)면 배선을 건너뛰고 UPDATE 절차로.
 - 부모의 `.gitmodules` + gitlink 커밋은 배선의 일부로 **권장**한다 (staged 상태로 방치하면 취약). 커밋 여부·내용을 최종 보고에 명시.
 
