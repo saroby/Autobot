@@ -6,166 +6,62 @@ description: "Write Phase 7 learnings or analyze repeated failures across Autobo
 
 # Build Retrospective & Self-Improvement
 
-빌드마다 학습 데이터를 축적하여 다음 빌드의 품질과 속도를 개선하는 피드백 루프.
+Phase 7에서 이번 빌드의 관측·패턴을 `.autobot/learnings.json`에 누적한다. [learning-schema.md](references/learning-schema.md)의 스키마·갱신 규칙을 사용한다.
 
-## Phase 이름 매핑
+## 수집과 학습
 
-`build-state.json`의 숫자 키를 `learnings.json`의 문자열 키로 변환할 때 이 테이블을 사용한다:
+데이터 우선순위: `.autobot/build-log.jsonl` → `build-state.json` / `.autobot/deploy-status.json` → 로그에 없는 세션 관측.
 
-| build-state.json | learnings.json | 설명 |
-|-------------------|---------------|------|
-| `"0"` | `preflight` | 환경 검증 |
-| `"1"` | `architecture` | 아키텍처 + 타입 계약 |
-| `"2"` | `ux_design` | UX 디자인 (Stitch) |
-| `"3"` | `scaffold` | Xcode 프로젝트 생성 |
-| `"4"` | `parallel_coding` | 병렬 코드 생성 |
-| `"5"` | `quality` | 통합 + 빌드 검증 |
-| `"6"` | `deploy` | TestFlight 배포 |
-| `"7"` | `retrospective` | 회고 + 보고서 |
-
-## Retrospective Process
-
-### 1. Collect Build Metrics
-
-**1차 데이터 소스**: `.autobot/build-log.jsonl` (구조화된 이벤트 로그)
-**2차 데이터 소스**: `build-state.json`, `.autobot/deploy-status.json`
-**3차 보조**: 세션 컨텍스트 (로그에 없는 정보만)
-
-```bash
-# 이벤트 로그에서 빌드 시도 횟수 추출
-grep '"build_attempt"' .autobot/build-log.jsonl | wc -l
-
-# 에이전트 소유권 위반 횟수 추출
-grep '"agent_violation"' .autobot/build-log.jsonl | wc -l
-
-# Phase별 소요 시간 계산 (start ~ complete 이벤트 간 간격)
-python3 -c "
-import json
-events = [json.loads(l) for l in open('.autobot/build-log.jsonl')]
-starts = {e['phase']: e['ts'] for e in events if e['event'] == 'start'}
-ends = {e['phase']: e['ts'] for e in events if e['event'] == 'complete'}
-for p in sorted(starts):
-    if p in ends:
-        print(f'Phase {p}: {starts[p]} → {ends[p]}')
-" 2>/dev/null || echo "build-log.jsonl not available"
-```
-
-| 항목 | 소스 | 예시 |
-|------|------|------|
-| Phase별 소요 시간 | `build-log.jsonl` (start/complete 이벤트 간격) | 180초 |
-| 빌드 시도 횟수 | `build-log.jsonl` (build_attempt 이벤트 수) | 3 |
-| 에러 유형/카테고리 | `build-log.jsonl` (build_fix 이벤트의 category) | "import", "type" |
-| 에이전트 소유권 위반 | `build-log.jsonl` (agent_violation 이벤트) | 0 |
-| 스냅샷 복원 횟수 | `build-log.jsonl` (snapshot_restore 이벤트 수) | 1 |
-| 재시도 횟수 | `build-state.json` (`phases[N].retryCount`) | 2 |
-| 에이전트 성공/실패 | `build-log.jsonl` (agent_complete/agent_dispatch 매칭) | ui-builder 성공 |
-| 배포 결과 | `.autobot/deploy-status.json` | upload_success: true |
-| 모델/토큰 사용량 | 세션 컨텍스트 (가능한 경우) | opus: 45k tokens |
-
-### 2. Analyze Patterns
-
-`.autobot/learnings.json`의 과거 빌드와 비교:
-- 반복 에러 패턴 (같은 fix가 여러 번 적용됨)
-- 성공한 아키텍처 패턴
-- 효과적인 에이전트 디스패치 전략
-- 배포 실패 원인과 해결법
-
-### 3. Update Learnings File
-
-**갱신 절차:**
-1. `.autobot/learnings.json`을 Read (없으면 빈 스키마로 초기화)
-2. `builds[]`에 현재 빌드 엔트리 추가 — Phase별 소요시간, 재시도, 에러, 비용 추적 포함
-3. `patterns.common_build_errors`에 새 에러 패턴 추가 (이미 있으면 `frequency` 증가)
-4. `patterns.effective_architectures`에 성공한 아키텍처 패턴 추가
-5. `totalBuilds` 증가, `successRate` 재계산
-6. `.autobot/learnings.json`에 Write
-
-**빌드 엔트리에 포함할 비용 추적 필드:**
-
-```json
-{
-  "id": "build-001",
-  "cost": {
-    "total_tokens_estimate": 165000,
-    "models_used": ["opus", "sonnet"],
-    "total_duration_sec": 540
-  }
-}
-```
-
-### 4. Generate Improvement Recommendations
-
-| 조건 | 액션 |
+| 지표 | 근거 |
 |------|------|
-| 같은 에러 3회 이상 | 해당 에이전트 프롬프트에 prevention 지침 추가 |
-| 특정 앱 유형이 더 빠르게 빌드 | 아키텍처 패턴을 "proven"으로 마킹 |
-| 배포 같은 사유로 2회 이상 실패 | Phase 0 prerequisite check에 추가 |
-| Phase 소요 시간 > 10분 | 병목 Phase 분석하고 원인 기록 |
+| Phase 소요 시간 | `start` / `complete` 이벤트 간격 |
+| 빌드 시도·에러 카테고리 | `build_attempt` 횟수, `build_fix.category` |
+| 소유권 위반·복원 | `agent_violation`, `snapshot_restore` |
+| 에이전트 성공/실패 | `agent_dispatch` / `agent_complete` 매칭 |
+| 재시도·배포 | `phases[N].retryCount`, deploy-status |
+| 비용 | 관측 가능한 토큰 추정·모델·총 시간 |
 
-## Learning Application
+Phase 키 매핑: `0→preflight`, `1→architecture`, `2→ux_design`, `3→scaffold`, `4→parallel_coding`, `5→quality`, `6→deploy`, `7→retrospective`.
 
-Phase 0에서 `.autobot/learnings.json`을 읽고:
-1. 알려진 에러 방지 패턴 적용 (에이전트 프롬프트에 주입)
-2. 유사한 앱 유형에 검증된 아키텍처 패턴 사용
-3. 실패 이력이 있는 배포 방법 건너뜀
-4. 과거 성능 데이터 기반으로 에이전트 전략 조정
-
-`learnings.json` 업데이트 후 다음 세션에서 바로 사용할 수 있도록 `.autobot/active-learnings.md`와 `.autobot/phase-learnings/*.md` 압축본도 재생성한다. 이 파일들은 SessionStart 훅과 build/resume Phase 0의 1차 입력이다.
-
-## Axiom Health-Check 통합 (선택, soft-skip)
-
-Phase 7 의 **데이터 수집 단계 중간**에 Axiom 의 전체 health-check 를 1회 실행해 회고 데이터의 폭을 넓힌다. Phase 5 Critical Audit 와 달리 **절대 빌드를 막지 않는다** — Phase 7 은 학습용이지 게이트가 아니다.
-
-호출 규칙·프롬프트·결과 기록 위치는 `autobot-axiom-bridge` 스킬의 **Mode 2 (Phase-7 Health-Check)** 에 SSOT 로 있다:
+1. 기존 learnings를 읽고(없으면 스키마 초기화), 과거 빌드와 반복 오류·효과적인 architecture/dispatch·배포 실패를 비교한다.
+2. `builds[]`에 현재 빌드의 Phase별 시간·재시도·에러와 `cost.{total_tokens_estimate,models_used,total_duration_sec}`을 추가한다. 기존 이력을 보존한다.
+3. `patterns.common_build_errors`에 오류를 추가하거나 `frequency`를 증가시키고, 성공 패턴은 `patterns.effective_architectures`에 기록한다. `totalBuilds`와 `successRate`를 갱신한다.
+4. 개선 후보: 같은 오류 3회 이상→에이전트 prevention; 성공한 architecture 반복→proven 패턴; 같은 배포 실패 2회 이상→Phase 0 prerequisite; Phase 10분 초과→병목 원인. 구체적 기준은 learning-schema를 따른다.
+5. 다음 Phase 0에서 오류 예방·검증된 architecture·배포 실패 회피·dispatch 조정에 활용하도록 `.autobot/active-learnings.md`, `.autobot/phase-learnings/*.md`를 재생성한다:
 
 ```bash
-Read $CLAUDE_PLUGIN_ROOT/skills/autobot-axiom-bridge/SKILL.md
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render-active-learnings.py" --project-dir "$PROJECT_DIR"
 ```
 
-이 스킬에서 추가로 기억할 것:
+## Axiom Health-Check
 
-1. Axiom 부재 → 한 줄 로그(`axiom_audit_skipped`)만 남기고 회고 진행.
-2. `axiom:health-check` 에이전트 단일 dispatch (개별 auditor 호출 X — 중복 비용).
-3. 결과를 `learnings.json` → `patterns.axiom_findings[rule].frequency` 에 누적. 키 스키마는 `patterns.common_build_errors` 와 동일하게 유지해 Phase 0 의 learning bootstrap 이 별도 코드 없이 흡수한다.
-4. `phases.7.metadata.axiom_health_check` 에 `{ran, findings_path, summary_path}` 기록.
-5. executive summary 는 `build-report.md` 의 `## Axiom Health-Check` 섹션으로 첨부.
+수집한 metrics 뒤에 [autobot-axiom-bridge](../autobot-axiom-bridge/SKILL.md)의 **Mode 2**를 1회 실행한다. 단일 `axiom:health-check` dispatch를 사용하며 개별 auditor를 중복 호출하지 않는다. findings는 빌드를 막지 않는다.
 
-### Phase 7 closing steps (필수, 순서대로)
+- 미설치: Phase 7 `axiom_audit_skipped` 로그를 남기고 계속한다.
+- 결과: `patterns.axiom_findings[rule].frequency`에 누적(common_build_errors와 같은 shape), `phases.7.metadata.axiom_health_check={ran,findings_path,summary_path}` 기록.
+- Executive summary: build-report의 `## Axiom Health-Check`에 첨부한다.
 
-회고 본문 작성과 `learnings.json` 갱신이 끝났다면 — **Phase 7 self-check 직전** — 아래 두 호출을 차례로 실행한다. 이 단계가 빠지면 다음 빌드의 `Phase 0` 이 효과 없는 learning 을 그대로 다시 적용하고, 운영자는 무슨 일이 있었는지 알 수 없게 된다.
+## Closing (필수 순서)
+
+회고 본문·learnings 갱신 후, self-check 직전에 성공/실패 모든 run에서 실행한다:
 
 ```bash
-# (a) Learning effect 채점: phase 별 status / breaker / build-fix attempts 를 보고
-#     learnings.json 의 effect_score 누적. hurt 누적 시 자동 quarantine.
 BUILD_ID=$(python3 -c "import json; print(json.load(open('.autobot/build-state.json'))['buildId'])")
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" grade-learnings \
   --build-id "$BUILD_ID"
-
-# (b) Run summary 생성: artifacts/<buildId>/run-summary.{json,md} + latest 심볼릭.
-#     성공/실패 모든 run 에서 호출. /autobot:resume 안내가 footer 에 자동 들어간다.
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" write-run-summary
-
-# (b2) 교차-빌드 핫스팟 분석 (read-only). (a) 가 이번 빌드 채점을 전역 저장소에
-#      반영한 뒤, 호스트가 지금까지 돌린 모든 빌드의 누적 learning 을 phase 단위로
-#      롤업해 "파이프라인이 어디서 체계적으로 약한가 / 어떤 learning 이 죽은 무게인가"
-#      를 뽑는다. 토폴로지가 정적이라 '더 나은 순서'가 아니라 '약한 지점'을 마이닝하며,
-#      pipeline.json 을 건드리지 않고 운영자 검토용 **후보**만 출력한다(자동 적용 없음).
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/topology_insights.py" --out-dir .autobot >/dev/null 2>&1 || true
-
-# (c) 현재 실행이 Phase 0 또는 resume에서 획득해 보관한 generation token으로 해제.
-# status에서 token을 다시 읽지 않는다. 다른 세션이 takeover한 경우 그 세대는 보호돼야 한다.
 : "${OWNED_LOCK_TOKEN:?Phase 0/resume에서 획득한 build lock token이 필요합니다}"
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" build-lock release \
   --build-id "$BUILD_ID" --expected-token "$OWNED_LOCK_TOKEN"
 ```
 
-`grade-learnings` 의 출력 (`{"updated": N, "summaries": [...]}`) 을 build-report.md 의 `## Learning Impact` 섹션에 그대로 첨부한다. quarantined 가 발생했다면 `## Quarantined Learnings` 섹션도 추가한다 (`pipeline.sh grade-learnings` 출력의 negative effect_score 항목들).
+- `grade-learnings`는 status/breaker/build-fix 관측으로 `effect_score`를 누적하고 hurt 누적 learning을 quarantine한다. JSON 출력(`{updated,summaries}`)을 `## Learning Impact`에 그대로 첨부하고, negative effect_score가 있으면 `## Quarantined Learnings`도 추가한다.
+- `write-run-summary`는 `artifacts/<buildId>/run-summary.{json,md}`와 latest symlink를 생성한다.
+- `.autobot/topology-insights.md`의 Phase 핫스팟 표·개선 후보를 `## Cross-Build Pipeline Insights`에 첨부한다. read-only 분석이며 pipeline을 자동 변경하지 않는다. 승격은 기존 `learning_impact publish-global` 운영자 승인 경로를 따른다.
+- Lock은 현재 실행이 Phase 0/resume에서 보관한 **원래 generation token**으로만 해제한다. status에서 token을 다시 읽으면 takeover한 다른 세대를 해제할 수 있으므로 금지한다.
 
-(b2) 가 생성한 `.autobot/topology-insights.md` 의 **Phase 핫스팟 표 + 개선 후보** 를 build-report.md 의 `## Cross-Build Pipeline Insights` 섹션에 그대로 첨부한다 (교차-빌드 관측이라 이번 빌드가 실패했어도 유용하다). 후보는 자동 적용되지 않으며, 승격이 필요하면 기존 `learning_impact publish-global` 운영자 승인 경로를 쓴다.
-
-### Phase 7 self-check (필수)
-
-회고 종료 직전 — Phase 7 status 를 `completed` 로 마킹하기 전에 — 아래 검증 스크립트를 실행해 Axiom 호출 (또는 명시적 skip) 이 기록됐는지 확인한다. Phase 7 은 게이트가 없으므로 이 self-check 가 유일한 강제 지점이다.
+Phase 7 `completed` 마킹 전에 self-check한다(Phase 7에는 gate가 없다):
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify-phase7-axiom.py" "$PROJECT_DIR" || {
@@ -174,11 +70,4 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify-phase7-axiom.py" "$PROJECT_DIR" || {
 }
 ```
 
-통과 조건:
-- `environment.axiom == false` → build-log.jsonl 에 `phase=7` 의 `axiom_audit_skipped` 이벤트 ≥ 1개
-- `environment.axiom == true` → `phases.7.metadata.axiom_health_check.ran == true` 이고 `findings_path` (있으면) 실제 파일 존재
-
-## Additional Resources
-
-- **`references/learning-schema.md`** — learnings.json 전체 스키마, 예시, 업데이트 규칙
-- **`$CLAUDE_PLUGIN_ROOT/skills/autobot-axiom-bridge/SKILL.md`** — Axiom 호출 규칙 SSOT (Mode 1 = Phase 5 critical, Mode 2 = Phase 7 health-check)
+통과 조건: `environment.axiom == false`이면 phase=7의 `axiom_audit_skipped` 이벤트가 있어야 한다. true이면 `phases.7.metadata.axiom_health_check.ran == true`와 기록한 findings 파일 존재를 확인한다.

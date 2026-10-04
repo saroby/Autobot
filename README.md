@@ -5,7 +5,7 @@
 - **기획**: `/autobot:ssot` 제품 청사진 인터뷰, `/autobot:screen` 화면 단위 집중 기획 — 플랫폼과 무관하게 아무 프로젝트에서나 사용
 - **빌드**: 전문 에이전트들이 병렬로 협업하는 파이프라인 — 아키텍처 설계부터 빌드 검증까지 자동 수행. 현재 구현은 iOS 26+ 앱을 대상으로 합니다
 - **배포·운영**: TestFlight 업로드, App Store 메타데이터·스크린샷·심사 제출, 리뷰 피드백 학습 루프
-- **범용 유틸리티**: `/autobot:make` 등 파이프라인과 무관한 독립 명령
+- **범용 유틸리티**: `/autobot:make`, `/autobot:icon` 등 파이프라인과 무관한 독립 명령
 
 성공 기준은 기능 완성뿐 아니라 아이디어에 맞는 룩앤필 계약 구현까지 포함합니다.
 
@@ -65,6 +65,14 @@ ASC 앱 등록 → archive → 업로드 → 테스터 초대를 한 번에 수�
 ```
 
 파이프라인과 무관하게 **아무 앱 프로젝트에서나** 화면 하나를 5라운드 인터뷰(존재 이유 → 콘텐츠 위계 → 인터랙션 → 상태 → 룩앤필)로 깊게 기획합니다. 산출물: `docs/screens/<slug>.md` 화면 spec + SOUL.md/AGENTS.md 생성·병합 (CLAUDE.md 는 만들지 않음) + presentation-only SwiftUI 뷰 (상태별 `#Preview`). 라운드마다 spec 에 즉시 기록되어 세션이 끊겨도 재개됩니다.
+
+### 독립 명령: 앱 아이콘 제작
+
+```bash
+/autobot:icon 습관 기록 앱, 초록색 새싹 심볼, 간결한 스타일
+```
+
+설치된 `imagegen` 스킬과 이미지 생성 도구로 **코너 라운드 없는 1024×1024 불투명 PNG**를 만듭니다. 배경은 네 모서리까지 채웁니다. 기본 저장 위치는 `.autobot/app-icon-1024.png`이며 기존 파일은 교체 요청 없이 덮어쓰지 않습니다. 파이프라인 상태 없이도 실행할 수 있고, imagegen이 없거나 실패하면 원인을 보고합니다.
 
 ## 빌드 파이프라인
 
@@ -202,6 +210,7 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   ├── feedback.md                     # /autobot:feedback — App Store 리뷰 회수 → 학습 저장소 기록
 │   ├── resume.md                       # /autobot:resume — 중단된 빌드 재개
 │   ├── screen.md                       # /autobot:screen — 화면 하나 집중 인터뷰 → SSOT + SwiftUI 뷰 (독립)
+│   ├── icon.md                         # /autobot:icon — imagegen 앱 아이콘 제작 (1024×1024, 코너 라운드 없음)
 │   ├── ssot.md                         # /autobot:ssot — 제품 전체 인터뷰 → ssot/ 청사진(git submodule) + SSOT 문서 (독립)
 │   └── setup.md                        # /autobot:setup — 글로벌 기본값 설정
 ├── agents/
@@ -234,7 +243,7 @@ Autobot/                                # 플러그인 루트 ($CLAUDE_PLUGIN_RO
 │   │   └── scripts/
 │   │       ├── create-xcode-project.sh # 프로젝트 생성 (xcodegen 우선, fallback)
 │   │       └── generate-pbxproj.py     # xcodegen 없이 .xcodeproj 생성
-│   ├── autobot-app-icon/               # Phase 3/4 보조: imagegen + Pillow fallback 아이콘 생성
+│   ├── autobot-app-icon/               # /autobot:icon + Phase 2/3: imagegen 아이콘 생성·적용 (파이프라인만 Pillow fallback)
 │   │   ├── SKILL.md
 │   │   └── scripts/
 │   │       ├── pillow-fallback.sh

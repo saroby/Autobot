@@ -6,311 +6,67 @@ description: "Create Phase 2 Stitch mockups and design specs, including the unav
 
 # UX Design with Google Stitch
 
-Phase 2 스킬: architecture.md의 화면 정의를 기반으로 Google Stitch로 시각적 UI 목업을 생성한다.
+Phase 2: `.autobot/architecture.md`의 화면·Design Direction을 Stitch 목업과 `.autobot/design-spec.md`로 구체화한다.
 
-## Prerequisites
+## 경로·복구
 
-### Stitch MCP 설치 및 인증
+- Phase 0에서 MCP 도구/`mcp__stitch__check_antigravity_auth` 또는 `npx @_davideast/stitch-mcp doctor`로 인증을 확인해 `build-state.json.environment.stitch`를 판정한다. 설치가 필요하면 `npm install -g @_davideast/stitch-mcp` 또는 `npx @_davideast/stitch-mcp init`.
+- `stitch=true`: ux-designer primary 경로. 실패 시 1회 재시도 후 fallback.
+- Stitch unavailable이면 architecture의 `## Design Direction`으로 최소 design-spec을 생성하고 Phase 2를 `fallback`으로 기록한다. 경고: `Stitch MCP 미설치. 최소 design-spec 계약으로 진행합니다.`
+- fallback은 PNG 없이 진행할 수 있지만 필수 토큰·레이아웃·상태 섹션이 없으면 Gate 2→3은 실패한다. ui-builder는 design-spec + architecture를 사용한다.
 
-```bash
-# 설치 (글로벌)
-npm install -g @_davideast/stitch-mcp
+## 생성
 
-# 또는 npx로 직접 실행 (설치 불필요)
-npx @_davideast/stitch-mcp init
+1. architecture의 `## Screens`(Screen/Purpose/Tab/Key UI Elements), `## Navigation Structure`, `## Features`의 P0/P1 매핑을 읽는다.
+2. 화면별 프롬프트에 이름·목적·네비게이션 맥락·UI 요소·Design Direction 토큰·empty/loading/error 상태를 넣는다. iOS SF Pro, Dynamic Type, 여백, Liquid Glass 반투명 표면을 반영한다.
+3. `create_project`로 앱 이름의 프로젝트를 만들고 ID를 확보(재개 시 기존 ID 사용) → `batch_generate_screens` → 실패 화면은 `generate_screen_from_text` → `list_screens`로 ID 확인.
+4. 성공한 `fetch_screen_image` 결과는 즉시 `.autobot/designs/<ScreenName>.png`에 저장한다.
+5. `fetch_screen_code`의 HTML/CSS에서 색·폰트·간격·컴포넌트를 추출해 SwiftUI 토큰/패턴으로 매핑하고 design-spec을 작성한다.
 
-# 인증 확인
-npx @_davideast/stitch-mcp doctor
-```
+MCP `mcp__stitch__<작업>` 직접 호출이 우선이며, CLI fallback은 `npx @_davideast/stitch-mcp tool <작업> -d '<JSON>'`이다.
 
-### 환경 검증 (Phase 0에서 수행)
+### 목업 캔버스 계약
 
-두 가지 방법으로 Stitch 사용 가능 여부를 확인한다:
+프롬프트에 **393×852pt, 1179×2556px @3x** portrait 캔버스와 아래 구역을 명시한다:
 
-```bash
-# 방법 1: MCP 도구 존재 확인 (권장 — 도구 목록에 mcp__stitch__* 존재 여부)
-# 오케스트레이터가 MCP 도구 호출을 시도하여 확인
+| 구역 | Y(pt) | 허용 |
+|---|---|---|
+| Status bar | 0–47(상단 5.5%) | 시스템 chrome만: 9:41·신호/Wi-Fi/배터리(y=15–30), 중앙 Dynamic Island |
+| 앱 콘텐츠 | 47–818 | 제목·버튼·리스트·카드·CTA·탭바 |
+| Home indicator | 818–852(하단 4%) | 중앙 얇은 pill만(약 130×5pt, y=835) |
 
-# 방법 2: CLI 인증 확인
-npx @_davideast/stitch-mcp doctor 2>&1
-# 종료 코드 0 → stitch=true (Phase 2 실행)
-# 종료 코드 != 0 → stitch=false (Phase 2 fallback)
-```
+NavigationStack 바는 y=47–91, TabView 바는 콘텐츠 구역 하단 y=720–818(49pt 높이) 안에 배치한다. 앱 요소 bounding box가 y<47 또는 y>818과 겹치면 Phase 2.5 HIGH critique로 거부하고 `/autobot:resume 2 --force` 재생성이 필요하다. 상태 바·home indicator를 목업에 실제로 그린다.
 
-MCP 도구(`mcp__stitch__check_antigravity_auth`)로 인증 상태를 확인할 수도 있다.
+### 부분 실패
 
-## Execution Strategy
+성공 PNG를 보존하고 실패 화면을 개별로 1회 재시도한다. 최종 실패는 `## Failed Screens`에 기록한다. **전체의 절반 이상** 생성되면 `completed`(누락 화면은 architecture 기반 구현), 절반 미만이면 fallback.
 
-Phase 2는 **필수(primary) 경로**다. Stitch MCP가 설치되지 않은 환경에서만 fallback 모드로 전환된다:
+## Design-spec 계약
 
-```
-if build-state.json.environment.stitch == true:
-    → ux-designer 에이전트 디스패치 (primary 경로)
-    → design-spec.md + designs/ 생성
-    → 실패 시 1회 재시도, 재실패 시 fallback 전환
-else:
-    → architecture.md의 Design Direction을 `.autobot/design-spec.md`로 변환
-    → Phase 2를 fallback으로 마킹 (status: "fallback")
-    → ⚠️ 경고: "Stitch MCP 미설치. 최소 design-spec 계약으로 진행합니다."
-    → ui-builder는 design-spec.md + architecture.md 기반으로 UI 결정
-```
+아래 정확한 `##` 이름은 Gate 2→3이 검사한다. primary/fallback 모두 필수다:
 
-### Fallback 모드 디자인 원칙
+| 섹션 | 내용 |
+|---|---|
+| `## Visual Concept` | 앱 성격·타깃 감정·피할 generic UI |
+| `## Color Tokens` | Primary/Secondary/Accent/Surface → Theme |
+| `## Typography` | Display/Headline/Body → Theme/Dynamic Type |
+| `## Spacing & Radius` | 카드·섹션 간격·radius |
+| `## Screen-by-Screen Layout` | 화면별 레이아웃·주요 컴포넌트 |
+| `## Interaction Feel` | 모션·전환·피드백 강도 |
+| `## Empty, Loading, Error States` | 상태별 시각 처리·액션 |
 
-Stitch가 없을 때도 `.autobot/design-spec.md`는 반드시 생성한다. 스크린샷은 없을 수 있지만, architecture.md의 `## Design Direction`을 아래 필수 섹션으로 옮겨 룩앤필 계약을 보존한다.
+primary는 Stitch 프로젝트 ID, 화면별 PNG 경로·UI 패턴 노트, CSS→SwiftUI 매핑, 네비게이션 흐름도 포함한다.
 
-필수 섹션:
-- `## Visual Concept`
-- `## Color Tokens`
-- `## Typography`
-- `## Spacing & Radius`
-- `## Screen-by-Screen Layout`
-- `## Interaction Feel`
-- `## Empty, Loading, Error States`
+매핑 시:
+- 폰트 크기/굵기를 `.largeTitle`/`.headline`/`.body` 등 Dynamic Type 스타일로 변환한다.
+- 앱 accent는 architecture.json의 `designSystemModule`인 `<Module>Color.accent`를 사용하며 `Color.accentColor`를 쓰지 않는다. 배경·텍스트는 iOS semantic color로 매핑한다.
+- CSS 여백·gap·radius는 SwiftUI spacing/padding/clipShape 값으로, 반투명은 `.glassEffect()`로 매핑한다. 웹 컴포넌트는 `TabView`/`NavigationStack`/`sheet`/`searchable` 등 네이티브 패턴으로 옮긴다.
 
-fallback 모드에서는 `.autobot/designs/*.png`는 없어도 된다. 단, design-spec의 토큰/레이아웃/상태 섹션이 없으면 Gate 2→3이 실패한다.
+## 산출물·상태
 
-## Workflow
+ui-builder 입력: `.autobot/designs/*.png`, `.autobot/design-spec.md`.
 
-### Step 1: Screen Inventory 추출
-
-architecture.md에서 화면 목록 추출:
-- `## Screens` 섹션의 테이블 (Screen, Purpose, Tab, Key UI Elements)
-- `## Navigation Structure` 섹션의 화면 계층
-- `## Features` 섹션에서 P0/P1 기능과 화면 매핑
-
-### Step 2: Design Prompt 생성
-
-각 화면에 대해 iOS 모바일 앱 특화 프롬프트 작성:
-
-```
-Mobile iOS app - [App Display Name]
-
-Screen: [ScreenName]
-Purpose: [from architecture.md Screens table]
-
-Design Style:
-- Modern iOS with translucent glass materials (Liquid Glass)
-- Clean sans-serif typography (SF Pro)
-- Generous whitespace and breathing room
-- Subtle depth with layered translucent surfaces
-
-Navigation Context:
-- [Tab bar at bottom with N tabs / Navigation bar at top / Modal sheet / Full screen]
-- [Current tab highlighted: Tab Name]
-- [Back button to: PreviousScreen]
-
-Key UI Elements:
-- [Element 1 from Screens table: e.g., "Scrollable list of items with thumbnails"]
-- [Element 2: e.g., "Floating action button for adding new item"]
-- [Element 3: e.g., "Search bar at top"]
-
-Canvas Layout (HARD CONSTRAINT — mockup will be REJECTED if violated):
-
-Canvas size: iPhone 16 Pro portrait — 393 × 852 points (1179 × 2556 pixels @3x). The canvas is divided into three zones:
-
-| Zone | Y range (pt) | % of canvas | Allowed content |
-|------|-------------|------------|-----------------|
-| STATUS BAR ZONE | 0 – 47 | top 5.5% | iOS system chrome ONLY — clock "9:41" left, signal+wifi+battery icons right, Dynamic Island pill at top center. NO app content (no title, no button, no list). |
-| APP CONTENT ZONE | 47 – 818 | middle 90.5% | All app content — navigation bar, lists, cards, CTAs, etc. |
-| HOME INDICATOR ZONE | 818 – 852 | bottom 4% | iOS home indicator bar (thin horizontal pill) ONLY. NO app content. If TabView, the tab bar sits in the APP CONTENT ZONE just above this (y=720-818). |
-
-Mandatory iOS system chrome visuals (must be drawn in mockup):
-- **Status bar**: render "9:41" digital clock on the left, signal bars + wifi + battery icons on the right (y=15-30 within the status bar zone). This naturally reserves the top zone.
-- **Home indicator**: render a thin horizontal white/black pill (width ≈ 130pt, height ≈ 5pt) centered at y=835. This naturally reserves the bottom zone.
-
-If any text, screen title, button, list item, image, or interactive element is rendered with its bounding box overlapping y<47 or y>818, the mockup will FAIL Phase 2.5 critique with HIGH severity and require regeneration via `/autobot:resume 2 --force`.
-
-If NavigationStack: navigation bar (title + back chevron) at y=47–91 (top of APP CONTENT ZONE, 44pt height).
-If TabView: tab bar at y=720–818 (bottom of APP CONTENT ZONE, 49pt height, just ABOVE the home indicator zone).
-
-Other Layout Requirements:
-- Color Tokens from architecture.md Design Direction (light/dark compatible)
-- Dynamic Type ready text sizes
-- Liquid Glass for translucent surfaces
-
-Interactive States:
-- [Empty state: when no items exist]
-- [Loading state: skeleton or spinner]
-- [Error state: retry option]
-```
-
-### Step 3: Stitch 프로젝트 생성 및 화면 생성
-
-Stitch MCP 도구를 사용한다. 두 가지 호출 방식이 있으며, MCP 도구 직접 호출을 우선 사용한다:
-
-| 작업 | MCP 도구 (권장) | CLI fallback |
-|------|----------------|-------------|
-| 프로젝트 생성 | `mcp__stitch__create_project` | `npx @_davideast/stitch-mcp tool create_project -d '{...}'` |
-| 화면 일괄 생성 | `mcp__stitch__batch_generate_screens` | `npx @_davideast/stitch-mcp tool batch_generate_screens -d '{...}'` |
-| 화면 개별 생성 | `mcp__stitch__generate_screen_from_text` | `npx @_davideast/stitch-mcp tool generate_screen_from_text -d '{...}'` |
-| 화면 목록 | `mcp__stitch__list_screens` | `npx @_davideast/stitch-mcp tool list_screens -d '{...}'` |
-| 스크린샷 | `mcp__stitch__fetch_screen_image` | `npx @_davideast/stitch-mcp tool fetch_screen_image -d '{...}'` |
-| HTML/CSS | `mcp__stitch__fetch_screen_code` | `npx @_davideast/stitch-mcp tool fetch_screen_code -d '{...}'` |
-
-**생성 순서:**
-
-a. `create_project`로 앱 이름의 Stitch 프로젝트 생성 → `projectId` 확보
-b. `batch_generate_screens`로 모든 화면을 한 번에 생성 (효율적)
-   - 실패 시 `generate_screen_from_text`로 화면별 개별 생성으로 전환
-c. `list_screens`로 생성된 화면 ID 목록 확인
-
-### Step 4: 스크린샷 수집
-
-각 화면에 대해 `fetch_screen_image`로 스크린샷 이미지를 가져와서 저장한다:
-
-```bash
-# MCP 도구 결과의 base64 데이터를 PNG 파일로 저장
-mkdir -p .autobot/designs
-echo "<base64_data>" | base64 -d > .autobot/designs/<ScreenName>.png
-```
-
-### Step 5: Design Token 추출
-
-각 화면에 대해 `fetch_screen_code`로 HTML/CSS를 가져온다.
-
-HTML/CSS에서 추출할 디자인 토큰:
-- **Colors**: 배경색, 텍스트색, 강조색 → iOS semantic color로 매핑
-- **Typography**: 폰트 크기, 굵기 → Dynamic Type 스타일로 매핑
-- **Spacing**: 여백, 패딩 → SwiftUI spacing 값으로 변환
-- **Components**: 카드, 리스트, 버튼 → SwiftUI 컴포넌트 패턴으로 매핑
-
-### Step 6: Design Spec 문서 작성
-
-`.autobot/design-spec.md`에 다음 내용을 포함한다. 표기 이름은 Gate 2→3이 검사하므로 임의로 바꾸지 않는다:
-
-| 항목 | 내용 |
-|------|------|
-| Visual Concept | 앱 성격, 타깃 감정, 피해야 할 generic UI |
-| Color Tokens | Primary/Secondary/Accent/Surface → SwiftUI Theme 매핑 |
-| Typography | Display/Headline/Body → SwiftUI Theme 매핑 |
-| Spacing & Radius | 카드/섹션/코너 radius 값 |
-| Screen-by-Screen Layout | 화면별 레이아웃과 주요 컴포넌트 |
-| Interaction Feel | 모션, 전환, 피드백 강도 |
-| Empty, Loading, Error States | 상태별 시각 처리와 액션 |
-| Stitch 프로젝트 ID | 참조 및 resume 시 재사용 |
-| 화면별 스크린샷 경로 | `.autobot/designs/<Screen>.png` |
-| 화면별 UI 패턴 노트 | ui-builder가 참조할 구현 가이드 |
-| 디자인 토큰 매핑 | Stitch CSS → SwiftUI 속성 |
-| 네비게이션 흐름 | 화면 간 전환 시각화 |
-
-## Partial Screen Failure Recovery
-
-일부 화면 생성이 실패한 경우 전체를 실패 처리하지 않는다:
-
-1. **즉시 저장**: 성공한 화면의 스크린샷은 바로 `.autobot/designs/`에 저장
-2. **개별 재시도**: 실패한 화면은 `generate_screen_from_text`로 개별 재시도 (1회)
-3. **기록**: 최종 실패 화면은 `design-spec.md`의 `## Failed Screens` 섹션에 기록
-4. **판정**: 부분 성공 = 성공. 전체 화면의 절반 이상 생성되면 Phase 2는 `completed`
-   - ui-builder가 누락 화면은 architecture.md 기반으로 구현
-   - 절반 미만이면 fallback 전환
-
-```
-총 화면 5개:
-├── 3개 이상 성공 → Phase 2 completed (design-spec.md에 실패 화면 표시)
-└── 2개 이하 성공 → fallback 전환 (Stitch 디자인 생성 실패로 판단)
-```
-
-## iOS Design Token Mapping
-
-Stitch가 생성한 웹 디자인 토큰을 iOS SwiftUI 패턴으로 매핑하는 참조 테이블:
-
-### Typography
-
-| Web (Stitch CSS) | iOS (SwiftUI) |
-|-----------------|---------------|
-| `font-size: 34px; font-weight: bold` | `.font(.largeTitle)` |
-| `font-size: 28px; font-weight: bold` | `.font(.title)` |
-| `font-size: 22px; font-weight: bold` | `.font(.title2)` |
-| `font-size: 20px; font-weight: 600` | `.font(.title3)` |
-| `font-size: 17px; font-weight: 600` | `.font(.headline)` |
-| `font-size: 17px` | `.font(.body)` |
-| `font-size: 15px` | `.font(.subheadline)` |
-| `font-size: 13px` | `.font(.footnote)` |
-| `font-size: 12px` | `.font(.caption)` |
-| `font-size: 11px` | `.font(.caption2)` |
-
-### Colors
-
-`<Module>` = `.autobot/architecture.json` 의 `designSystemModule` 값 (예: `FocusDS` → `FocusDSColor.accent`).
-
-| Web (Stitch CSS) | iOS (SwiftUI) |
-|-----------------|---------------|
-| `#007AFF` / blue accent | `<Module>Color.accent` (DS token — never `Color.accentColor`) |
-| `#FFFFFF` / white background | `Color(.systemBackground)` |
-| `#F2F2F7` / light gray background | `Color(.secondarySystemBackground)` |
-| `#000000` / primary text | `Color.primary` |
-| `#3C3C43` / secondary text | `Color.secondary` |
-| `#FF3B30` / red | `Color.red` |
-| `#34C759` / green | `Color.green` |
-| `rgba(255,255,255,0.8)` / translucent | `.glassEffect()` (Liquid Glass) |
-
-### Layout & Spacing
-
-| Web (Stitch CSS) | iOS (SwiftUI) |
-|-----------------|---------------|
-| `padding: 16px` | `.padding()` |
-| `padding: 20px` | `.padding(20)` |
-| `gap: 4px` | `VStack(spacing: 4)` / `HStack(spacing: 4)` |
-| `gap: 8px` | `VStack(spacing: 8)` / `HStack(spacing: 8)` |
-| `gap: 16px` | `VStack(spacing: 16)` / `HStack(spacing: 16)` |
-| `border-radius: 10px` | `.clipShape(RoundedRectangle(cornerRadius: 10))` |
-| `border-radius: 20px` | `.clipShape(RoundedRectangle(cornerRadius: 20))` |
-
-### Components
-
-| Web (Stitch Pattern) | iOS (SwiftUI) |
-|---------------------|---------------|
-| Card with shadow | `RoundedRectangle` + `.shadow()` or `.glassEffect()` |
-| List item with chevron | `List { NavigationLink { } }` |
-| Bottom tab bar | `TabView { Tab(...) { } }` |
-| Top navigation bar | `NavigationStack { .navigationTitle() }` |
-| Modal/overlay | `.sheet()` or `.fullScreenCover()` |
-| Floating action button | `ZStack` + `.overlay(alignment: .bottomTrailing)` |
-| Search bar | `.searchable()` |
-| Toggle switch | `Toggle()` |
-| Segmented control | `Picker(.segmented)` |
-| Pull to refresh | `.refreshable { }` |
-
-## Output Artifacts
-
-| 산출물 | 경로 | 생성자 | 소비자 |
-|-------|------|--------|--------|
-| 화면 스크린샷 | `.autobot/designs/*.png` | ux-designer | ui-builder |
-| 디자인 명세 | `.autobot/design-spec.md` | ux-designer | ui-builder |
-| Stitch 프로젝트 ID | `build-state.json.stitch.projectId` | ux-designer | resume 시 재사용 |
-
-## Build State Integration
-
-Phase 2 완료 시 `build-state.json`에 기록:
-
-```json
-{
-  "stitch": {
-    "projectId": "<stitch-project-id>",
-    "screenCount": 5,
-    "designsPath": ".autobot/designs/"
-  },
-  "phases": {
-    "2": {
-      "status": "completed",
-      "completedAt": "2026-03-18T12:00:00Z"
-    }
-  }
-}
-```
-
-Phase 2 fallback 시:
-
-```json
-{
-  "stitch": null,
-  "designSpec": ".autobot/design-spec.md",
-  "phases": {
-    "2": {
-      "status": "fallback",
-      "reason": "stitch not available — minimal design-spec generated from architecture.md"
-    }
-  }
-}
-```
+| Phase 2 | build-state 기록 |
+|---|---|
+| completed | `stitch.projectId`, `stitch.screenCount`, `stitch.designsPath=.autobot/designs/`, `phases.2.status=completed`, `phases.2.completedAt` |
+| fallback | `stitch=null`, `designSpec=.autobot/design-spec.md`, `phases.2.status=fallback`, `phases.2.reason=stitch not available — minimal design-spec generated from architecture.md` |

@@ -1,3 +1,98 @@
+# 2026-10-04 — 0.15.0 릴리스 준비·default 브랜치 반영
+
+## 목표·수용 기준
+
+- 새 `/autobot:icon` 명령과 스킬 최적화를 0.15.0으로 릴리스한다.
+- plugin manifest·Python package 버전을 일치시키고 기존 Unreleased 기록을 릴리스에 포함한다.
+- 이번 작업 파일만 커밋하고 실제 원격 default 브랜치에 일반 push한 뒤 live SHA·tracking ref·source ancestry를 확인한다.
+
+## 체크리스트
+
+- [x] 작업 범위·원격 default·worktree·버전 source 확인
+- [x] 버전 두 곳과 changelog 갱신
+- [x] 버전·문서 검사 및 전체 회귀 증거 재사용 적합성 확인
+- [x] 명시적 파일 staging과 staged diff 검토로 커밋 준비 완료
+
+## Working Notes
+
+- 새 공개 명령 추가에 따라 minor 버전 0.15.0을 선택했다. 원격은 upstream의 `origin`, default는 `refs/remotes/origin/HEAD`가 가리키는 `main`이다.
+- 기존 dirty 변경은 모두 이 세션의 아이콘 추가·스킬 축약·검증 기록이다. 다른 작업 파일은 발견되지 않았다.
+- local main ref와 main worktree는 없다. 최신 remote가 source의 조상이면 source SHA를 `refs/heads/main`에 fast-forward push한다.
+- 전체 회귀 1,595개 통과 이후 런타임·테스트·스킬은 바꾸지 않았다. 버전·changelog·작업 기록 변경에 해당하는 검사를 다시 수행한다.
+- 커밋·push 후의 실제 SHA와 원격 검증 결과는 최종 응답에 기록한다.
+
+## Results
+
+- plugin manifest와 pyproject의 버전을 0.15.0으로 일치시켰고, changelog에 아이콘 명령·스킬 축약·문서 drift 수정 및 기존 Unreleased 기록을 묶었다.
+- 버전 변경 후 `verify_spec_docs.py`, `spec_bundle.py check`, release metadata·frontmatter·아이콘·프롬프트·오케스트레이션 계약 관련 43 tests와 `git diff --check`를 통과했다.
+- 기존 전체 회귀는 1,595 tests OK. 완료 로그 이후 skills/scripts/tests에 수정된 파일이 없어 이 결과를 재사용했다.
+- 이번 작업의 31개 경로만 명시적으로 stage했고 staged diff를 검토했다. 기존 스킬 리뷰 결과와 동일한 본문이며, index·working file 일치 및 whitespace 검사가 통과했다.
+
+# 2026-10-04 — 나머지 Autobot 스킬 최적화
+
+## 목표·수용 기준
+
+- 앱 아이콘을 제외한 25개 스킬을 검토해 중복 설명·일반 튜토리얼·과도한 예시를 줄인다.
+- 입력·출력 경로, 스키마, 상태 전이, 게이트, 실패 처리, 승인 경계와 실기기 증거 계약을 보존한다.
+- 이미 간결한 라우터는 불필요하게 다시 쓰지 않는다. 설명을 다른 파일로 옮겨 감소량을 부풀리지 않는다.
+- 런타임 코드와 테스트를 바꾸지 않고 문서/frontmatter/reference 검사 및 최종 전체 회귀를 통과한다.
+
+## 체크리스트
+
+- [x] 전체 스킬 분량·기존 경량화 정책·작업 상태 확인
+- [x] 제품 기획·스토어 운영·파이프라인 스킬별 계약 보존 축약
+- [x] 독립 리뷰 및 스킬 호출·참조 연결 확인
+- [x] 최종 문서·스키마 검사 및 전체 회귀 한 번 실행
+- [x] 실제 축약량과 검증 범위 기록
+
+## Working Notes
+
+- 이전 앱 아이콘 작업과 기존 dirty 변경을 보존한다.
+- 병렬 편집 소유권은 스킬 폴더별로 나누고, tasks/README/docs 기록은 root가 담당한다.
+- 모델이 일반적으로 수행할 수 있는 작업 지침은 줄이고, 이 프로젝트 고유 계약은 남긴다.
+- 25개 중 22개 수정; app-review/clone-app/integration-build는 이미 간결해 유지했다. 모든 frontmatter와 자동 생성 블록은 동일하며 로컬 reference 연결을 보존했다.
+- 전체 25개 파일이 3,649→1,560줄, 208,872→105,158 UTF-8 bytes로 줄었다. 외부 Axiom 소개 링크 하나만 제거했으며 실행 reference는 삭제하지 않았다.
+- 독립 리뷰가 찾은 source/doc drift와 미할당 detector 변수 예시를 수정했다. 런타임 코드와 테스트 파일은 변경하지 않는다.
+
+## Results
+
+- 나머지 25개를 검토해 22개 SKILL.md를 축약했다. app-review/clone-app/integration-build 라우터 3개와 이전 앱 아이콘 스킬은 유지했다. 새 reference로 설명을 옮기지 않았다.
+- 25개 파일: 3,649→1,560줄(57.2% 감소), 208,872→105,158 UTF-8 bytes(49.7% 감소). `docs/harness-optimization.md`에 측정 범위와 수치를 기록했다.
+- 제품·운영·파이프라인 묶음을 서로 다른 검토자가 baseline과 대조했다. 입력·출력·스키마·승인·sandbox·실기기 증거·출하 preflight·원래 lock token 계약을 보존했다.
+- 기존 인증/환경 우선순위/CLI 옵션/결과 enum/스킬 경로의 drift 및 미할당 변수 예시를 현재 source와 일치시켰다. 런타임 코드와 테스트는 변경하지 않았다.
+- `bash tests/run_tests.sh`를 최종 1회 실행: **1595 tests, 564.530s, OK, exit 0**. 로그: `/var/folders/bt/7g73kpp973v0kjyp0tx22hyh0000gn/T/autobot-skill-optimization-u8m8vuih/regression.log`. 말미의 `FAKE check_gate_structure drift`는 검사기 음성 대조군 출력이며 실제 suite 실패가 아니다.
+- `python3 scripts/verify_spec_docs.py`, `python3 scripts/spec_bundle.py check`, 모든 26개 원본 frontmatter/generated block 보존 및 공통 skill-creator 스키마 검사, `git diff --check` 통과. Claude 전용 `user-invocable`는 공통 validator의 임시 복사본에서만 제외했다.
+- 실제 모델 품질·비용·속도 비교, 실기기/ASC 배포, 플러그인 런타임 재로딩은 수행하지 않았다. 이번 검증은 로컬 문서·통합·fixture 회귀 범위다.
+
+# 2026-10-04 — 앱 아이콘 스킬 최적화
+
+## 목표·수용 기준
+
+- 앱 아이콘 스킬의 중복 프롬프트·도구 사용 튜토리얼·반복 명령을 제거한다.
+- 1024×1024 PNG, 코너 라운드 없음, imagegen 사용, 실제 파일/시각 검증과 저장 규칙을 유지한다.
+- 독립 호출의 상태 비변경 및 기존 Phase 2/3 경로·fallback 메타데이터 계약을 유지한다.
+
+## 체크리스트
+
+- [x] 기존 스킬과 skill-creator의 간결성 기준 확인
+- [x] 공통 출력 계약과 모드별 통합 지침만 남기기
+- [x] frontmatter·아이콘 연동·문서 검증 및 축약 전후 비교
+- [x] 결과 및 사용자 교정에 따른 lesson 기록
+
+## Working Notes
+
+- 다른 파일로 긴 설명을 옮기지 않고 스킬 자체를 줄인다.
+- imagegen이 이미 제공하는 도구 인자·참조 이미지·API 키 안내는 반복하지 않는다.
+- 런타임 스크립트와 기존 커맨드의 호출 방식은 바꾸지 않는다.
+
+## Results
+
+- `skills/autobot-app-icon/SKILL.md`를 147→63줄, 7,532→3,144자로 축약했다. 중복 프롬프트 예시·일반 도구 안내·fallback 구현 설명·반복 명령을 제거했다.
+- 출력 계약·기존 파일 보호·실제 이미지 검증·standalone 상태 비변경·Phase 2/3 경로 및 generated/pillow/fallback 메타데이터를 유지했다. 독립 리뷰에서 첫 저장 경로와 Pillow 이니셜 예외를 명확히 했다.
+- `PYTHONPATH=tests:scripts python3 -m unittest test_skill_frontmatter_yaml test_app_icon_gates test_prompt_resources test_orchestration_doc_contracts` — 최종 23 tests OK.
+- `python3 scripts/verify_spec_docs.py`, YAML/공통 skill-creator 스키마 검증, `git diff --check` 통과. 실제 이미지 생성은 실행하지 않았다.
+- 사용자 교정에 따른 과도한 스킬 설명 lesson을 `tasks/lessons.md`에 기록했다.
+
 # clone 스킬 한방 실행 (one-shot) 만들기
 
 ## 목표
@@ -431,3 +526,34 @@
 - 표적 회귀 173건, 전체 `bash tests/run_tests.sh` 1356건, spec 문서 검사, shell/Python 정적 검사, `git diff --check`가 통과했다.
 - 실제 iPhone/WDA는 실행하지 않았다. 실기기 동작은 이 작업의 검증 범위 밖이다.
 - 설치된 Autobot 0.13.10 런타임은 현재 워크트리와 drift 상태다. 설치/재로딩은 이번 요청 범위에 포함하지 않았다.
+# 2026-10-04 — imagegen 앱 아이콘 스킬
+
+## 목표·수용 기준
+
+- imagegen으로 앱 아이콘을 독립 생성하고, 기존 Phase 2/3 호출도 지원한다.
+- 최종 아이콘은 정확히 1024×1024 PNG, 불투명 배경, 코너 라운드 없는 정사각형이다.
+- `/autobot:icon`은 기존 아이콘을 허가 없이 덮어쓰거나 파이프라인 상태를 변경하지 않는다.
+- 스킬·커맨드의 frontmatter 및 관련 기존 검증을 통과한다.
+
+## 작업 체크리스트
+
+- [x] 기존 스킬·커맨드·imagegen 규칙 확인
+- [x] 최소 설계: 기존 앱 아이콘 스킬 확장 및 독립 커맨드 연결
+- [x] 생성·저장·크기/모서리 검증 지침 구현
+- [x] 관련 테스트·문서 검증 및 diff 검토
+- [x] 결과·검증 범위 기록
+
+## Working Notes
+
+- 기존 `autobot-app-icon`과 `.autobot/app-icon-1024.png` 계약을 재사용한다.
+- 현재 작업은 스킬 추가/확장이며 특정 앱의 이미지를 실제 생성하는 요청은 아니다.
+- 독립 생성은 imagegen을 사용하며, 기존 파이프라인의 Pillow 상태를 imagegen 성공으로 보고하지 않는다.
+- 기존 apply/verify 스크립트는 크기·모서리를 보장하지 않으므로 생성 스킬에서 실제 이미지 속성과 시각 결과를 먼저 검증한다. 런타임 게이트 수정은 이번 범위 밖이다.
+
+## Results
+
+- 기존 `skills/autobot-app-icon/SKILL.md`에 독립 imagegen 생성, 1024×1024·불투명·사각 모서리 프롬프트 및 최종 파일/시각 검증을 추가했다. `commands/icon.md`와 README에 `/autobot:icon` 진입점을 연결했다.
+- `PYTHONPATH=tests:scripts python3 -m unittest test_skill_frontmatter_yaml test_app_icon_gates test_prompt_resources test_cli_surfaces test_orchestration_doc_contracts -v` — 29 tests OK.
+- `python3 scripts/verify_spec_docs.py`, 원본 스킬·커맨드 YAML 파싱, `git diff --check` 통과. skill-creator 검증은 기존 Claude 전용 `user-invocable` 필드를 임시 복사본에서만 제외하고 공통 스키마·본문을 검사해 통과했다.
+- 독립 리뷰에서 standalone 상태 비변경, 기존 Phase 2/3 경로와 fallback 호환을 확인했다.
+- 실제 imagegen 호출이나 플러그인 런타임 재로딩은 실행하지 않았다. 이 작업의 검증은 스킬/커맨드 계약과 기존 통합 테스트 범위다.

@@ -4,176 +4,86 @@ user-invocable: false
 description: "Interview or resume one screen’s specification and presentation-only SwiftUI (/autobot:screen)."
 ---
 
-# Screen Interview — 화면 하나를 깊게
+# Screen Interview
 
-화면 하나를 인터뷰로 기획하고, 결정을 SSOT 문서로 남기고, presentation-only SwiftUI 뷰까지 만든다. 독립 스킬 — Autobot 파이프라인 프로젝트가 아니어도 동작한다.
+화면 하나를 인터뷰로 기획하고 SSOT와 presentation-only SwiftUI를 만든다. Autobot 파이프라인 밖에서도 사용할 수 있다.
 
-## 산출물 계약
+## 산출물·재개
 
-| 산출물 | 경로 | 역할 | 기존 파일이 있으면 |
-|--------|------|------|--------------------|
-| 화면 spec | `docs/screens/<slug>.md` | **인터뷰의 주 산출물.** 라운드마다 갱신 | 이어서 재개 (status 참조) |
-| SOUL.md | 프로젝트 루트 | 제품 정체성 — 왜 존재, 누구의 어떤 순간, 감정 목표, 하지 않을 것 | 비파괴 병합 |
-| AGENTS.md | 프로젝트 루트 | 에이전트 작업 규칙의 **정본** — 구조, 컨벤션, SSOT 지도 | 비파괴 병합 |
-| SwiftUI 뷰 | 기존 Views 패턴 위치 (없으면 `Views/<ScreenName>View.swift`) | presentation-only, 상태별 `#Preview` | diff 요약 확인 후 교체 |
-| Xcode 스캐폴드 | `<App>.xcodeproj` (+ `project.yml`, `App/<App>App.swift`) | **프리뷰 캔버스 구동용 최소 프로젝트** — 없을 때만 생성 | 유지 (xcodegen 재생성만) |
+| 산출물 | 경로·기존 처리 |
+|---|---|
+| 인터뷰 정본 | `docs/screens/<slug>.md`, 라운드마다 갱신·status로 재개 |
+| 제품 정체성 | 루트 `SOUL.md`, 비파괴 병합 |
+| 작업 규칙·SSOT 지도 | 루트 `AGENTS.md`, 비파괴 병합·화면 목록 등록 |
+| 상태별 `#Preview` 뷰 | 기존 Views 패턴, 없으면 `Views/<ScreenName>View.swift`; 기존 파일 교체는 diff 요약 확인 후 |
+| 프리뷰 최소 프로젝트 | 없을 때만 `<App>.xcodeproj` + `project.yml` + `App/<App>App.swift` 생성 |
 
-**CLAUDE.md 는 만들지 않는다.** 새로 생성하지 않고, 이미 있어도 수정·병합하지 않는다 — 이 스킬의 산출물 계약 밖이다.
+슬러그는 영문 kebab-case(`home-feed` → `HomeFeedView.swift`). [references/templates.md](references/templates.md)를 사용한다. **CLAUDE.md는 생성·수정·병합하지 않는다.** 별도 상태 파일 없이 화면 spec을 정본으로 삼는다.
 
-슬러그는 kebab-case 영문 (예: 홈 피드 → `home-feed`, 뷰는 `HomeFeedView.swift`). 문서 템플릿은 `references/templates.md` 참조.
+질문 전에 Xcode/SPM 구조, 기존 SOUL/AGENTS, `docs/screens/*.md`, SwiftUI Views 패턴·토큰, `.autobot/architecture.md`/`design-spec.md`를 읽는다. 인자가 있어도 기존 slug·H1과 같은 화면 후보가 있으면 기존 재개 vs 신규를 먼저 확정한다. 대상이 없거나 모호하면 기존 화면을 선택지로 AskUserQuestion한다.
 
-## 인터뷰 철칙
+| spec status | 재개 지점 |
+|---|---|
+| `interviewing` | 마지막 기록 라운드 다음 |
+| `confirmed` | 인터뷰 생략, SSOT 생성·병합 |
+| `built` | 바꿀 내용 확인 후 해당 라운드만 재오픈 |
 
-1. **스캔 먼저, 질문은 나중** — 코드·문서·`.autobot/` 에서 알 수 있는 것은 묻지 않는다. 이미 결정된 것은 "이렇게 이해했는데 맞나요" 확인만.
-2. **한 라운드 = 한 주제.** 라운드가 끝나면 결정 요약(스냅샷)을 보여주고 정정 기회를 준 뒤 `docs/screens/<slug>.md` 에 즉시 기록한다. 기록은 항상 **기존 섹션에 항목 추가** 방식 — 같은 헤딩(특히 결정 로그·미결/후속)을 두 번 만들지 않는다.
-3. **갈림길은 AskUserQuestion** (선택지 2–4개 + 추천 표시), **열린 질문은 대화로.** 한 호출에 질문 최대 4개, 한 라운드에 호출 1–2회를 넘기지 않는다 — 심문이 아니라 인터뷰다.
-4. **모호한 답은 시나리오로 한 번 되묻는다** — "유저가 지하철에서 30초 있을 때 이 화면을 열면 무엇을 얻고 닫나요?" 처럼 구체 상황으로. 그래도 결정이 안 나오면 추천안을 **잠정 채택**해 spec 결정에 `(잠정)` 을 표시하고 "미결/후속" 에 재검토 항목으로 등록한 뒤 진행한다. 같은 질문을 두 번 이상 되묻지 않는다.
-5. **화면 나열 금지 (기획 깊이)** — R1 에서 훅·3초 가치·성공 기준을 반드시 도출한다. "무엇이 보이나" 전에 "왜 존재하나".
-6. **스코프 = 화면 하나** — 다른 화면·기능 아이디어는 spec 의 "미결/후속" 에 적고 돌아온다.
-7. **답을 유도하지 않는다** — 선택지에는 실제로 다른 결과를 낳는 대안만 넣는다. 들러리 선택지 금지.
+스캔·대상을 2–4줄로 알리고 신규 spec은 `status: interviewing`으로 생성한다.
 
-## Step 0: 컨텍스트 스캔 + 대상 확정
+## 인터뷰
 
-질문 전에 조용히 수행:
+- 코드·문서가 답을 주면 재질문 없이 확인형으로 축소한다.
+- 한 라운드 한 주제. 스냅샷을 보여 정정 기회를 준 뒤 **즉시 기존 섹션에 추가**하며 결정 로그·미결 헤딩을 중복 생성하지 않는다.
+- 갈림길은 AskUserQuestion(실제로 다른 대안 2–4개 + 추천), 열린 질문은 대화. 한 호출 최대 4질문, 라운드당 호출 1–2회; R1 대화는 한 번에 2–3개 이하.
+- 모호하면 구체 시나리오로 한 번만 되묻는다. 그래도 미결이면 추천안을 `(잠정)`으로 채택하고 미결/후속에 재검토를 기록한다.
+- 다른 화면·기능 아이디어는 미결/후속으로 보낸다. 요소 나열보다 존재 이유·훅·3초 가치·성공 행동을 먼저 정한다.
 
-```bash
-# 프로젝트 유형과 기존 산출물 파악
-ls *.xcodeproj Package.swift 2>/dev/null          # Xcode/SPM 여부
-ls SOUL.md AGENTS.md 2>/dev/null        # 기존 SSOT
-ls docs/screens/*.md 2>/dev/null                  # 기존 화면 spec (재개 후보 포함)
-ls .autobot/architecture.md .autobot/design-spec.md 2>/dev/null  # Autobot 컨텍스트
-```
+| 라운드 | 결정·기록 |
+|---|---|
+| R1 존재 이유 | 한 문장 정의, 도착 순간·맥락, 3초 가치, 행동으로 측정하는 성공 기준, 차별화 훅 |
+| R2 콘텐츠 위계 | 요소·우선순위·데이터 출처(입력/저장/계산) 표, 최상위 요소 1개를 갈림길로 확정 |
+| R3 인터랙션 | 주 CTA 1개, 보조 액션, 진입/이탈, 화면 특유 제스처; 액션별 콜백 이름까지 확정 |
+| R4 상태 | default 외 empty/loading/error를 제안. 갱신 화면은 refreshing/stale, 도메인에 맞게 권한·오프라인·딥링크 포커스·데이터량/장문·유료 분기도 제안. 채택 상태마다 보이는 것 + 다음 행동 |
+| R5 룩앤필 | 톤 3개, 레퍼런스, 모션, 다크모드 방침(기존 SOUL/design-spec은 확인만) |
+| R6 확정 | 전체 spec 스냅샷 승인 → `confirmed` |
 
-- 기존 SwiftUI 코드가 있으면 Views 디렉토리 패턴·네이밍·디자인 토큰(색/폰트 자산) 을 파악한다.
-- `.autobot/architecture.md` 가 있으면 앱 컨셉·화면 목록·Design Direction 을 읽어 이미 답이 있는 질문을 지운다.
-- 인자가 주어져도 기존 `docs/screens/*.md` 의 slug·H1 과 대조해 같은 화면으로 보이는 후보가 있으면 AskUserQuestion 으로 (기존 spec 이어서 vs 새 화면) 을 먼저 확정한다 — 같은 화면의 중복 spec 을 만들지 않는다.
-- 기존 spec 을 이어가는 경우 status 로 재개 지점을 정한다:
-  - `interviewing` → 기록된 마지막 라운드 다음부터 이어간다.
-  - `confirmed` → 인터뷰 전체 생략, "SSOT 생성·병합" 부터 재개한다 (병합은 비파괴 규칙이라 재실행 안전).
-  - `built` → 완료된 화면. 무엇을 바꾸고 싶은지 확인한 뒤 해당 라운드만 재오픈한다 (R6 의 수정 규칙 재사용).
-- 인자가 없거나 모호하면 첫 AskUserQuestion 으로 대상 화면부터 확정한다 (기존 화면 목록이 있으면 그걸 선택지로).
+수정으로 R1 훅/R2 최상위 요소가 바뀌면 R3 CTA·콜백과 R4 상태를 함께 갱신하거나 유지 이유를 결정 로그에 남긴 뒤 전체를 다시 확인받는다.
 
-스캔 결과를 2–4줄로 요약해 보여주고 인터뷰를 시작한다. 이 시점에 `docs/screens/<slug>.md` 를 status `interviewing` 으로 생성한다.
+## SSOT 병합
 
-## 인터뷰 라운드
+완성 spec → SOUL → AGENTS 순서로 [templates](references/templates.md)를 적용한다. 기존 문장·섹션은 보존하고 이번 인터뷰 결정만 추가한다. 충돌은 사용자에게 확인한다.
 
-라운드는 표준 5개. 화면이 단순하거나 컨텍스트가 이미 답을 주면 라운드를 축소·확인형으로 바꾼다 — 형식이 아니라 결정의 완성이 목적이다.
+- SOUL은 R1/R5의 제품 수준 통찰만 증류한다(화면 세부는 spec 소유).
+- AGENTS에는 화면 작업 전 spec 읽기 규칙·SSOT 지도(없을 때)와 화면 목록을 추가한다.
 
-### R1 — 존재 이유 (오픈 대화 중심)
+## SwiftUI 계약
 
-핵심 질문 (대화로, 한 번에 2–3개까지만):
-- 유저는 **어떤 순간·맥락**에서 이 화면에 도착하나? (하루 중 언제, 어떤 감정으로, 무엇을 하다가)
-- 도착 후 **3초 안에** 무엇을 얻어야 하나?
-- 이 화면이 잘 작동하면 유저는 **무엇을 하게** 되나? (성공 기준 — 행동으로)
-- 비슷한 앱의 같은 화면과 **다르게 만들 한 가지(훅)** 는 무엇인가?
+- 기존 디자인 토큰·파일 위치·deployment target을 따른다(신규 iOS 26+). 큰 뷰는 같은 파일 내 서브뷰로 나눈다.
+- 화면 상태는 initializer의 enum/옵셔널 모델로 주입하고 mock은 모델 `sample` extension 또는 `#Preview` 인라인에 둔다. 액션은 R3 이름의 콜백(`var onStartWorkout: () -> Void = {}`)만 연결한다.
+- 로컬 `@State`는 선택 탭·펼침 같은 순수 시각 상태만 허용한다.
+- **네트워크·저장(URLSession/SwiftData/UserDefaults), ViewModel/`@Observable` 비즈니스 로직, 타이머·백그라운드 작업, 실 내비게이션 목적지 연결은 금지**다.
+- R4 채택 상태마다 `#Preview` 하나 + 다크모드 하나. 의미 있는 접근성 라벨과 Dynamic Type 대응을 포함한다.
+- 동일 경로 뷰 교체 전 diff 요약 확인을 받는다.
 
-산출: 화면의 한 문장 정의 + 도착 맥락 + 3초 가치 + 성공 기준 + 훅. 스냅샷 확인 후 기록.
+## 프리뷰·검증
 
-### R2 — 콘텐츠 위계 (혼합)
+결과는 **살아있는 Xcode `#Preview` 캔버스**로 표시한다. PNG 스냅샷이나 확인 안내만으로 끝내지 않는다.
 
-- 화면에 보여야 할 정보 요소를 함께 도출한다 (대화). R1 의 3초 가치에서 시작해 자연스럽게 나오는 것 위주 — 요소를 먼저 나열시키지 않는다.
-- **최상위 요소 1개** (가장 크고 먼저 보이는 것) 는 AskUserQuestion 갈림길로 확정한다.
-- 각 요소의 데이터가 어디서 오는지(유저 입력/저장된 것/계산된 것)를 표로 정리 — 뷰코드의 mock 설계 입력이 된다.
-
-산출: 요소 표 (요소 · 우선순위 · 데이터 출처) + 최상위 요소.
-
-### R3 — 인터랙션 (AskUserQuestion 중심)
-
-- **주 액션(CTA) 1개** — 이 화면에서 유저가 가장 자주 할 일. 갈림길로 확정.
-- 보조 액션들, 진입 경로(어디서 오나 — 탭바·타 화면·알림·위젯·딥링크)와 이탈 경로(어디로 가나), 제스처(스와이프·길게 누르기 등 이 화면 특유의 것만).
-
-산출: 주 CTA + 보조 액션 목록 + 진입/이탈 + 제스처. 각 액션은 뷰의 콜백 파라미터 이름까지 정한다 (`onStartWorkout` 등).
-
-### R4 — 상태 매트릭스 (AskUserQuestion 중심)
-
-default 외 상태를 화면 유형에 맞게 **제안하고** 고르게 한다 (빈 목록에서 시작하지 않는다):
-- 공통 후보: empty (첫 사용 — 무엇으로 채우도록 유도하나), loading, error. 보는 중 데이터가 갱신될 수 있는 화면(피드·목록·대시보드류)이면 refreshing(갱신 중)·stale(낡은 데이터 + 마지막 갱신 표시)도 공통 후보로 제안한다.
-- 화면 특유 후보를 스킬이 추론해 제안: 권한 거부(카메라·위치 등), 오프라인, 알림·딥링크 진입 시 특정 항목 포커스(R3 진입 경로에서 나왔다면), 항목 1개 vs 1,000개, 텍스트 초장문, 무료/유료 분기 등
-
-각 채택 상태마다: 유저에게 보이는 것 + 다음 행동 유도 한 줄.
-
-산출: 상태 매트릭스 (상태 · 보이는 것 · 유도 행동). 채택된 상태는 전부 `#Preview` 대상이 된다.
-
-### R5 — 룩앤필 (혼합)
-
-- 톤 키워드 3개 (예: 차분한/밀도있는/장난기). 기존 SOUL.md 나 design-spec 이 있으면 확인만.
-- 레퍼런스 앱·화면 (있으면; 필요시 WebSearch 로 함께 찾기).
-- 모션 성격 (절제 vs 표현적), 다크모드 우선순위.
-
-산출: 톤 + 레퍼런스 + 모션 + 다크모드 방침.
-
-### R6 — 확정
-
-`docs/screens/<slug>.md` 전체를 최종 스냅샷으로 보여주고 승인받는다. 수정 요청은 해당 라운드 결정을 고치되, 상류 결정(R1 훅·R2 최상위 요소)이 바뀌면 의존 하류(R3 주 CTA·콜백 이름, R4 상태 매트릭스)를 함께 점검해 갱신하거나 유지 이유를 결정 로그에 남긴 뒤 전체 스냅샷을 다시 확인받는다. 승인되면 status 를 `confirmed` 로 바꾸고 산출물 생성으로 진행한다.
-
-## SSOT 생성·병합
-
-순서: `docs/screens/<slug>.md` (이미 완성) → SOUL.md → AGENTS.md. 템플릿과 섹션 구조는 `references/templates.md`.
-
-**병합 규칙 (기존 파일이 있을 때):**
-- 기존 섹션·문장을 임의로 삭제·재작성하지 않는다. 이번 인터뷰에서 **드러난 것만** 해당 섹션에 추가한다.
-- SOUL.md: R1/R5 에서 제품 수준 통찰이 나왔을 때만 갱신 (화면 세부사항은 넣지 않는다 — 그건 spec 소유).
-- AGENTS.md: "화면 작업 전 `docs/screens/<slug>.md` 를 먼저 읽는다" 규칙과 SSOT 지도가 없으면 추가. 이번 화면을 화면 목록에 등록.
-- CLAUDE.md: **만들지도, 고치지도 않는다.** 없으면 그대로 두고, 있으면 건드리지 않는다.
-- 기존 내용과 이번 결정이 **충돌**하면 덮어쓰지 말고 사용자에게 어느 쪽이 맞는지 확인한다.
-
-## SwiftUI 뷰 생성 — presentation-only 계약
-
-**허용:**
-- 레이아웃·스타일·타이포·색 (기존 디자인 토큰/자산이 있으면 그것 사용)
-- 화면 상태는 이니셜라이저 주입: 상태 enum 또는 옵셔널 모델 파라미터 → 프리뷰에서 상태별 렌더
-- mock 데이터: 뷰 파일 내 `extension <Model> { static let sample… }` 또는 `#Preview` 인라인
-- 액션은 콜백 파라미터: `var onStartWorkout: () -> Void = {}` — R3 에서 정한 이름 그대로
-- 순수 시각 상태의 로컬 `@State` (선택된 탭, 펼침/접힘)
-
-**금지:**
-- 네트워크·저장 (URLSession, SwiftData, UserDefaults …)
-- ViewModel·`@Observable` 비즈니스 로직, 타이머·백그라운드 작업
-- 실 내비게이션 목적지 연결 (진입/이탈은 콜백으로만 표현)
-
-**필수:**
-- R4 상태 매트릭스의 **모든 상태**에 `#Preview` 하나씩 + 다크모드 프리뷰 1개
-- 접근성: 의미 있는 라벨, Dynamic Type 에 깨지지 않는 레이아웃
-- 파일 위치는 기존 프로젝트 패턴을 따른다. 신규 프로젝트면 `Views/<ScreenName>View.swift`. 뷰가 커지면 같은 파일 내 서브뷰로 분리 (파일 수 최소).
-- 동일 경로에 파일이 이미 있으면 덮어쓰기 전에 diff 요약을 보여주고 확인받는다.
-
-타깃 OS 는 프로젝트의 deployment target 을 따른다 (신규면 iOS 26+, Autobot 기본).
-
-## 검증 (advisory)
+1. Xcode 프로젝트가 없으면 xcodegen 최소 스캐폴드: 앱 타깃 1개, iOS 26.0, `sources: [App, Views]`, bundle ID는 `~/.autobot/config.json` 조직 값 또는 임시. App의 `WindowGroup`은 이번 화면(별도 루트가 있으면 루트)을 배치한다. `xcodegen generate`; 미설치면 `brew install xcodegen` 안내 후 advisory로 진행한다.
+2. 기존 프로젝트는 뷰의 타깃 포함 확인. xcodegen이면 재생성, Xcode 16 synchronized-folder면 자동 포함; 수동 pbxproj 편집 금지.
+3. advisory 컴파일을 확인한다:
 
 ```bash
-# Xcode 프로젝트면 (스킴 자동 감지)
-xcodebuild -project *.xcodeproj -scheme <scheme> -destination 'generic/platform=iOS Simulator' build 2>&1 | tail -5
-# SPM 이면
-swift build 2>&1 | tail -5
+xcodebuild -project <App>.xcodeproj -scheme <scheme> -destination 'generic/platform=iOS Simulator' build
+# SPM 프로젝트
+swift build
+# 빌드 수단 없는 신규 뷰
+xcrun swiftc -typecheck -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" -target arm64-apple-ios<SDK버전>-simulator <뷰파일>
 ```
 
-- 성공 → "컴파일 확인됨" 보고.
-- 실패 → **산출물은 그대로 두고** 원인을 분류해 보고: 이번 뷰 코드 문제면 즉시 수정 후 재시도 (최대 2회), 기존 프로젝트의 무관한 문제면 그 사실만 명시.
-- 빌드 수단이 없으면 (스캐폴드 없는 신규) 컴파일 확인은 `xcrun swiftc -typecheck -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" -target arm64-apple-ios<SDK버전>-simulator <뷰파일>` 로 대체.
+이번 뷰 문제는 수정·재시도 최대 2회. 무관한 기존 문제는 원인을 보고하고 산출물을 보존한다. 검증 실패는 hard fail이 아니다.
 
-## Xcode 프리뷰로 결과를 보여준다 (필수)
+4. `xed <프로젝트> && xed <뷰파일>`로 뷰에 포커스하고 캔버스(⌥⌘↩)를 연다.
+5. 뷰가 생성됐으면 컴파일 실패여도 spec을 `status: built`, `updated: <오늘>`로 갱신한다. `## 구현 노트`에 뷰 경로·mock 위치·프리뷰 상태를 적고 AGENTS 화면 상태도 갱신한다.
 
-"Xcode 에서 확인하세요"라는 **말로 끝내지 않는다** — 스킬이 직접 Xcode 를 열어 프리뷰 캔버스까지 데려다 놓는다. 결과 표시는 이미지 렌더가 아니라 **살아있는 `#Preview` 캔버스**다 (사용자 결정 2026-07-17 — PNG 스냅샷 표시 금지).
-
-1. **Xcode 프로젝트가 없으면** 최소 스캐폴드를 만든다 (xcodegen):
-   - `project.yml` — 앱 타깃 1개, `deploymentTarget` iOS 26.0, `sources: [App, Views]`(글롭이라 이후 화면 자동 포함), 번들 id 는 `~/.autobot/config.json` 의 조직 값 또는 임시
-   - `App/<App>App.swift` — `WindowGroup` 에 이번 화면(루트 화면이 따로 있으면 그것) 배치
-   - `xcodegen generate` → `<App>.xcodeproj`. xcodegen 미설치면 `brew install xcodegen` 안내 후 중단하지 말고 advisory 로 진행
-2. **프로젝트가 이미 있으면** 새 뷰 파일이 타깃에 포함되는지만 확인 — xcodegen 프로젝트면 `xcodegen generate` 재실행, Xcode 16 synchronized-folder 프로젝트면 자동 포함. 수동 pbxproj 편집은 하지 않는다
-3. advisory 빌드: `xcodebuild -project <App>.xcodeproj -scheme <App> -destination 'generic/platform=iOS Simulator' build` (스캐폴드 덕에 이제 가능)
-4. **`xed <프로젝트> && xed <뷰파일>`** 로 Xcode 를 열어 해당 뷰 파일에 포커스 — 캔버스(⌥⌘↩)가 R4 상태별 `#Preview` 를 보여준다. 최종 보고에 확인할 프리뷰 이름 목록을 명시한다
-
-뷰 생성·검증 후 `docs/screens/<slug>.md` frontmatter 를 `status: built`, `updated: <오늘 날짜>` 로 갱신하고 `## 구현 노트`(뷰 경로·mock 위치·프리뷰 상태 목록)를 채우며, AGENTS.md 화면 목록의 상태 열도 함께 갱신한다. 검증(advisory) 컴파일이 실패해도 뷰 파일이 생성됐으면 `built` 다.
-
-## 최종 보고
-
-- **Xcode 가 열려 있고 캔버스에 프리뷰가 떠 있는 상태**로 보고 시작 — 확인할 `#Preview` 이름 목록을 첫 항목으로
-- 화면 한 문장 정의 + 훅
-- 생성·변경 파일 목록 (SOUL.md·AGENTS.md·화면 spec 상태: 생성/병합/유지)
-- 뷰 파일 경로 + 프리뷰 상태 목록 + 컴파일 확인 결과
-- "미결/후속" 에 쌓인 항목 (다음 `/autobot:screen` 후보)
-
-## 중단·재개
-
-어느 단계에서 끊겨도 `docs/screens/<slug>.md` 가 진실이다. 다음 호출 때 Step 0 이 status 를 보고 이어갈 지점을 정한다 (`interviewing`/`confirmed`/`built` 3분기는 Step 0 참조). 별도 상태 파일을 만들지 않는다.
+최종 보고는 캔버스에 프리뷰가 열린 상태에서 확인할 `#Preview` 이름으로 시작한다. 화면 정의·훅, 파일 목록(생성/병합/유지), 뷰·상태·컴파일 결과, 미결/후속을 보고한다. 실제 열기/컴파일을 확인하지 못하면 그 한계를 명시한다.

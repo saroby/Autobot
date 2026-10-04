@@ -4,147 +4,55 @@ user-invocable: false
 description: "Upload existing fastlane/metadata text to a registered ASC app."
 ---
 
-# Fastlane Metadata Upload (ASC)
+# Fastlane Metadata Upload
 
-`fastlane/metadata/` 의 텍스트 메타데이터를 App Store Connect 에 업로드한다. 바이너리/스크린샷은 건드리지 않는다 (`fastlane deliver --skip_binary_upload --skip_screenshots --skip_app_version_update`).
-
-**Single Responsibility:** ASC 메타데이터 업로드만 한다. 메타데이터 생성은 `autobot-generate-metadata`, 바이너리 업로드는 `autobot-upload-build`, 테스터 초대는 `autobot-invite-testers` 가 각각 담당.
-
-## When to use
-
-- `autobot-generate-metadata` 가 `fastlane/metadata/` 를 만든 직후 (`/autobot:meta` 의 두번째 단계)
-- 길이 제한 위반 fix 후 재시도
-- localized 텍스트만 갱신 (바이너리 새 빌드 없이)
+기존 `fastlane/metadata/` 텍스트와 선택적인 연령등급 설정을 등록된 ASC 앱에 업로드한다. 호출자의 업로드 승인 계약을 따른다 (`/autobot:meta`의 명시적 확인 또는 `--upload`).
 
 ## Prerequisites
 
-### 1. ASC API Key
+App Manager 이상 **ASC API Key**의 다음 env가 필요하다. 앱 등록의 Apple ID 웹 세션과 별개다.
 
-`autobot-register-app` 과 동일한 3개:
-
-```bash
+```text
 APP_STORE_CONNECT_API_KEY_KEY_ID
 APP_STORE_CONNECT_API_KEY_ISSUER_ID
 APP_STORE_CONNECT_API_KEY_KEY_FILEPATH
 ```
 
-fastlane `app_store_connect_api_key` 액션과 동일한 업계표준 이름이라, 기존 fastlane 환경이 그대로 동작한다.
+`scripts/release_env.sh`는 상속 env → 프로젝트 `.env` → `~/.autobot/.env` 순으로 해석한다. `.p8`은 읽을 수 있어야 한다. fastlane이 없으면 스크립트가 `brew install fastlane`을 시도한다.
 
-Key role 은 **App Manager** 이상.
+ASC 앱이 존재해야 하며 (`autobot-register-app`), metadata 디렉토리 아래 `.txt` 파일이 하나 이상 필요하다 (`autobot-generate-metadata`). `app_store_rating_config.json`이 있으면 자동 감지해 `--app_rating_config_path`로 전달한다.
 
-### 2. fastlane
-
-미설치 시 스크립트가 `brew install fastlane` 시도. 실패하면 exit 3.
-
-### 3. `fastlane/metadata/` 존재
-
-- `fastlane/metadata/<locale>/*.txt` 가 최소 한 locale 이상 존재해야 함
-- 또는 root-level `copyright.txt` / `primary_category.txt`
-
-없으면 exit 2 (`autobot-generate-metadata` 먼저 호출 안내).
-
-### 4. ASC 에 앱 등록됨
-
-미등록이면 `fastlane deliver` 가 "Could not find app" 으로 실패. `/autobot:testflight` 가 register 까지 해주므로 이 스킬을 단독 호출하기 전에 testflight 한 번은 돌려야 한다.
-
-## Usage
+## Run
 
 ```bash
+AUTOBOT_METADATA_UPLOAD_STATUS_FILE=.autobot/metadata-upload-status.json \
 bash "$CLAUDE_PLUGIN_ROOT/skills/autobot-upload-metadata/scripts/upload-metadata.sh" \
   --bundle-id "com.axi.MyApp"
 ```
 
-선택 인자:
+| 선택 인자 | 기본값 / 계약 |
+|-----------|---------------|
+| `--team-id` | `$DEVELOPMENT_TEAM` → `config.json:developmentTeam`; 10자 대문자 영숫자 |
+| `--metadata-path` | `fastlane/metadata` |
+| `--platform` | `ios`; `ios` / `appletvos` / `xros` |
+| `--dry-run` | 검증과 resolved fastlane 명령 출력만; 호출 안 함 |
 
-| Flag | 기본값 | 설명 |
-|------|--------|------|
-| `--team-id` | `$DEVELOPMENT_TEAM` → config.json:developmentTeam | 10자 영숫자 대문자 |
-| `--metadata-path` | `fastlane/metadata` | 입력 디렉토리 |
-| `--platform` | `ios` | `ios` / `appletvos` / `xros` |
-| `--dry-run` | off | resolved fastlane 명령만 출력, 호출 안 함 |
+스크립트는 `fastlane deliver`에 `--skip_binary_upload --skip_screenshots --skip_app_version_update --force --precheck_include_in_app_purchases false`를 전달한다. API Key JSON은 임시 디렉토리(700)/파일(600)에 생성 후 정리하고 stdin은 차단한다.
 
-### Status file (선택)
+## Result and failure handling
 
-`AUTOBOT_METADATA_UPLOAD_STATUS_FILE` 지정 시 결과 JSON 원자적 기록:
+`AUTOBOT_METADATA_UPLOAD_STATUS_FILE`의 원자적 JSON 필드: `bundle_id`, `metadata_path`, `reason`, `result`, `team_id`, `timestamp`. `result`: `uploaded` / `dry_run` / `failed`.
 
-```json
-{
-  "bundle_id": "com.axi.MyApp",
-  "metadata_path": "fastlane/metadata",
-  "reason": "",
-  "result": "uploaded",
-  "team_id": "A1B2C3D4E5",
-  "timestamp": "2026-05-18T12:00:00Z"
-}
-```
+| Exit / reason | 처리 |
+|---------------|------|
+| 0 | 업로드 또는 dry-run 성공 |
+| 1 | 사용법/입력값 수정 |
+| 2 | metadata/.txt, ASC creds 또는 읽을 수 있는 `.p8` 확인 |
+| 3 | fastlane 설치 실패; 수동 설치 |
+| 4 / `app_not_registered` | `autobot-register-app`으로 등록 |
+| 4 / `metadata_length` | 생성 스킬로 길이 재검증 |
+| 4 / `auth_failed` | API Key와 role 확인 |
+| 4 / `asc_state_locked` | ASC 버전의 심사/편집 가능 상태 확인 |
+| 4 / `fastlane_exit_<N>` | 로그 확인; 일시적 타임아웃이면 재시도 |
 
-`result`: `uploaded` / `dry_run` / `failed`.
-
-## Exit codes
-
-| Code | 의미 | 대응 |
-|------|------|------|
-| 0 | 업로드 성공 (또는 dry-run 통과) | 끝 |
-| 1 | 사용법/입력값 오류 | 인자 확인 |
-| 2 | metadata 디렉토리 누락 / ASC creds 누락 / `.p8` 없음 | `autobot-generate-metadata` 먼저, `.env` 확인 |
-| 3 | fastlane 설치 실패 | 수동 설치 |
-| 4 | `fastlane deliver` 실패 | status.reason 으로 분기 |
-
-### Failure 분류
-
-| fastlane 출력 패턴 | reason | 의미 |
-|-----------------|--------|------|
-| `Could not find app`, `Application not found` | `app_not_registered` | `/autobot:testflight` 먼저 (register-app) |
-| `metadata is too long`, `value is too long` | `metadata_length` | `autobot-generate-metadata` 재실행, 한도 검증 |
-| `Authentication failed`, `not authorized` | `auth_failed` | API key 확인 |
-| `Could not edit App Store information` | `asc_state_locked` | 이미 심사 중인 버전이 있는지 확인 |
-| `No data` + `fetch_app_store_review_detail` (로컬라이즈 업로드 **후**, 연령 등급 적용 확인 시) | `first_version_review_detail_bug` | **성공으로 처리(exit 0)** — 첫 버전에서 fastlane 이 심사정보 조회 중 크래시하는 알려진 버그([#20538](https://github.com/fastlane/fastlane/issues/20538)). 연령 등급 설정 파일이 있으면 `Setting the app's age rating...` 로그도 확인해야 함 |
-| 그 외 | `fastlane_exit_<N>` | 로그 확인 |
-
-## fastlane deliver invocation
-
-```
-fastlane deliver \
-  --api_key_path <tempdir>/fastlane_api_key.json \
-  --app_identifier com.axi.MyApp \
-  --metadata_path fastlane/metadata \
-  --platform ios \
-  --skip_binary_upload \
-  --skip_screenshots \
-  --skip_app_version_update \
-  --force \
-  --precheck_include_in_app_purchases false \
-  [--team_id A1B2C3D4E5]
-```
-
-- `--skip_binary_upload`: 바이너리 안 올림 (이미 testflight 로 올렸음)
-- `--skip_screenshots`: 스크린샷은 별도 책임
-- `--skip_app_version_update`: 버전 번호 자동 변경 차단
-- `--force`: 대화형 prompt 차단 (CI 호환)
-- `--precheck_include_in_app_purchases false`: IAP precheck 끔 (없는 앱이 대부분)
-
-## Security
-
-- API Key JSON 은 `mktemp -d` (700) + `umask 077` + `chmod 600` + `trap cleanup` (register-app 과 동일 패턴)
-- fastlane 환경변수로 changelog/banner/2FA prompt 침묵
-- stdin 차단 (`</dev/null`)
-- Status 파일 atomic temp+rename
-
-## Troubleshooting
-
-| 증상 | 해결 |
-|------|------|
-| `Could not find app for bundle ID` | `/autobot:testflight` 먼저 — register-app 단계가 앱을 ASC 에 생성 |
-| `metadata.<locale>.name.length must be less than 30` | `autobot-generate-metadata` 재실행 — LLM 이 한도 안 지킴 |
-| `Could not edit App Store information` | ASC 웹에서 현재 버전 상태 확인. "Ready for Submission" 또는 "Prepare for Submission" 일 때만 편집 가능 |
-| `Apple's API timed out` | 일시적 — 재시도. fastlane deliver 는 멱등 |
-
-## Integration with other Autobot skills
-
-- **`autobot-generate-metadata`** — 입력 `fastlane/metadata/` 의 생산자. 이 스킬 호출 전에 반드시 통과
-- **`autobot-register-app`** (간접) — 앱이 ASC 에 존재해야 한다. `/autobot:testflight` 가 자동으로 보장
-- **`/autobot:meta`** — 이 스킬과 `autobot-generate-metadata` 를 orchestrate
-
-## Files
-
-- `scripts/upload-metadata.sh` — fastlane deliver wrapper
+첫 버전의 [fastlane #20538](https://github.com/fastlane/fastlane/issues/20538) 예외는 **로컬라이즈 업로드 로그 + `No data` + `fetch_app_store_review_detail`/`review_attachment_file`**가 모두 있을 때만 `uploaded`, `reason=first_version_review_detail_bug`, exit 0으로 처리한다. Rating config가 있으면 `Setting the app's age rating...` 로그도 필수다. 단순 `No data`를 성공으로 간주하지 않는다.

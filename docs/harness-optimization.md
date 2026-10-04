@@ -29,3 +29,18 @@ OpenAI의 [최신 모델 지침](https://developers.openai.com/api/docs/guides/l
 실제 모델 품질·비용·시간은 동일 모델/effort에서 새 앱 빌드, 중단 재개, 컴파일 실패 복구,
 clone 관찰·검증, 심사 controller 재개를 비교해야 한다. 완료율, 필수 증거, 토큰, 시간, 비용을 함께 보고
 기존 결과보다 나빠지는 작업에만 필요한 지침을 추가한다.
+
+## 2026-10-04 추가 스킬 최적화
+
+앱 아이콘을 제외한 25개 스킬을 검토해 22개를 축약했다. 이미 간결한 app-review·clone-app·integration-build 라우터는 유지했다. 중복 프롬프트, 일반 도구 설명, 반복 명령·예시와 스크립트 내부 구현 설명을 제거했다. 기존 reference로 본문을 옮기거나 새 reference를 만들지 않았다.
+
+| 측정 대상 | 이전 | 이후 | 감소 |
+|-----------|-----:|-----:|-----:|
+| `SKILL.md` 25개 파일, 줄 수 | 3,649 | 1,560 | 57.2% |
+| 같은 파일의 UTF-8 바이트 수 | 208,872 B | 105,158 B | 49.7% |
+
+Frontmatter·자동 생성 Phase 표·입출력 경로·스키마·승인 경계·sandbox·실기기 증거·출하 preflight·원래 lock token 해제 계약을 유지했다. 인증 방식·환경 변수 우선순위·CLI 옵션·결과 enum·실제 수정 대상 경로의 오래된 설명은 현재 소스와 일치시켰다.
+
+측정은 파일 분량이며 토큰·비용·latency나 실제 모델 완료율 측정은 아니다. 연결된 상세 reference는 현재 단계에 필요할 때 읽는다.
+
+최종 검증: `bash tests/run_tests.sh` 1회, 1,595 tests OK; `verify_spec_docs.py`, `spec_bundle.py check`, 전체 스킬 YAML/공통 스키마·reference·자동 생성 블록 보존 검사와 `git diff --check` 통과. 실제 모델 실행 품질 비교나 배포 검증은 하지 않았다.

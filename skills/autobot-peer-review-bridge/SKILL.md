@@ -6,115 +6,57 @@ description: "Request an opposite-runtime artifact review (Codex → Claude, Cla
 
 # Autobot Peer Review Bridge
 
-Autobot should avoid same-model self-review at the highest-risk checkpoints.
-This bridge picks the opposite reviewer from the current host:
-
-| Runtime host | Peer reviewer |
-|--------------|---------------|
-| `codex` | `claude` |
-| `claude` | `codex` |
-| `unknown` | soft skip |
+Review with the opposite runtime: `codex→claude`, `claude→codex`, `unknown→soft-skip`.
 
 ## Detection
 
-Run this first and record the result during Phase 0:
+During Phase 0, detect and substitute the **actual** output values into record-environment below. Detection does not invoke reviewers. Do not ask to install tools mid-build.
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/detect-peer-ai.sh" --format env
-
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" record-environment \
-  --runtimeHost codex \
-  --peerAi claude \
-  --peerReviewAvailable false
+  --runtimeHost "<runtimeHost>" --peerAi "<peerAi>" \
+  --peerReviewAvailable "<peerReviewAvailable>"
 ```
 
-The detector treats `CODEX_*` environment as Codex, `CLAUDE_*` environment as
-Claude, and maps to the opposite peer. It only reports availability; it does
-not run either tool.
+## Phase 1: Architecture Review
 
-## Phase 1: Architecture Peer Review (bi-directional)
+After architect output and before Gate 1→2, review `.autobot/architecture.md` and `<AppName>/Models/`.
 
-After architect output exists and before Gate 1->2, write the unified result to
-`phases.1.metadata.peerReview` with required fields `host`, `peer`, `verdict`.
+- Claude host: `scripts/codex-architecture-review.sh` writes legacy `codexReview` and generic `peerReview`.
+- Codex host: use available Claude CLI/SDK; pass the generic result to the caller.
+- Unavailable/invocation failure: `verdict="skipped"` with concrete `skipReason`.
 
-| Runtime host | Reviewer path | Implementation |
-|--------------|---------------|----------------|
-| `claude` | Codex CLI | `scripts/codex-architecture-review.sh` (writes both `codexReview` legacy key and `peerReview` generic key) |
-| `codex` | Claude review | Ask Claude (via available CLI/SDK) to review `.autobot/architecture.md` + `<AppName>/Models/` and persist `peerReview` directly |
-| either | unavailable | Record `verdict=skipped` with a concrete `skipReason` (`peer_cli_unavailable`, `peer_invocation_failed`, etc.) |
-
-Gate 1->2 reads `phases.1.metadata.peerReview` (falls back to legacy
-`codexReview`). `skipReason` is mandatory when `verdict=skipped`. Phase 1 still
-accepts a properly-attributed skip because Autobot must work standalone.
-
-Minimum Codex-host -> Claude review payload:
-
-```json
-{
-  "host": "codex",
-  "peer": "claude",
-  "verdict": "PASS",
-  "attempt": 1,
-  "blockingFindingsCount": 0,
-  "blockingFindings": [],
-  "reviewedAt": "2026-05-26T00:00:00Z"
-}
-```
-
-Include it in the Phase 1 gate transition:
+`phases.1.metadata.peerReview` requires `host`, `peer`, `verdict`; actual reviews include `attempt`, `blockingFindingsCount`, `blockingFindings`, `reviewedAt`. Gate reads this key first, then legacy `codexReview`; attributed skips allow standalone builds. Retry/skip policy: `spec/pipeline.json.policies.peerArchitectureReview`.
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 1 \
-  --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"PASS","attempt":1,"blockingFindingsCount":0}'
+  --metadata "peerReview=$PEER_REVIEW_JSON"
 ```
 
-## Phase 5: Build-Green Peer Review
+## Phase 5: Build-Green Review
 
-Run after `BUILD SUCCEEDED`, Axiom critical audit, and local checks, but before
-recording `phases.5.metadata.build_succeeded=true`.
+Run after `BUILD SUCCEEDED`, Axiom critical audit and local checks, before completion metadata. Review `<AppName>/{Views,ViewModels,Services,App}` read-only; exclude frozen `Models/`.
 
-Reviewer scope:
-
-```text
-Review <AppName>/Views, <AppName>/ViewModels, <AppName>/Services, <AppName>/App.
-Do not modify files.
-Do not review <AppName>/Models; those are the immutable architect contract.
-Return JSON: {"verdict":"PASS|FAIL","blockingFindings":[...],"warnings":[...]}.
-Each blocking finding must include file, line, issue, and suggestedFix.
-```
-
-Result contract:
-
-```json
-{
-  "host": "codex",
-  "peer": "claude",
-  "verdict": "PASS",
-  "blockingFindingsCount": 0,
-  "findingsPath": ".autobot/peer-review/phase-5.json"
-}
-```
-
-Record the audit log, then include the review metadata in the Phase 5 gate transition:
+Return `{verdict:"PASS|FAIL",blockingFindings:[],warnings:[]}`; each blocking finding needs `file`, `line`, `issue`, `suggestedFix`. Save the real result to `.autobot/peer-review/phase-5.json`. Caller records `phases.5.metadata.peerReview` with `host`, `peer`, `verdict`, `blockingFindingsCount`, `findingsPath`. PASS requires parseable JSON inside the project agreeing with metadata; do not report PASS without an artifact.
 
 ```bash
 bash "$CLAUDE_PLUGIN_ROOT/scripts/build-log.sh" --phase 5 --event peer_review \
-  --detail '{"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}'
-
+  --detail "$PEER_REVIEW_JSON"
 bash "$CLAUDE_PLUGIN_ROOT/scripts/pipeline.sh" advance-phase --phase 5 \
-  --metadata build_succeeded=true \
-  --metadata 'peerReview={"host":"codex","peer":"claude","verdict":"skipped","skipReason":"peer_cli_unavailable"}'
+  --metadata build_succeeded=true --metadata "peerReview=$PEER_REVIEW_JSON"
 ```
 
-Gate 5->6 requires `phases.5.metadata.peerReview`:
+The caller uses pipeline.sh for state changes and includes this metadata only after remaining Phase 5 checks finish.
 
-- `PASS` -> continue.
-- `skipped` -> continue, but the skip is explicit and auditable.
-- `FAIL` or missing -> return to the build-fix loop before Gate 5->6.
+- PASS: proceed.
+- FAIL: route blocking findings into Step 3 Build-Fix Loop, within the spec budget.
+- skipped: require `skipReason`. When `environment.peerReviewAvailable=true`, allow only `peer_invocation_failed`, `peer_timeout`, `peer_runtime_error`, `peer_returned_invalid_output`.
+- Missing/invalid/failing evidence: Gate 5→6 **DEGRADED** permits local MVP progression and blocks shipping. `qualityMax` also degrades unavailable/skipped reviews.
 
-## Invocation Guidance
+## Invocation
 
-Claude host -> Codex:
+Claude→Codex:
 
 ```bash
 codex exec --skip-git-repo-check -C "$PROJECT_DIR" \
@@ -123,11 +65,4 @@ codex exec --skip-git-repo-check -C "$PROJECT_DIR" \
   < ".autobot/peer-review/prompt.md"
 ```
 
-Codex host -> Claude:
-
-- Prefer an installed Claude Code review integration when available.
-- Fallback to a non-interactive `claude` CLI invocation if present.
-- If neither exists, record `verdict=skipped`.
-
-Do not prompt the user to install the peer tool mid-build. Setup-time discovery
-is the right place to recommend installation.
+Codex→Claude: prefer an installed review integration, then non-interactive `claude` CLI. If neither exists, record `peer_cli_unavailable`.

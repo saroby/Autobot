@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-04
+
+### Added — 독립 앱 아이콘 생성 `/autobot:icon`
+- imagegen으로 코너 라운드 없는 1024×1024 불투명 PNG 앱 아이콘을 생성한다. 저장한 파일의 형식·크기·불투명도와 코너를 검증하며, 독립 호출은 파이프라인 상태를 바꾸지 않는다.
+
+### Changed — 스킬 실행 계약 중심으로 설명 축약
+- 앱 아이콘 스킬을 147→63줄로 줄였다. 나머지 25개 스킬을 검토해 22개를 축약했고, 이 25개 파일의 총 분량은 3,649→1,560줄로 줄었다. 간결한 라우터 3개는 유지했다.
+- 입력·출력·스키마·승인·sandbox·실기기 증거·출하 preflight·lock token 계약과 실행 reference를 보존했다. 설명을 새 reference 파일로 옮기지 않았다.
+
+### Fixed — 스킬 안내와 현재 구현의 불일치
+- 인증 방식·환경 우선순위·업로드 옵션·결과 enum·스킬 경로와 미할당 변수 예시를 현재 source에 맞췄다. 런타임 코드와 테스트는 변경하지 않았다.
+
 ### Fixed — SSOT 연결 시 원본 보존·Phase 완료 JSON 출력
 - SSOT 를 옮겨 재-clone 하던 절차를 기존 저장소 등록·`absorbgitdirs` 로 교체했다. 기존 `ssot.tmp`·미커밋·untracked 파일을 보존하고 실패 즉시 중단한다. 로컬 bare 옵션도 Git transport 설정 변경 없이 연결된다.
 - `advance-phase --format json` 은 상태 문구를 `messages`, 종료 코드를 `returnCode` 에 담아 JSON 하나만 출력한다. Gate 없는 Phase·전이 거절도 같은 형식이며, 하위 함수의 경고는 stderr 로 보낸다.
